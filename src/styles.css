@@ -101,8 +101,7 @@ p {
   border: 0;
 }
 .app-shell {
-  max-width: 1880px;
-  margin: auto;
+  width: 100%;
   padding: 0 42px;
 }
 .app-header {
