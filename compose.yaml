@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      # Local development credentials only. Use separate secrets in production.
+      POSTGRES_USER: ship_live
+      POSTGRES_PASSWORD: ship_live
+      POSTGRES_DB: ship_live
+    ports:
+      - "127.0.0.1:54329:5432"
+    volumes:
+      # PostgreSQL 18 stores its version-specific PGDATA beneath this location.
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ship_live -d ship_live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  postgres_data:

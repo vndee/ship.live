@@ -1,8 +1,18 @@
 # Changelog
 
-## 0.1.0 — Unreleased
+## Unreleased
 
-Initial public release preparation.
+- Replace file-backed production storage with shared PostgreSQL. `DATABASE_URL` is now required; `DATA_DIR` is no longer used and there is no JSON fallback.
+- Apply versioned SQL migrations automatically at startup, with an optional `npm run db:migrate` command.
+- Commit event updates, delivery deduplication, and organization protection together. Retain stored events and accepted delivery IDs without automatic expiry; the API and browser still expose only the latest 2,000 events per organization.
+- Distribute committed webhook event references across app instances through PostgreSQL `LISTEN`/`NOTIFY`, with listener reconnects and browser polling for recovery.
+- Import an existing version-1 `events.json` with `npm run db:import-json -- /path/to/events.json`. Whole-file validation and transactional data import preserve protection and delivery IDs without changing the source file.
+- Add PostgreSQL connectivity to health checks and close database connections during graceful shutdown.
+- Add a local PostgreSQL 18 Compose service and isolated database integration tests, required by CI.
+
+## 0.1.0 — Initial public version
+
+Initial public version of the project.
 
 - MIT License.
 - Interactive Orbit visualization with event selection, repository filters, and time replay.
