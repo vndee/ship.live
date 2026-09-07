@@ -95,4 +95,6 @@ This is an early, self-hosted project. Each instance supports one webhook organi
 
 ## License
 
-A license is being selected for the initial public release. Until `LICENSE` is added, no open-source license is granted.
+Licensed under the [MIT License](LICENSE). Copyright © 2026 Duy Huynh.
+
+Bundled dependencies retain their own licenses: [DM Sans](public/licenses/dm-sans.txt), [Lucide and Feather icons](public/licenses/lucide.txt), and [React, React DOM, and Scheduler](public/licenses/react.txt). Their notices are included in production builds under `/licenses/`.

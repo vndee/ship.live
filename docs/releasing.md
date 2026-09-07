@@ -4,7 +4,8 @@ Target repository: **`vndee/ship.live`**. The steps below are a maintainer hando
 
 ## Before publishing
 
-- Choose a license, add `LICENSE`, and update the license fields in `package.json`, `package-lock.json`, and the README.
+- The project uses the [MIT License](../LICENSE). Include it with source and distributions, and keep package metadata consistent.
+- Preserve the third-party notices in `public/licenses/`; Vite copies them to production builds.
 - Review the staged file list. Keep `.env`, `.data`, dependencies, build outputs, and local artifacts out of Git. Exclude any custom `DATA_DIR` as well.
 - Run `npm ci`, `npm run format:check`, `npm test`, and `npm run build`.
 - Smoke-test `npm start` with a fresh data directory and synthetic configuration. Confirm `/api/health` and the built interface respond.
@@ -36,4 +37,4 @@ git push -u origin main
 
 After the first push, verify the README images render and the CI workflow passes. Enable GitHub private vulnerability reporting before relying on the private reporting link in `SECURITY.md`.
 
-Once CI is green, update the unreleased changelog date, tag the chosen release, and prepare GitHub release notes from [CHANGELOG.md](../CHANGELOG.md). Do not advertise the project as open source before its license is in place.
+Once CI is green, update the unreleased changelog date, tag the chosen release, and prepare GitHub release notes from [CHANGELOG.md](../CHANGELOG.md).

@@ -4,6 +4,7 @@
 
 Initial public release preparation.
 
+- MIT License.
 - Interactive Orbit visualization with event selection, repository filters, and time replay.
 - GitHub activity feed with public polling and signed webhook ingestion for live/private activity.
 - Weekly contributor recognition and shared merge, review, and release milestones.
