@@ -197,3 +197,18 @@ test("demo data is deterministic, distinct, human and safe to display as a fresh
   assert.ok(getMetrics(events, monday).merges >= 20);
   assert.ok(getMetrics(events, monday).reviews >= 30);
 });
+
+test("manual ship notes are visible activity without manufactured XP or milestones", () => {
+  const notes = Array.from({ length: 50 }, (_, index) =>
+    event(`note-${index}`, "note", {
+      repo: "journal/notes",
+      body: "A useful lesson from today's experiment.",
+    }),
+  );
+  assert.equal(getMetrics(notes, NOW).total, 50);
+  assert.equal(getMetrics(notes, NOW).xp, 0);
+  assert.equal(getLeaderboard(notes, NOW)[0].xp, 0);
+  assert.ok(
+    getAchievements(notes, NOW).every((milestone) => milestone.progress === 0),
+  );
+});

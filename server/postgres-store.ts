@@ -22,7 +22,7 @@ interface EventRecord {
 
 /** Durable history shared by every app instance connected to this database. */
 export class PostgresEventStore implements EventStore {
-  private readonly pool: Pool;
+  readonly pool: Pool;
   private readonly notifications: PostgresNotifications;
   private closing?: Promise<void>;
 
@@ -74,9 +74,15 @@ export class PostgresEventStore implements EventStore {
   }
 
   private async migrate(): Promise<void> {
-    const initial = await readFile(
-      new URL("./migrations/001_initial.sql", import.meta.url),
-      "utf8",
+    const migrations = await Promise.all(
+      [
+        "001_initial.sql",
+        "002_auth.sql",
+        "003_workspaces.sql",
+        "004_connection_fencing.sql",
+      ].map((file) =>
+        readFile(new URL(`./migrations/${file}`, import.meta.url), "utf8"),
+      ),
     );
     await this.transaction(async (client) => {
       // The lock is database-scoped and acquired before touching the version table.
@@ -88,16 +94,18 @@ export class PostgresEventStore implements EventStore {
       const applied = await client.query<{ version: number }>(
         "SELECT version FROM ship_live_schema_migrations ORDER BY version",
       );
-      if (applied.rows.some((row) => row.version > 1))
+      if (applied.rows.some((row) => row.version > migrations.length))
         throw new Error(
           "This database uses a newer ship.live schema. Upgrade the application before starting it.",
         );
-      if (!applied.rows.some((row) => row.version === 1)) {
-        await client.query(initial);
-        await client.query(
-          "INSERT INTO ship_live_schema_migrations (version) VALUES (1)",
-        );
-      }
+      for (const [index, sql] of migrations.entries())
+        if (!applied.rows.some((row) => row.version === index + 1)) {
+          await client.query(sql);
+          await client.query(
+            "INSERT INTO ship_live_schema_migrations (version) VALUES ($1)",
+            [index + 1],
+          );
+        }
     });
   }
 

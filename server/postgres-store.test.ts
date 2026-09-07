@@ -64,7 +64,12 @@ test("PostgreSQL migrations serialize concurrent startup and preserve connection
     const migrations = await database.query(
       "SELECT version FROM isolated_store.ship_live_schema_migrations",
     );
-    assert.deepEqual(migrations.rows, [{ version: 1 }]);
+    assert.deepEqual(migrations.rows, [
+      { version: 1 },
+      { version: 2 },
+      { version: 3 },
+      { version: 4 },
+    ]);
     await stores[0].merge("team", [event]);
     assert.deepEqual(await stores[1].list("team"), [event]);
   });

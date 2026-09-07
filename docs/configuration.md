@@ -1,10 +1,10 @@
 # Configuration and hosting
 
-ship.live can browse public GitHub organization activity without GitHub credentials. Each server can also receive signed webhooks for one configured organization, including its private repositories. All API instances require PostgreSQL; replicas share stored events and live notifications through the database.
+ship.live uses Supabase for Google/GitHub sign-in and PostgreSQL for private journals, GitHub connections, event history, and shared session revocation. A separate GitHub App connects personal accounts or organizations and receives live activity. The browser uses the Express API for application data.
 
 ## Local development
 
-Use Node.js 22.12 or later, npm, and Docker Compose. From a checkout of the project:
+Use Node.js 22.12+, npm, and Docker Compose:
 
 ```sh
 npm ci
@@ -13,91 +13,103 @@ docker compose up -d --wait postgres
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173). Vite serves the frontend on port 5173 and proxies `/api` to the Express server on port 3001. Both processes run under `npm run dev`. The API connects to `DATABASE_URL` and applies its SQL migrations before accepting requests.
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173), matching `APP_URL`. Vite proxies `/api` to Express on port 3001. The API requires PostgreSQL and applies migrations before accepting requests. If you change the API port, update the development proxy in [`vite.config.ts`](../vite.config.ts).
 
-The first visit starts with clearly labeled fictional demo activity. Use the connection dialog to enter an organization name or its GitHub URL. A connected organization is remembered in browser local storage; its dashboard key is held only in memory and must be entered again after reloading.
+The Compose service runs PostgreSQL 18 on `127.0.0.1:54329`. Its `ship_live` username/password are development defaults. A named volume holds its files; `docker compose stop postgres` stops the service without deleting that volume. For frontend-only demo work, `npm run dev:web` needs no database.
 
-The Compose service runs PostgreSQL 18 on `127.0.0.1:54329`, matching the `DATABASE_URL` in `.env.example`. Its username and password are both `ship_live` and are for local development only. Database files live in a named Docker volume mounted at `/var/lib/postgresql`, the PostgreSQL 18 image's parent data directory. `docker compose stop postgres` stops the service without removing its volume. An existing PostgreSQL database can be used instead by setting its connection URL.
-
-To explore only the fictional frontend demo without an API or database, run `npm run dev:web`. GitHub connection and live activity need the API.
-
-Edit `.env` and restart the API after changes. Existing process environment variables take precedence over the file. For example, a `GITHUB_TOKEN` already exported in your shell also configures this server; a blank value in `.env` does not remove that inherited token.
+The demo uses fictional events and needs no external credentials. Real journals require Supabase sign-in. A signed-in user can write personal notes before connecting GitHub. Edit `.env` and restart the API after changes; exported process variables take precedence over the file.
 
 ## Environment variables
 
-| Variable                | Default  | Purpose                                                                                                                                                                                                                       |
-| ----------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`          | Required | PostgreSQL connection URL for shared event history and live notifications. The local example is `postgres://ship_live:ship_live@127.0.0.1:54329/ship_live`. Use your own credentials and database for hosting.                |
-| `GITHUB_ORG`            | Unset    | Organization suggested in the connection dialog. Also selects the only organization that can use server credentials, receive webhooks, and persist public polling results. Use a name such as `your-organization`, not a URL. |
-| `GITHUB_TOKEN`          | Unset    | Optional server-side token used only for public API requests for `GITHUB_ORG`. Configuring it makes that feed require `DASHBOARD_ACCESS_KEY`. It does not add private events to the public endpoint.                          |
-| `GITHUB_WEBHOOK_SECRET` | Unset    | Shared secret used to verify GitHub webhook signatures. Requires `GITHUB_ORG`; webhook ingestion also requires `DASHBOARD_ACCESS_KEY`.                                                                                        |
-| `DASHBOARD_ACCESS_KEY`  | Unset    | Shared key viewers enter to read a protected feed and its live stream. Choose a different value from the webhook secret.                                                                                                      |
-| `PORT`                  | `3001`   | Express API and production frontend port. Must be an integer from 1 to 65535.                                                                                                                                                 |
-| `TEST_DATABASE_URL`     | Unset    | Dedicated PostgreSQL administration connection for integration tests. Its role must be able to create databases. The test helper creates a unique database per test and removes only that database afterward.                 |
+| Variable                   | Purpose                                                                                                                                                               |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`             | Required PostgreSQL connection. Supabase PostgreSQL, Railway PostgreSQL, and other compatible providers are supported.                                                |
+| `PORT`                     | Server port, default `3001`; Railway supplies it automatically.                                                                                                       |
+| `APP_URL`                  | Exact browser origin, required for configured sign-in. HTTPS when hosted; HTTP only on loopback. No path, query, credentials, or fragment.                            |
+| `TRUST_PROXY_HOPS`         | Trusted forwarding proxy count, `0` by default, integer `0`–`5`. Set only for a verified fixed ingress path; see [proxy guidance](railway.md#deploy-the-application). |
+| `SUPABASE_URL`             | Supabase project origin. Configure together with the publishable key.                                                                                                 |
+| `SUPABASE_PUBLISHABLE_KEY` | Supabase publishable Auth key. Legacy `SUPABASE_ANON_KEY` is accepted. Secret/service-role keys are rejected.                                                         |
+| `SUPABASE_GOOGLE_ENABLED`  | `true` by default when Auth is configured; `false` disables this login option. Enable the provider in Supabase too.                                                   |
+| `SUPABASE_GITHUB_ENABLED`  | Same behavior for GitHub sign-in.                                                                                                                                     |
+| `GITHUB_APP_ID`            | Numeric ID of the GitHub App used for repository data.                                                                                                                |
+| `GITHUB_APP_CLIENT_ID`     | That App's OAuth client ID, distinct from its numeric App ID.                                                                                                         |
+| `GITHUB_APP_CLIENT_SECRET` | That App's OAuth client secret.                                                                                                                                       |
+| `GITHUB_APP_PRIVATE_KEY`   | RSA PEM private key from the App settings. Quoted PEM text with escaped `\n` line breaks is accepted.                                                                 |
+| `GITHUB_APP_SLUG`          | App slug from its installation URL.                                                                                                                                   |
+| `GITHUB_WEBHOOK_SECRET`    | Random secret configured on the GitHub App webhook.                                                                                                                   |
+| `TOKEN_ENCRYPTION_KEY`     | Exactly 64 hexadecimal characters representing 32 random bytes. Encrypts GitHub user and refresh tokens in PostgreSQL.                                                |
+| `TEST_DATABASE_URL`        | Dedicated test administration connection with `CREATE DATABASE` permission. Never use production for tests.                                                           |
 
-Do not prefix secrets with `VITE_` or place them in frontend source. The bundled frontend does not need a GitHub token or webhook secret.
+Configure all GitHub App fields and `TOKEN_ENCRYPTION_KEY` together, or leave the integration unconfigured. Partial credentials fail startup; there is no personal-token or shared-dashboard-key fallback. None of these variables belong in `VITE_*` or frontend source. The frontend does not receive provider tokens or database credentials.
 
-`DATABASE_URL` is required even for an API that serves only public activity. The server fails to start if the database is unavailable or schema setup fails. `DATA_DIR` is no longer used, and there is no automatic fallback to `events.json` or memory. Use the explicit [legacy import](#importing-an-existing-json-store) to move existing data.
+Generate an encryption key or webhook secret locally, using a separate value for each purpose. Store the output in your secret manager or ignored `.env`:
 
-Setting a token or webhook secret without `GITHUB_ORG` stops server startup. A configured token or webhook secret without a dashboard key causes protected feed requests to return `503`. Setting `DASHBOARD_ACCESS_KEY` alone does **not** protect otherwise public feeds or the frontend page.
+```sh
+node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+```
 
-If you change `PORT` during development, update the `/api` target in [`vite.config.ts`](../vite.config.ts) as well. Production serves frontend and API together and does not use the Vite proxy.
+## Set up Google and GitHub sign-in
 
-## Public activity
+1. Create a Supabase project. It may also host the application database, but Auth and database hosting can be separate.
+2. Enable **Google** and **GitHub** in Supabase Auth. Register a Google web OAuth client and a GitHub **OAuth App** for login. Put their client IDs and secrets in Supabase's provider settings. Use basic identity scopes; repository access belongs to the separate GitHub App below.
+3. For both providers, use the callback Supabase displays, normally `https://<project-ref>.supabase.co/auth/v1/callback`. This provider-to-Supabase callback is not a ship.live API route.
+4. Set Supabase's **Site URL** exactly to `APP_URL`. The app returns through `APP_URL/api/auth/callback?flow=...`. For additional development/staging origins, allow a narrow callback pattern such as `http://127.0.0.1:5173/api/auth/callback*`; the flow query must be permitted. Avoid broad production-domain wildcards.
+5. Set `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `APP_URL` on Express, restart, and test both sign-in buttons.
 
-Connect an organization in the UI to browse its public activity. No token or webhook is necessary for an unprotected feed.
+The app creates a browser-bound, single-use login transaction and uses Supabase's PKCE flow. It verifies the resulting user with Supabase before creating an opaque app session. Both Supabase session cookies and the app session cookie are `HttpOnly`, `SameSite=Lax`, host-only, and `Secure` on HTTPS. No browser Supabase client or localStorage token persistence is used. [Supabase server-side Auth](https://supabase.com/docs/guides/auth/server-side/creating-a-client), [Google setup](https://supabase.com/docs/guides/auth/social-login/auth-google), [GitHub setup](https://supabase.com/docs/guides/auth/social-login/auth-github).
 
-The browser requests the feed every 30 seconds while live updates are enabled. The server fetches `https://api.github.com/orgs/{org}/events?per_page=100`, uses ETags, and waits at least 60 seconds between upstream requests for an organization. A longer GitHub `X-Poll-Interval` is respected. Concurrent requests for the same organization share one upstream request.
+Supabase automatically links OAuth identities with matching email addresses under its identity-linking rules. ship.live uses the resulting Supabase UUID and does not implement its own email-matching account system. Login never grants private GitHub repository access by itself; connecting the data App is an explicit authenticated action. [Supabase identity linking](https://supabase.com/docs/guides/auth/auth-identity-linking).
 
-This endpoint supplies limited recent public activity and can lag work on GitHub. The interface reports a possible delay of 30 seconds to 6 hours. One request reads at most 100 upstream events; unsupported actions are then excluded. There is no pagination or historical backfill. See GitHub's [events API documentation](https://docs.github.com/en/rest/activity/events).
+Keep the browser and API on the same origin. Switching between `localhost` and `127.0.0.1` changes cookie scope and can invalidate login. Preview deployments need their own trusted URL configuration and separate credentials/data.
 
-Public polling is driven by browser requests, not an independent background worker. If no browser requests the feed, ship.live does not continually poll GitHub. Webhook ingestion continues as long as the server is running.
+## Set up the GitHub App for activity
 
-When `GITHUB_ORG` is configured, its public events are merged into PostgreSQL. Public feeds for other organizations use an in-memory server cache and are not persisted by that instance. A `GITHUB_TOKEN`, when provided, is sent only for the configured organization's requests and is never forwarded to the browser. Responses are still filtered to explicitly public events belonging to that organization.
+This is a **GitHub App**, separate from the GitHub OAuth App used by Supabase. A person who signs in through Google can then authorize it to connect GitHub.
 
-## Live and private activity
+Register an App installable on the personal accounts and organizations you intend to support:
 
-Private repository activity reaches ship.live through an organization webhook. A server token is optional for this flow.
+| GitHub App setting                             | Value                                                          |
+| ---------------------------------------------- | -------------------------------------------------------------- |
+| User authorization callback                    | `APP_URL/api/github/callback`                                  |
+| Setup URL                                      | `APP_URL/?github=installed`                                    |
+| Webhook URL                                    | `APP_URL/api/webhooks/github`                                  |
+| Webhook secret                                 | Match `GITHUB_WEBHOOK_SECRET`                                  |
+| User-to-server token expiration                | Enabled                                                        |
+| Request user authorization during installation | Disabled; ship.live initiates its own browser-bound OAuth flow |
+| Device flow                                    | Not needed                                                     |
 
-1. Set `GITHUB_ORG`, `GITHUB_WEBHOOK_SECRET`, and `DASHBOARD_ACCESS_KEY` in the server environment. Use separate random values for the two secrets. To generate a value locally, run the following command once for each secret and copy its output into your environment file or hosting secret settings:
+Use a publicly reachable HTTPS URL for actual webhook delivery. The setup return is navigation only: a returned `installation_id` does not prove ownership. The server verifies installations and repositories using the current user's GitHub App user token. [GitHub setup URL security](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/about-the-setup-url).
 
-   ```sh
-   node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
-   ```
+Grant **read-only** repository permissions: Metadata, Pull requests, Issues, and Contents. Subscribe to pull request, pull request review, issues, push, and release events. Lifecycle events also drive revocation handling. No write permission, organization-membership permission, source cloning, or source-file download is needed by ship.live. Contents read allows broader GitHub access, but this app uses it for activity metadata. [GitHub webhook permissions](https://docs.github.com/en/webhooks/webhook-events-and-payloads).
 
-2. Run ship.live at a publicly reachable HTTPS address with `DATABASE_URL` pointing to persistent PostgreSQL storage.
+Generate the App's private key and populate the server variables. In ship.live:
 
-3. In the GitHub organization's **Settings → Webhooks**, create a webhook with these settings:
+1. Sign in and choose **Connect GitHub**.
+2. Authorize the App. Install it on a personal account or organization if needed, choosing **Only select repositories** for the scope you want.
+3. Return to ship.live and choose an installation/workspace. The server lists only installations and repositories available to that GitHub user.
+4. Synchronize recent activity. New signed webhooks update authorized open dashboards.
 
-   | Setting      | Value                                                         |
-   | ------------ | ------------------------------------------------------------- |
-   | Payload URL  | `https://your-host/api/webhooks/github`                       |
-   | Content type | `application/json`                                            |
-   | Secret       | The exact value of `GITHUB_WEBHOOK_SECRET`                    |
-   | Events       | Pull requests, Pull request reviews, Pushes, Issues, Releases |
-   | Active       | Enabled                                                       |
+Manage repository selection in GitHub's installation settings. Users do not need to paste personal access tokens or shared dashboard keys.
 
-4. Check the webhook's recent deliveries. A valid initial `ping` returns `200` with `Webhook connected.` A supported activity delivery returns `202`; an authenticated action the app does not display returns `202` with `ignored: true`.
+## Personal and team privacy
 
-5. Connect the organization in ship.live and enter `DASHBOARD_ACCESS_KEY`. This is your ship.live viewer key, not a GitHub token.
+Every account has a private personal journal. Notes accept a title up to 200 characters and a body up to 10,000 characters; only their owner may read, create, or delete them. Notes earn zero XP.
 
-Organization administration access is needed to create the webhook. ship.live does not create one automatically or install a GitHub App.
+A team workspace is associated with a verified installation. Each viewer must connect GitHub. The server filters activity by immutable repository IDs that both the App and that viewer can access. Organization membership alone does not grant every private repository. Totals, repository names, search results, and live updates are derived from the permitted events.
 
-The server verifies `X-Hub-Signature-256` against the exact raw request body before parsing JSON. It then validates the delivery headers, organization, and repository ownership. Only accepted events are saved and emitted to connected viewers. See GitHub's [signature validation guide](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries).
+Authorization is rechecked during asynchronous reads and before streaming. Expired/revoked sessions, revoked repository access, suspended/deleted installations, or unavailable authorization services do not fall back to cached private responses. Removing repositories or an installation invalidates related ingestion/access state. A setup callback or webhook sender alone cannot claim a workspace.
 
-The selected webhook categories do not imply that every action is displayed:
+Disconnecting GitHub removes your stored user grant and workspace associations; it preserves your journal notes. It does not uninstall the GitHub App or erase stored event history. An installed App can continue delivering webhooks for other connected viewers. To stop delivery for an installation, uninstall or suspend the App in GitHub. Historical data follows the host operator's retention policy.
 
-| GitHub event        | Displayed activity                                                                   |
-| ------------------- | ------------------------------------------------------------------------------------ |
-| Pull request        | Opened PRs and merged PRs; reopening and closing without a merge are ignored.        |
-| Pull request review | Submitted approvals, comments, and requests for changes.                             |
-| Push                | Pushes except deleted refs; one event represents the push, not one point per commit. |
-| Issue               | Closed issues, excluding `not_planned` closures and PR-shaped issue payloads.        |
-| Release             | Published, non-draft releases.                                                       |
+## History and live updates
 
-## Production
+Synchronization imports a bounded part of the last 30 days: up to 100 PRs, 100 closed issues, and 100 releases per repository, plus the first 100 reviews for up to 30 recently updated PRs. The server processes selected repositories in batches of at most 20. The UI reports partial history and failures. Push activity begins with received webhooks; synchronization is not a complete archive.
 
-Build the frontend and run the production entry point:
+Signatures are checked against the raw webhook body before parsing. Supported events are normalized and reconciled by event identity, with delivery deduplication in PostgreSQL. Stored history does not expire automatically; the API/UI expose up to 2,000 latest events per workspace. Upstream limits and permission changes can affect metrics.
+
+PostgreSQL `LISTEN`/`NOTIFY` distributes event references between replicas. Instances read stored events and authorize their viewers before emitting SSE data. Notifications do not include private event titles. Browser polling reconciles missed notifications. Pausing a browser's live updates does not stop webhook ingestion.
+
+## Production and database access
 
 ```sh
 npm ci
@@ -105,87 +117,36 @@ npm run build
 npm start
 ```
 
-The production entry point sets production mode and serves `dist` together with the API on `PORT`, defaulting to [http://localhost:3001](http://localhost:3001). The server runs TypeScript with the runtime `tsx` dependency. After a successful build, `npm prune --omit=dev` can remove build and test dependencies before starting the service.
+Production serves frontend and API from one Node process. Use HTTPS and preserve SSE responses across the 25-second heartbeat. The server honors `PORT`. The [Railway guide](railway.md) covers database choices, free-plan limits, deployment, and networking.
 
-Use a process manager or hosting service to keep the API running. Put an HTTPS reverse proxy in front of it and serve the frontend and `/api` from the same origin. Preserve streaming responses for `/api/events`: disable response buffering and allow connections to remain open across the server's 25-second heartbeat interval.
+Use a direct PostgreSQL endpoint or **session-mode** pooler. Each process uses a query pool and a dedicated `LISTEN` session; transaction pooling cannot preserve the listener. For Supabase on an IPv4 host, use its session pooler on port 5432. Preserve provider-recommended TLS certificate/hostname verification.
 
-Provision a PostgreSQL database and set `DATABASE_URL` in the hosting environment. This repository supplies local Compose configuration; it does not choose or provision a remote database. The app passes connection URL options to the `pg` driver. Follow your provider's TLS and trusted-certificate instructions, and keep certificate verification enabled. The URL is a server secret.
+For Supabase PostgreSQL, disable the unused **Data API**. Migrations enable RLS and revoke `PUBLIC`, `anon`, and `authenticated` access to application tables. No browser Data API policies are provided. The backend database owner can bypass RLS, so Express workspace/repository authorization remains essential. The app does not need a service-role Auth key. [Supabase API protection](https://supabase.com/docs/guides/api/securing-your-api).
 
-Use a direct PostgreSQL endpoint or a pooler in **session mode**. Each process holds a dedicated connection for `LISTEN`, separate from its query pool. A transaction-mode pooler cannot preserve that listener session. Include both the query pools and dedicated listener connections when sizing database connection capacity.
+Startup applies migrations under a PostgreSQL advisory lock. To apply them separately, run `npm run db:migrate`. Database or migration failure prevents startup. Replicas need the same Auth, GitHub App, encryption key, and public-origin configuration. `/api/health` checks PostgreSQL; it does not prove provider registration or webhook configuration.
 
-Schema migrations run automatically at startup. To apply them explicitly before starting a deployment, run:
+Process-local limits are not shared quotas. Protect runtime secrets, database access, and backups. Event text and notes are not end-to-end encrypted; provider-token encryption does not prevent trusted operators from reading application data.
 
-```sh
-npm run db:migrate
-```
+## Upgrading an existing installation
 
-The database role needs permission to create and update the application's tables and migration ledger. Concurrent startup migrations are serialized with a PostgreSQL advisory lock. Back up the database before upgrading, and verify the app version supports the installed schema before rolling back application code.
+Back up PostgreSQL and securely preserve the encryption key. The current server uses authenticated workspace routes. `GITHUB_ORG`, `GITHUB_TOKEN`, and `DASHBOARD_ACCESS_KEY` no longer configure its runtime; old organization/key feed routes are not mounted. Remove stale settings and configure Supabase and the GitHub App instead.
 
-Multiple replicas can use the same database. All replicas for one organization must have the same `GITHUB_ORG`, `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`, and `DASHBOARD_ACCESS_KEY` settings so requests behave consistently. A webhook accepted by one replica becomes visible to authorized SSE clients on the others through PostgreSQL notifications; browser polling recovers missed notifications.
+Existing organization-scoped events remain in legacy namespaces. They are **not automatically claimed** by a matching organization name, email, installation callback, or first login. A verified installation imports current accessible GitHub history into the new model. Moving older private history requires an operator-reviewed mapping; no automatic claim tool is provided.
 
-Instances for different organizations can also share the database, but each instance serves protected activity only for its own configured organization. A dashboard key on one instance does not authorize another organization's protected records. These are application access checks, not isolation from database administrators or other applications with database credentials.
-
-There is no built-in TLS termination or user account system. A company access gateway can protect the UI and API; allow GitHub deliveries to reach the webhook endpoint, which performs its own signature verification. Request limits and upstream caches remain per process, so use a gateway if you need a shared limit across replicas.
-
-Back up PostgreSQL using your database provider or standard PostgreSQL tooling, protect the backups, and test restoration. The app does not expire events or accepted delivery IDs automatically; monitor storage growth. The server closes its live responses, dedicated listener, and query pool on graceful shutdown.
-
-## Access and storage boundaries
-
-The dashboard key is shared access control for a trusted team. Feed and SSE requests use the `x-dashboard-key` header. The key is not put in URLs or persisted in browser storage. There is no individual login, per-repository authorization, or viewer audit trail.
-
-The public `/api/health` endpoint checks database connectivity and returns server status, the configured organization name, and whether protection and webhooks are configured. It does not expose credential values. A failed database check makes the health request fail, so use it for readiness checks. Other unprotected public organizations remain browsable without the configured organization's dashboard key.
-
-Configuring a GitHub token or webhook secret marks the organization as protected in PostgreSQL, and webhook ingestion preserves that marker. It survives removal of those credentials, so saved restricted activity is not silently made public. If credentials are removed and no dashboard key is available, protected feed requests fail closed. Do not edit the store to bypass its protection metadata.
-
-Stored activity may contain private repository names, contributor logins, titles, and URLs. PostgreSQL stores normalized events as JSONB together with organization protection metadata and the delivery ledger. Raw webhook payloads are not retained. Protect database access, connections, storage, and backups; the app does not encrypt individual event fields.
-
-## Importing an existing JSON store
-
-The previous file-backed version stored its data in `.data/events.json` by default. Stop the old application writer and take a backup of that file before switching to PostgreSQL. Preserve the old server's organization and credential configuration.
-
-Set the destination `DATABASE_URL`, then run the importer with the source file path:
+The JSON importer can still recover a version-1 store into the legacy namespace:
 
 ```sh
-npm run db:import-json -- .data/events.json
+npm run db:import-json -- /absolute/path/to/events.json
 ```
 
-The importer validates the complete version-1 file before opening the database. It applies the SQL schema if needed, then imports the events, accepted delivery IDs, and organization protection metadata in one transaction. If an import write fails, all import writes roll back. Schema migration is a separate transaction.
-
-Reimporting is safe: existing event and delivery IDs are reconciled, existing event versions are preserved except when an earlier issue closure must remain canonical, and protection can only be added. Protected organizations with no retained events remain protected. The command prints counts of newly inserted events, delivery IDs, and newly protected organizations.
-
-The source file is never changed or deleted. Start the new app and verify the protected feed before retiring the backup. The importer cannot recover events already discarded by the old store's retention limit, and the current UI still shows only the latest 2,000 events per organization. Keep legacy files and database dumps out of Git and outside the static web root.
+It validates the whole file and preserves event identity, delivery IDs, and protection metadata transactionally. It does not modify/delete the source or make imported legacy records visible to signed-in workspaces. Keep files and dumps outside Git and the static web root. `DATA_DIR` is unused; there is no production JSON fallback.
 
 ## Database tests
-
-Start the local Compose database, then explicitly provide a dedicated test administration connection:
 
 ```sh
 TEST_DATABASE_URL=postgres://ship_live:ship_live@127.0.0.1:54329/postgres npm run test:db
 ```
 
-`npm run test:db` runs the full test suite and fails immediately if `TEST_DATABASE_URL` is missing. `npm test` runs the same tests but marks database integration tests as skipped when that variable is absent. Test scripts do not load `.env` automatically or fall back to `DATABASE_URL`. CI supplies PostgreSQL and always runs the database tests.
+Use a dedicated admin connection with `CREATE DATABASE` permission. The helper creates uniquely named databases and drops only those databases; it never migrates the administration database. Tests do not load `.env` or use `DATABASE_URL`. `npm test` skips integration tests without `TEST_DATABASE_URL`; CI requires the full suite.
 
-The helper uses `TEST_DATABASE_URL` only to create uniquely named `ship_live_test_*` databases. Each test opens its own database; teardown terminates connections to that database and drops it. It never migrates or drops the configured administration database. Use a dedicated test server or role with `CREATE DATABASE` permission, and keep test credentials separate from production.
-
-## Limits and recovery
-
-| Limit                  | Current behavior                                                                                                                                                                 |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Retained events        | All normalized events persisted for configured organizations; no automatic expiration. The API and browser expose only the latest 2,000 per organization, ordered by event time. |
-| Delivery deduplication | Accepted activity delivery IDs are unique across the shared database and do not expire automatically.                                                                            |
-| Webhook body           | Maximum 2 MB; larger payloads return `413`.                                                                                                                                      |
-| Live streams           | Maximum 100 simultaneous SSE connections per server process; additional streams return `503`, while polling remains available.                                                   |
-| API requests           | 120 requests per minute per observed IP per app process; health and webhook routes are excluded.                                                                                 |
-| Upstream request       | 10-second timeout; upstream failures and rate limits are temporarily cached.                                                                                                     |
-
-Express does not enable `trust proxy`. Behind a reverse proxy, multiple viewers can share the proxy's observed IP and therefore the same API request allowance. The application does not currently expose a proxy-trust setting.
-
-Webhook delivery deduplication, canonical event writes, and protection metadata commit together in PostgreSQL. Notifications contain only an organization and event ID and are delivered after the transaction commits. Listening processes read the stored event before sending it to their clients. Notifications are not a durable queue: disconnected listeners can miss references, then reconnect while browser polling reads the saved feed.
-
-When GitHub temporarily fails, the configured organization's previously saved activity can be returned with a notice. An upstream organization `404` is not replaced with a saved-data response. If a live stream disconnects, the browser retries after 10 seconds and normal polling reconciles saved events. The stream itself does not support cursor-based historical replay.
-
-If a feed is empty, first check the selected organization, time window, filters, and GitHub webhook deliveries. Public API history and the browser's 2,000-event limit can make weekly totals incomplete even when older events exist in the database. Changing the replay window does not fetch additional history.
-
-## Customizing recognition
-
-Base XP values and weekly team targets live in [`src/lib/activity.ts`](../src/lib/activity.ts). Modify those definitions in source to change the rules; there is no administrative settings API. For how those rules differ from the visible Orbit timeline, see [Architecture](architecture.md).
+Auth tests use real Express/PostgreSQL with mocked Supabase responses; GitHub client tests mock its API. These cover permission/session boundaries but do not replace real OAuth and installation smoke tests using your provider accounts and public deployment.

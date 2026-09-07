@@ -175,3 +175,16 @@ test("timeline scrubbing interpolates the range and clamps both ends", () => {
   assert.equal(getTimelineCutoff(1_000, 5_000, 130), 5_000);
   assert.equal(getTimelineCutoff(1_000, 1_000, 50), 1_000);
 });
+
+test("journal search finds the story inside a ship note without needing an external link", () => {
+  const note = event("note", {
+    type: "note",
+    repo: "journal/notes",
+    title: "Shipped the first version",
+    body: "Learned about incremental parsing.",
+  });
+  assert.deepEqual(
+    filterEvents([note], { repo: "", kind: "note", query: " INCREMENTAL " }),
+    [note],
+  );
+});

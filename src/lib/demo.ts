@@ -17,7 +17,9 @@ const REPOS = [
   "infrastructure",
 ];
 
-type Template = Pick<ActivityEvent, "type" | "title" | "repo"> & {
+type DemoActivityType = Exclude<ActivityEvent["type"], "note">;
+type Template = Pick<ActivityEvent, "title" | "repo"> & {
+  type: DemoActivityType;
   login: string;
   number?: number;
 };
@@ -107,7 +109,7 @@ const RECENT: Template[] = [
   },
 ];
 
-const TITLES: Record<ActivityEvent["type"], string[]> = {
+const TITLES: Record<DemoActivityType, string[]> = {
   merge: [
     "Simplify local development with a single setup command",
     "Recover gracefully when a downstream service is unavailable",
@@ -158,9 +160,9 @@ export function createDemoEvents(now = Date.now()): ActivityEvent[] {
   const recentSpan = Math.min(elapsedToday, 3 * 60 * 60 * 1000);
 
   // Keep Monday useful in the demo: 24 merges, 32 reviews and 3 releases today.
-  const todayTypes: ActivityEvent["type"][] = [
-    ...Array<ActivityEvent["type"]>(20).fill("merge"),
-    ...Array<ActivityEvent["type"]>(28).fill("review"),
+  const todayTypes: DemoActivityType[] = [
+    ...Array<DemoActivityType>(20).fill("merge"),
+    ...Array<DemoActivityType>(28).fill("review"),
     "release",
     "release",
     "issue",
@@ -178,7 +180,7 @@ export function createDemoEvents(now = Date.now()): ActivityEvent[] {
   const mixedTypes = todayTypes.map(
     (_, index) => todayTypes[(index * 17) % todayTypes.length],
   );
-  const historyTypes: ActivityEvent["type"][] = [
+  const historyTypes: DemoActivityType[] = [
     "merge",
     "review",
     "review",

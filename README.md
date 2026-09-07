@@ -2,33 +2,33 @@
 
 **Work, in orbit.**
 
-A self-hosted GitHub activity wall for engineering teams. Watch work take shape, explore the story behind every contribution, and celebrate what you ship together.
+A private shipping journal for individual builders and a live GitHub activity wall for engineering teams. Connect the repositories you choose, capture the story behind your work, and see what you have shipped.
 
 ![ship.live Orbit view with an activity feed, team metrics, repository filters, and replay timeline](docs/images/orbit.jpg)
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
-  <a href="docs/configuration.md">Connect GitHub</a> ·
+  <a href="docs/configuration.md">Connect accounts</a> ·
+  <a href="docs/railway.md">Deploy on Railway</a> ·
   <a href="docs/showcase.md">Screenshots</a> ·
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
-## Make the work visible
+## For your work, and your team's
 
-Code gets shipped across pull requests, reviews, and repositories. ship.live brings those signals into one shared space: an interactive visualization for exploring the work and a live wall for the room where your team builds.
+- **Personal journal.** Keep private notes about launches, experiments, decisions, and progress. Add GitHub activity from selected repositories when you are ready.
+- **Google or GitHub sign-in.** Supabase Auth handles identity. A separate GitHub App connection grants repository access, including for someone who signed in with Google.
+- **Orbit.** Explore one point per event, repository orbits, linked event selection, and a camera you can rotate.
+- **Live activity and replay.** Follow merges, reviews, releases, pushes, issues, and journal entries. Filter by repository, type, time, or text; replay the last 24 hours, 7 days, or 30 days.
+- **Shared recognition.** Weekly contributor spotlights and team milestones celebrate outcomes and collaboration. Raw commit counts and personal notes earn no XP.
+- **Private by default.** Personal notes belong to their owner. GitHub events are filtered to repositories each viewer can currently access through the GitHub App.
+- **Self-hosted.** React, Express, and shared PostgreSQL, with bundled fonts and no analytics. One Node.js service serves the frontend and API.
 
-- **Orbit.** One point per event, with repository orbits, drag-to-rotate interaction, and linked event selection.
-- **Live activity.** Merges, reviews, releases, pushes, and issues, filtered by repository, type, time, or text.
-- **Replay.** Scrub through the last 24 hours, 7 days, or 30 days. The visualization, feed, and view metrics stay in sync.
-- **Shared recognition.** Weekly contributor spotlights and team milestones. Reviews and releases count; commit volume earns no XP.
-- **Office display.** A fullscreen layout with a visible playback bar and independent controls for motion and live updates.
-- **Your infrastructure.** Public activity without GitHub credentials, signed webhooks for live/private events, shared PostgreSQL storage, bundled fonts, and no analytics.
-
-Keyboard navigation, reduced-motion preferences, and small screens are supported. Screenshots use fictional demo data; an empty connected organization stays empty.
+Keyboard navigation, reduced-motion preferences, small screens, and fullscreen displays are supported. Screenshots use fictional demo data. Demo activity is never copied into a real workspace.
 
 ## Quick start
 
-Use **Node.js 22.12+**, npm, and Docker Compose for the local PostgreSQL database.
+Use **Node.js 22.12+**, npm, and Docker Compose for local PostgreSQL.
 
 ```sh
 git clone https://github.com/vndee/ship.live.git
@@ -39,36 +39,35 @@ docker compose up -d --wait postgres
 npm run dev
 ```
 
-Open [localhost:5173](http://localhost:5173). The first visit starts in fictional demo mode. Choose **Connect GitHub** to use a public organization. The example database credentials are for local development only; production needs your own PostgreSQL connection in `DATABASE_URL`.
+Open [127.0.0.1:5173](http://127.0.0.1:5173). You can explore the fictional demo before configuring authentication. The database credentials in `.env.example` are for this local Compose service only.
 
-The API requires PostgreSQL and applies its schema migrations on startup. To explore only the frontend demo without a database, run `npm run dev:web`; connecting GitHub requires the API.
+To use real workspaces:
 
-| Connection                  | GitHub setup                                        | What you receive                                                   |
-| --------------------------- | --------------------------------------------------- | ------------------------------------------------------------------ |
-| Demo                        | None                                                | Fictional activity for exploring the interface                     |
-| Public organization         | Organization name                                   | Recent public events, subject to GitHub's delay and history limits |
-| Live / private organization | Organization webhook, webhook secret, dashboard key | Signed deliveries streamed to connected dashboards                 |
+1. Create a Supabase project and enable its Google and GitHub providers. Set `APP_URL`, `SUPABASE_URL`, and `SUPABASE_PUBLISHABLE_KEY` on the server.
+2. Sign in to get a private personal journal. Google-only users can write notes without connecting GitHub.
+3. Register and configure a GitHub App, then connect it from ship.live and install it on a personal account or organization. Choose the repositories it may access.
 
-The GitHub public events API can be delayed by **30 seconds to 6 hours** and omits private events. For live activity, configure an organization webhook. A GitHub token raises public API rate limits; it does not make private activity appear in this endpoint. [GitHub documentation](https://docs.github.com/en/rest/activity/events)
+The full [configuration guide](docs/configuration.md) distinguishes the Supabase sign-in callback from the GitHub App connection callback. Creating OAuth clients, provider secrets, a GitHub App, and a public webhook URL is part of self-hosting; this repository does not provision those external accounts.
 
-See [configuration and self-hosting](docs/configuration.md) for environment variables, webhook setup, storage, and access control.
+For frontend-only demo work without a database, use `npm run dev:web`.
 
-## A little recognition, shared
+## Recognition
 
-| Contribution        |  XP |
-| ------------------- | --: |
-| Release published   |  50 |
-| Pull request merged |  30 |
-| Review submitted    |  15 |
-| Issue completed     |  10 |
-| Pull request opened |   5 |
-| Commits pushed      |   0 |
+| Contribution           |  XP |
+| ---------------------- | --: |
+| Release published      |  50 |
+| Pull request merged    |  30 |
+| Review submitted       |  15 |
+| Issue completed        |  10 |
+| Pull request opened    |   5 |
+| Commits pushed         |   0 |
+| Personal journal entry |   0 |
 
-Recognition resets on Monday at 00:00 UTC. Bot accounts and duplicate events do not earn credit. Review credit is capped at one award per reviewer, pull request, and UTC day. Merge credit goes to the pull request author.
+Recognition resets on Monday at 00:00 UTC. Bots and duplicate events do not earn credit. Review credit is capped at one award per reviewer, pull request, and UTC day; merge credit belongs to the pull request author. Team milestones celebrate 30 merges, 40 reviews, and 5 releases per week.
 
-Team milestones celebrate 30 merges, 40 reviews, and 5 releases per week. These are conversation starters and shared celebrations, not performance evaluations. View metrics include the events in the current filter; weekly recognition stays independent of replay. Rules live in [`src/lib/activity.ts`](src/lib/activity.ts).
+These are shared celebrations, not performance evaluations. Metrics describe the events visible to the current viewer, so teammates with different repository permissions can see different totals. Replay changes the view, not the recognition rules. See [`src/lib/activity.ts`](src/lib/activity.ts).
 
-## Run in production
+## Deploy
 
 ```sh
 npm ci
@@ -76,30 +75,34 @@ npm run build
 npm start
 ```
 
-The built interface and API are served together at [localhost:3001](http://localhost:3001). Set `DATABASE_URL`, configure GitHub settings from [`.env.example`](.env.example), and use HTTPS. PostgreSQL stores received history and coordinates live events across app replicas. Use a direct database connection or session pooler that supports `LISTEN`; transaction poolers are unsuitable for the dedicated listener.
+Production serves the built UI and API together on `PORT` (default `3001`). Set your public HTTPS origin as `APP_URL`, configure authentication, and point `DATABASE_URL` at persistent PostgreSQL. Startup applies SQL migrations; there is no JSON or memory fallback.
 
-See [configuration and deployment](docs/configuration.md) for database backups, access control, replica configuration, and importing an existing `events.json` file. The server has no JSON storage fallback.
+**Supabase Auth + Supabase PostgreSQL + one Railway Node service** is a practical starting point. The database needs a direct connection or session pooler that supports `LISTEN`. Free plans can support a prototype, but Railway's monthly credit does not guarantee an always-on service at no cost. The [Railway guide](docs/railway.md) includes current quotas, estimates, connection settings, and availability tradeoffs.
 
 ## Development
 
 ```sh
 npm run format:check
 npm test
-# Run all tests, including PostgreSQL integration tests, against a dedicated test database:
 TEST_DATABASE_URL=postgres://ship_live:ship_live@127.0.0.1:54329/postgres npm run test:db
 npm run build
 ```
 
-React, TypeScript, and Canvas 2D on the frontend; Express, PostgreSQL, signed webhooks, and server-sent events on the backend. Integration tests create and remove isolated databases using `TEST_DATABASE_URL`; its role needs `CREATE DATABASE` permission. Without that variable, `npm test` skips database tests. CI runs them with PostgreSQL. See the [testing setup](docs/configuration.md#database-tests) for details.
+The database suite creates and removes isolated test databases. Use a dedicated test connection with `CREATE DATABASE` permission. `npm test` skips PostgreSQL tests when `TEST_DATABASE_URL` is absent; CI runs the full suite. OAuth tests exercise Express and PostgreSQL with mocked external provider responses. Testing real consent screens requires your own configured providers.
 
-- [Architecture](docs/architecture.md) — data flow, boundaries, and project structure.
-- [Contributing](CONTRIBUTING.md) — local setup, checks, and contribution guidelines.
-- [Security](SECURITY.md) — deployment assumptions and private vulnerability reports.
+- [Architecture](docs/architecture.md) — identity, repository permissions, storage, and realtime.
+- [Configuration](docs/configuration.md) — OAuth setup, GitHub App setup, migration, and hosting.
+- [Contributing](CONTRIBUTING.md) — development conventions and checks.
+- [Security](SECURITY.md) — protection boundaries and private vulnerability reporting.
 - [Changelog](CHANGELOG.md) — changes and upgrade notes.
 
 ## Current scope
 
-This is an early, self-hosted project. Each instance supports one webhook organization; instances can share PostgreSQL. Stored events and accepted delivery IDs do not expire automatically, but the API and browser expose only the latest **2,000 events per organization**. There is no historical backfill or multi-user login. Metrics describe the received events available to the browser and may be incomplete. Request limits, upstream caches, and SSE connection limits remain local to each app process.
+Personal journals and team workspaces are private. Public profiles, public journal publishing, and invitation-based sharing outside GitHub repository permissions are not implemented.
+
+GitHub connection imports a bounded recent history, not a complete activity archive. Subsequent signed webhooks supply live events; push history begins with those webhooks. The UI displays at most 2,000 events per workspace. Stored events and accepted delivery IDs do not expire automatically, so operators must plan retention and backups. Request counters and live-connection limits remain per process.
+
+The old organization-name/shared-key routes are not mounted by the current server. Legacy events remain in their original database namespaces and are not automatically assigned to a newly signed-in user. See [upgrade notes](docs/configuration.md#upgrading-an-existing-installation).
 
 ## License
 

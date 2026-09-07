@@ -24,6 +24,12 @@ export const EVENT_META: Record<
     points: 15,
     color: "violet",
   },
+  note: {
+    label: "Ship note",
+    verb: "added a ship note",
+    points: 0,
+    color: "slate",
+  },
   push: { label: "Push", verb: "pushed commits", points: 0, color: "slate" },
   issue: {
     label: "Issue",

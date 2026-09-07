@@ -1,114 +1,349 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import type { ActivityEvent, FeedResponse } from "../../shared/types";
+import type { SessionResponse } from "../../shared/auth";
+import type {
+  InstallationChoice,
+  ShipNoteInput,
+  Workspace,
+  WorkspaceList,
+} from "../../shared/workspaces";
 import { createDemoEvents } from "../lib/demo";
+import {
+  emptyPrivateFeed,
+  isAccessFailure,
+  privateFeedReducer,
+} from "../lib/privateFeed";
+
+import {
+  emptyPrivateOperation,
+  privateOperationReducer,
+  type PrivateOperationTarget,
+} from "../lib/privateOperation";
+
+const signedOut: SessionResponse = {
+  user: null,
+  providers: { google: false, github: false },
+  configured: false,
+};
+const noWorkspaces: WorkspaceList = {
+  workspaces: [],
+  githubConnected: false,
+  githubAppConfigured: false,
+};
+class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+  }
+}
+async function request<T>(
+  path: string,
+  options: RequestInit = {},
+  timeout = 20_000,
+): Promise<T> {
+  const response = await fetch(path, {
+    credentials: "same-origin",
+    cache: "no-store",
+    ...options,
+    signal: options.signal || AbortSignal.timeout(timeout),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok)
+    throw new ApiError(
+      data.error || "Could not complete this request. Try again.",
+      response.status,
+    );
+  return data as T;
+}
+function message(error: unknown) {
+  return error instanceof Error
+    ? error.message
+    : "Could not complete this request. Try again.";
+}
 
 export function useFeed() {
-  const [organization, setOrganization] = useState(
-    () => localStorage.getItem("pulse.organization") || "",
-  );
-  const [suggestedOrg, setSuggestedOrg] = useState("");
-  const [events, setEvents] = useState<ActivityEvent[]>(() =>
-    localStorage.getItem("pulse.organization") ? [] : createDemoEvents(),
-  );
-  const [accessKey, setAccessKey] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [state, dispatch] = useReducer(privateFeedReducer, {
+    ...emptyPrivateFeed,
+    events: createDemoEvents(),
+  });
+  const [session, setSession] = useState<SessionResponse>(signedOut);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [sessionError, setSessionError] = useState("");
+  const [workspaceList, setWorkspaceList] =
+    useState<WorkspaceList>(noWorkspaces);
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [paused, setPaused] = useState(false);
-  const [updatedAt, setUpdatedAt] = useState(new Date().toISOString());
-  const [streaming, setStreaming] = useState(false);
+  const [accessBlocked, setAccessBlocked] = useState(false);
+  const [logoutIncomplete, setLogoutIncomplete] = useState(false);
+  const [operationState, dispatchOperation] = useReducer(
+    privateOperationReducer,
+    emptyPrivateOperation,
+  );
+  const operationSequence = useRef(0);
+  const operationPending = useRef(false);
+  const blocked = useRef(false);
+  const pendingLogout = useRef(false);
+  const logoutToken = useRef<string | undefined>(undefined);
   const generation = useRef(0);
-  const connectingRequest = useRef<AbortController | null>(null);
-  const demo = !organization;
+  const requestNumber = useRef(0);
+  const sessionRequest = useRef(0);
+  const workspaceRequest = useRef(0);
+  const currentUser = useRef<string | null>(null);
+  const currentWorkspace = useRef<Workspace | null>(null);
+  const csrf = useRef<string | undefined>(undefined);
+  const channel = useRef<BroadcastChannel | null>(null);
+  const initialSelection = useRef(true);
+  const demo = !workspace;
+
+  const clearPrivate = useCallback((error = "", sample = false) => {
+    generation.current += 1;
+    requestNumber.current += 1;
+    dispatch({
+      type: "reset",
+      generation: generation.current,
+      error,
+      events: sample ? createDemoEvents() : [],
+    });
+  }, []);
+  const selectWorkspace = useCallback(
+    (next: Workspace | null) => {
+      if (operationPending.current) return;
+      dispatchOperation({
+        type: "reset",
+        sequence: ++operationSequence.current,
+      });
+      currentWorkspace.current = next;
+      setWorkspace(next);
+      initialSelection.current = false;
+      setPaused(false);
+      blocked.current = false;
+      setAccessBlocked(false);
+      clearPrivate("", !next);
+    },
+    [clearPrivate],
+  );
+  const clearIdentity = useCallback(
+    (error = "") => {
+      operationPending.current = false;
+      dispatchOperation({
+        type: "reset",
+        sequence: ++operationSequence.current,
+      });
+      workspaceRequest.current += 1;
+      currentUser.current = null;
+      csrf.current = undefined;
+      currentWorkspace.current = null;
+      initialSelection.current = true;
+      setWorkspace(null);
+      setWorkspaceList(noWorkspaces);
+      setSession((previous) => ({
+        ...previous,
+        user: null,
+        csrfToken: undefined,
+      }));
+      setSessionError(error);
+      clearPrivate("", true);
+    },
+    [clearPrivate],
+  );
+  const failPrivate = useCallback((error: unknown) => {
+    blocked.current = true;
+    setAccessBlocked(true);
+    generation.current += 1;
+    requestNumber.current += 1;
+    dispatch({
+      type: "error",
+      generation: generation.current,
+      message: message(error),
+    });
+  }, []);
+  const accessFailure = useCallback(
+    (error: unknown) => {
+      if (!(error instanceof ApiError) || !isAccessFailure(error.status))
+        return false;
+      if (error.status === 401)
+        clearIdentity("Your session ended. Sign in to continue.");
+      else failPrivate(error);
+      return true;
+    },
+    [clearIdentity, failPrivate],
+  );
+
+  const loadWorkspaces = useCallback(async () => {
+    const user = currentUser.current;
+    if (!user) return;
+    const serial = ++workspaceRequest.current;
+    try {
+      const data = await request<WorkspaceList>("/api/workspaces");
+      if (currentUser.current !== user || serial !== workspaceRequest.current)
+        return;
+      setWorkspaceList(data);
+      const active = currentWorkspace.current;
+      if (active) {
+        const replacement = data.workspaces.find(
+          (item) => item.id === active.id,
+        );
+        if (!replacement)
+          selectWorkspace(
+            data.workspaces.find((item) => item.kind === "personal") || null,
+          );
+        else {
+          currentWorkspace.current = replacement;
+          setWorkspace(replacement);
+        }
+      } else if (initialSelection.current)
+        selectWorkspace(
+          data.workspaces.find((item) => item.kind === "personal") ||
+            data.workspaces[0] ||
+            null,
+        );
+    } catch (error) {
+      if (currentUser.current !== user || serial !== workspaceRequest.current)
+        return;
+      if (!accessFailure(error)) setSessionError(message(error));
+    }
+  }, [accessFailure, selectWorkspace]);
+
+  const loadSession = useCallback(async () => {
+    if (pendingLogout.current) return;
+    const serial = ++sessionRequest.current;
+    try {
+      const data = await request<SessionResponse>("/api/session");
+      if (serial !== sessionRequest.current) return;
+      const nextUser = data.user?.id || null;
+      if (currentUser.current !== nextUser) {
+        clearIdentity();
+        currentUser.current = nextUser;
+      }
+      csrf.current = data.csrfToken;
+      setSession(data);
+      setSessionError("");
+      if (nextUser) await loadWorkspaces();
+    } catch {
+      if (serial === sessionRequest.current) {
+        const error =
+          "Sign-in is temporarily unavailable. You can still explore the demo.";
+        if (currentUser.current) clearIdentity(error);
+        else setSessionError(error);
+      }
+    } finally {
+      if (serial === sessionRequest.current) setSessionLoading(false);
+    }
+  }, [clearIdentity, loadWorkspaces]);
 
   useEffect(() => {
-    fetch("/api/health")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.configuredOrg) setSuggestedOrg(data.configuredOrg);
-      })
-      .catch(() => {});
-  }, []);
-
-  const fetchFeed = useCallback(
-    async (
-      org: string,
-      key: string,
-      signal?: AbortSignal,
-    ): Promise<FeedResponse> => {
-      const response = await fetch(`/api/feed?org=${encodeURIComponent(org)}`, {
-        headers: key ? { "x-dashboard-key": key } : {},
-        signal: signal || AbortSignal.timeout(20_000),
-      });
-      const data = await response.json();
-      if (!response.ok)
-        throw new Error(
-          data.error || "Could not load GitHub activity. Try again.",
-        );
-      return data;
-    },
-    [],
-  );
+    // Remove the old pre-authentication organization preference, never migrate it into identity.
+    try {
+      localStorage.removeItem("pulse.organization");
+    } catch {
+      /* Storage may be disabled. */
+    }
+    void loadSession();
+    const interval = setInterval(() => void loadSession(), 30_000);
+    const onFocus = () => void loadSession();
+    const onHide = () => {
+      if (currentUser.current) clearPrivate();
+    };
+    const onShow = () => void loadSession();
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("pagehide", onHide);
+    window.addEventListener("pageshow", onShow);
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel("ship-live-session");
+      channel.current = bc;
+      bc.onmessage = (event: MessageEvent<unknown>) => {
+        if (
+          event.data !== "session-clearing" &&
+          event.data !== "session-changed"
+        )
+          return;
+        sessionRequest.current += 1;
+        pendingLogout.current = event.data === "session-clearing";
+        clearIdentity();
+        if (!pendingLogout.current) void loadSession();
+      };
+    }
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("pagehide", onHide);
+      window.removeEventListener("pageshow", onShow);
+      channel.current?.close();
+      channel.current = null;
+      sessionRequest.current += 1;
+    };
+  }, [clearIdentity, clearPrivate, loadSession]);
 
   const refresh = useCallback(async () => {
-    if (demo) {
-      setUpdatedAt(new Date().toISOString());
-      return;
-    }
+    const active = currentWorkspace.current;
+    if (!active || !currentUser.current || blocked.current) return;
     const current = generation.current;
-    setLoading(true);
+    const serial = ++requestNumber.current;
+    dispatch({ type: "loading", generation: current, value: true });
     try {
-      const data = await fetchFeed(organization, accessKey);
-      if (current !== generation.current) return;
-      setEvents((previous) =>
-        [
-          ...new Map(
-            [...previous, ...data.events].map((event) => [event.id, event]),
-          ).values(),
-        ]
-          .sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt))
-          .slice(0, 2000),
+      const data = await request<FeedResponse>(
+        `/api/workspaces/${encodeURIComponent(active.id)}/feed`,
       );
-      setError("");
-      setNotice(data.notice || "");
-      setUpdatedAt(data.updatedAt);
-    } catch (e) {
-      if (current === generation.current)
-        setError(
-          e instanceof Error ? e.message : "Could not refresh activity.",
+      if (serial !== requestNumber.current || current !== generation.current)
+        return;
+      dispatch({
+        type: "snapshot",
+        generation: current,
+        events: data.events,
+        updatedAt: data.updatedAt,
+        notice: data.notice,
+      });
+    } catch (error) {
+      if (serial !== requestNumber.current || current !== generation.current)
+        return;
+      if (!accessFailure(error))
+        failPrivate(
+          new Error(
+            "Activity could not be verified. Cached private data is hidden. Retry when the connection is available.",
+          ),
         );
-    } finally {
-      if (current === generation.current) setLoading(false);
     }
-  }, [demo, organization, accessKey, fetchFeed]);
+  }, [accessFailure, failPrivate]);
 
   useEffect(() => {
-    if (demo || paused) return;
+    if (demo || accessBlocked) return;
     void refresh();
+    // Even with the live stream paused, revalidate the snapshot so revoked access disappears.
     const interval = setInterval(() => void refresh(), 30_000);
     return () => clearInterval(interval);
-  }, [demo, paused, refresh]);
+  }, [demo, workspace?.id, state.generation, paused, accessBlocked, refresh]);
 
   useEffect(() => {
-    if (demo || paused) {
-      setStreaming(false);
-      return;
-    }
+    if (demo || paused || !workspace || accessBlocked) return;
     const controller = new AbortController();
-    let retry: ReturnType<typeof setTimeout>;
+    const current = generation.current;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let pendingRefresh: ReturnType<typeof setTimeout> | undefined;
+    const scheduleRefresh = () => {
+      clearTimeout(pendingRefresh);
+      pendingRefresh = setTimeout(() => void refresh(), 100);
+    };
     async function stream() {
       try {
         const response = await fetch(
-          `/api/events?org=${encodeURIComponent(organization)}`,
+          `/api/workspaces/${encodeURIComponent(workspace!.id)}/events`,
           {
-            headers: accessKey ? { "x-dashboard-key": accessKey } : {},
+            credentials: "same-origin",
+            cache: "no-store",
             signal: controller.signal,
           },
         );
-        if ([400, 401, 403].includes(response.status)) return;
-        if (!response.ok || !response.body)
-          throw new Error("Live stream unavailable");
-        setStreaming(true);
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new ApiError(
+            data.error || "Live activity is temporarily unavailable.",
+            response.status,
+          );
+        }
+        if (!response.body) throw new Error("Live activity is unavailable.");
+        dispatch({ type: "streaming", generation: current, value: true });
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -122,106 +357,279 @@ export function useFeed() {
           while ((boundary = buffer.indexOf("\n\n")) !== -1) {
             const chunk = buffer.slice(0, boundary);
             buffer = buffer.slice(boundary + 2);
-            if (!chunk.split("\n").some((line) => line === "event: activity"))
-              continue;
-            const json = chunk
+            const name = chunk
               .split("\n")
-              .filter((line) => line.startsWith("data:"))
-              .map((line) => line.slice(5).trim())
-              .join("\n");
-            try {
-              const event: ActivityEvent = JSON.parse(json);
-              if (!event.id || !event.actor || !event.type) continue;
-              setEvents((previous) =>
-                [event, ...previous.filter((item) => item.id !== event.id)]
-                  .sort(
-                    (a, b) =>
-                      Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
-                  )
-                  .slice(0, 2000),
-              );
-              setUpdatedAt(new Date().toISOString());
-            } catch {
-              /* Ignore malformed messages and recover on next refresh. */
+              .find((line) => line.startsWith("event:"))
+              ?.slice(6)
+              .trim();
+            if (name === "access-revoked") {
+              clearPrivate("Access changed. Checking your workspace…");
+              controller.abort();
+              void loadSession();
+              return;
             }
+            if (name === "activity" || name === "refresh") scheduleRefresh();
           }
         }
-      } catch {
-        /* Polling remains available when the stream disconnects. */
+      } catch (error) {
+        if (controller.signal.aborted || current !== generation.current) return;
+        if (accessFailure(error)) return;
       }
-      if (!controller.signal.aborted) {
-        setStreaming(false);
-        retry = setTimeout(stream, 10_000);
+      if (!controller.signal.aborted && current === generation.current) {
+        dispatch({ type: "streaming", generation: current, value: false });
+        void refresh();
+        retry = setTimeout(() => void stream(), 10_000);
       }
     }
     void stream();
     return () => {
       controller.abort();
       clearTimeout(retry);
-      setStreaming(false);
+      clearTimeout(pendingRefresh);
     };
-  }, [organization, accessKey, demo, paused]);
+  }, [
+    demo,
+    workspace?.id,
+    state.generation,
+    paused,
+    accessBlocked,
+    accessFailure,
+    clearPrivate,
+    loadSession,
+    refresh,
+  ]);
 
-  async function connect(org: string, key: string) {
-    const normalized = org
-      .trim()
-      .replace(/^https?:\/\/github\.com\/(?:orgs\/)?/i, "")
-      .replace(/\/$/, "");
-    if (!/^[a-z\d](?:[a-z\d-]{0,37}[a-z\d])?$/i.test(normalized))
-      throw new Error("Enter a valid GitHub organization name.");
-    connectingRequest.current?.abort();
-    const controller = new AbortController();
-    connectingRequest.current = controller;
-    const data = await fetchFeed(
-      normalized,
-      key,
-      AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
+  const mutate = useCallback(
+    async <T>(
+      path: string,
+      body?: unknown,
+      method = "POST",
+      timeout = 20_000,
+    ): Promise<T> => {
+      const user = currentUser.current;
+      try {
+        return await request<T>(
+          path,
+          {
+            method,
+            headers: {
+              "x-csrf-token": csrf.current || "",
+              ...(body === undefined
+                ? {}
+                : { "content-type": "application/json" }),
+            },
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          },
+          timeout,
+        );
+      } catch (error) {
+        if (user === currentUser.current) accessFailure(error);
+        throw error;
+      }
+    },
+    [accessFailure],
+  );
+  async function logout() {
+    const token = csrf.current || logoutToken.current;
+    logoutToken.current = token;
+    pendingLogout.current = true;
+    setLogoutIncomplete(true);
+    channel.current?.postMessage("session-clearing");
+    sessionRequest.current += 1;
+    clearIdentity();
+    try {
+      await request("/api/logout", {
+        method: "POST",
+        headers: { "x-csrf-token": token || "" },
+      });
+      logoutToken.current = undefined;
+      pendingLogout.current = false;
+      setLogoutIncomplete(false);
+      channel.current?.postMessage("session-changed");
+    } catch {
+      setSessionError(
+        "Sign-out could not reach the server. Your data is hidden; retry signing out before leaving a shared device.",
+      );
+      throw new Error(
+        "Could not finish signing out. Retry from account settings.",
+      );
+    }
+  }
+  async function connectGithub() {
+    const data = await mutate<{ url: string }>("/api/github/connect");
+    const url = new URL(data.url);
+    if (url.protocol !== "https:" || url.hostname !== "github.com")
+      throw new Error("GitHub returned an invalid connection address.");
+    window.location.assign(url.href);
+  }
+  async function installations() {
+    try {
+      return await request<{
+        installations: InstallationChoice[];
+        installUrl: string;
+      }>("/api/github/installations");
+    } catch (error) {
+      accessFailure(error);
+      throw error;
+    }
+  }
+  async function connectInstallation(id: number) {
+    const user = currentUser.current;
+    const data = await mutate<{ workspace: Workspace }>(
+      `/api/github/installations/${id}/connect`,
+      undefined,
+      "POST",
+      180_000,
     );
-    if (controller.signal.aborted || connectingRequest.current !== controller)
-      throw new Error("Connection canceled.");
-    connectingRequest.current = null;
-    generation.current += 1;
-    localStorage.setItem("pulse.organization", normalized);
-    setOrganization(normalized);
-    setAccessKey(key);
-    setEvents(data.events);
-    setError("");
-    setNotice(data.notice || "");
-    setUpdatedAt(data.updatedAt);
-    setPaused(false);
+    if (user !== currentUser.current)
+      throw new Error("Your session changed. Sign in again to continue.");
+    await loadWorkspaces();
+    if (user !== currentUser.current)
+      throw new Error("Your session changed. Sign in again to continue.");
+    selectWorkspace(data.workspace);
+    return data.workspace;
   }
-  function cancelConnection() {
-    connectingRequest.current?.abort();
-    connectingRequest.current = null;
+  async function runPrivateOperation(target: PrivateOperationTarget) {
+    const user = currentUser.current;
+    if (!user || operationPending.current) return;
+    const id = ++operationSequence.current;
+    operationPending.current = true;
+    dispatchOperation({
+      type: "start",
+      operation: {
+        ...target,
+        id,
+        userId: user,
+        status: "pending",
+        error: undefined,
+      },
+    });
+    blocked.current = true;
+    setAccessBlocked(true);
+    clearPrivate();
+    const current = () =>
+      id === operationSequence.current && user === currentUser.current;
+    try {
+      try {
+        if (target.kind === "disconnect")
+          await mutate("/api/github/disconnect");
+        else
+          await mutate(
+            `/api/workspaces/${encodeURIComponent(target.workspaceId)}/notes/${encodeURIComponent(target.noteId)}`,
+            undefined,
+            "DELETE",
+          );
+      } catch (error) {
+        // The first delete may have committed before its response was lost.
+        if (!(
+          target.kind === "delete-note" &&
+          error instanceof ApiError &&
+          error.status === 404
+        ))
+          throw error;
+      }
+      if (!current()) return;
+      operationPending.current = false;
+      dispatchOperation({ type: "complete", id });
+      blocked.current = false;
+      setAccessBlocked(false);
+      if (target.kind === "disconnect") await loadWorkspaces();
+      if (user !== currentUser.current) return;
+      await refresh();
+    } catch (error) {
+      if (!current()) return;
+      operationPending.current = false;
+      const explanation =
+        target.kind === "disconnect"
+          ? "Could not confirm the GitHub disconnect. Cached activity is hidden. Retry disconnecting or reload activity to check the current connection."
+          : "Could not confirm the note deletion. Cached activity is hidden. Retry deleting or reload activity to check whether the note remains.";
+      dispatchOperation({ type: "failed", id, error: explanation });
+      failPrivate(new Error(explanation));
+      throw error;
+    }
   }
-  function useDemo() {
-    cancelConnection();
-    generation.current += 1;
-    localStorage.removeItem("pulse.organization");
-    setOrganization("");
-    setAccessKey("");
-    setEvents(createDemoEvents());
-    setError("");
-    setNotice("");
-    setLoading(false);
-    setPaused(false);
-    setUpdatedAt(new Date().toISOString());
+  async function disconnectGithub() {
+    await runPrivateOperation({ kind: "disconnect" });
   }
+  async function sync() {
+    const active = currentWorkspace.current;
+    if (!active) return;
+    const data = await mutate<{ synced: number; notice?: string }>(
+      `/api/workspaces/${encodeURIComponent(active.id)}/sync`,
+      undefined,
+      "POST",
+      180_000,
+    );
+    await refresh();
+    return data;
+  }
+  async function addNote(input: ShipNoteInput) {
+    const active = currentWorkspace.current;
+    if (!active || active.kind !== "personal" || !active.owner)
+      throw new Error("Choose your personal journal to add a note.");
+    await mutate<ActivityEvent>(
+      `/api/workspaces/${encodeURIComponent(active.id)}/notes`,
+      input,
+    );
+    await refresh();
+  }
+  async function deleteNote(id: string) {
+    const active = currentWorkspace.current;
+    if (!active || active.kind !== "personal" || !active.owner) return;
+    await runPrivateOperation({
+      kind: "delete-note",
+      workspaceId: active.id,
+      noteId: id,
+    });
+  }
+  const retry = () => {
+    if (operationPending.current) return;
+    dispatchOperation({ type: "reset", sequence: ++operationSequence.current });
+    blocked.current = false;
+    setAccessBlocked(false);
+    void refresh();
+  };
+  const retryOperation = async () => {
+    const operation = operationState.operation;
+    if (
+      operation?.status !== "failed" ||
+      operation.userId !== currentUser.current
+    )
+      return;
+    try {
+      await runPrivateOperation(operation);
+    } catch {
+      /* The hook retains the error for the remounted view. */
+    }
+  };
   return {
-    organization,
-    suggestedOrg,
-    events,
-    loading,
-    error,
-    notice,
+    ...state,
+    ...workspaceList,
+    session,
+    sessionLoading,
+    sessionError,
+    logoutIncomplete,
+    operation: operationState.operation,
+    retryOperation,
+    workspace,
+    organization: workspace?.name || "",
+    demo,
     paused,
     setPaused,
-    demo,
-    updatedAt,
-    streaming,
-    refresh,
-    connect,
-    cancelConnection,
-    useDemo,
+    refresh: retry,
+    selectWorkspace,
+    useDemo: () => selectWorkspace(null),
+    loadSession,
+    loadWorkspaces,
+    logout,
+    connectGithub,
+    installations,
+    connectInstallation,
+    disconnectGithub,
+    sync,
+    addNote,
+    deleteNote,
+    scopeKey: `${session.user?.id || "demo"}:${workspace?.id || "demo"}:${state.revision}`,
   };
 }
+export type FeedController = ReturnType<typeof useFeed>;

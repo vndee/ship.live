@@ -12,7 +12,11 @@ import {
   GitMerge,
   GitPullRequest,
   Github,
-  LoaderCircle,
+  BookOpen,
+  LockKeyhole,
+  NotebookPen,
+  Plus,
+  Trash2,
   Maximize2,
   MessageSquare,
   Minimize2,
@@ -39,7 +43,9 @@ import {
   getViewCounts,
   getWindowEvents,
 } from "./lib/feedView";
-import { useFeed } from "./hooks/useFeed";
+import { useFeed, type FeedController } from "./hooks/useFeed";
+import { AccountPanel } from "./components/AccountPanel";
+import { ShipNoteComposer } from "./components/ShipNoteComposer";
 import { Modal } from "./components/Modal";
 import { OrbitScene } from "./components/OrbitScene";
 
@@ -53,6 +59,7 @@ const icons: Record<Kind, ElementType> = {
   issue: CheckCheck,
   release: Rocket,
   pr: GitPullRequest,
+  note: NotebookPen,
 };
 const verbs: Record<Kind, string> = {
   merge: "merged",
@@ -61,6 +68,7 @@ const verbs: Record<Kind, string> = {
   issue: "closed",
   release: "released",
   pr: "opened",
+  note: "shipped",
 };
 const names: Record<string, string> = {
   alexchen: "Alex Chen",
@@ -75,7 +83,8 @@ const periodNames: Record<Period, string> = {
   "7d": "Last 7 days",
   "30d": "Last 30 days",
 };
-const shortRepo = (repo: string) => repo.split("/").pop() || repo;
+const shortRepo = (repo: string) =>
+  repo === "journal/notes" ? "Ship notes" : repo.split("/").pop() || repo;
 function safeUrl(url?: string) {
   try {
     const parsed = new URL(url || "");
@@ -138,6 +147,13 @@ function Avatar({
 
 export default function App() {
   const feed = useFeed();
+  return <WorkspaceView key={feed.scopeKey} feed={feed} />;
+}
+
+function WorkspaceView({ feed }: { feed: FeedController }) {
+  const personal = feed.workspace?.kind === "personal";
+  const canWriteNote =
+    personal && feed.workspace?.owner && feed.operation?.status !== "pending";
   const [page, setPage] = useState<Page>("orbit");
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<Kind | "">("");
@@ -152,19 +168,35 @@ export default function App() {
     () => !matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
   const [wall, setWall] = useState(false);
-  const [modal, setModal] = useState<"connect" | "rules" | "settings" | null>(
-    null,
-  );
-  const [detail, setDetail] = useState<ActivityEvent | null>(null);
-  const [orgInput, setOrgInput] = useState("");
-  const [keyInput, setKeyInput] = useState("");
-  const [connectError, setConnectError] = useState("");
-  const [connecting, setConnecting] = useState(false);
+  const [modal, setModal] = useState<
+    "connect" | "rules" | "settings" | "note" | null
+  >(null);
+  useEffect(() => {
+    if (!feed.session.user || !feed.workspace) return;
+    const url = new URL(window.location.href);
+    if (
+      ["connected", "installed"].includes(url.searchParams.get("github") || "")
+    ) {
+      setModal("connect");
+      url.searchParams.delete("github");
+      // Installation IDs in callback URLs are never used as authorization or selection.
+      url.searchParams.delete("installation_id");
+      url.searchParams.delete("setup_action");
+      window.history.replaceState(
+        null,
+        "",
+        url.pathname + url.search + url.hash,
+      );
+    }
+  }, [feed.session.user?.id, feed.workspace?.id]);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const detail = feed.events.find((event) => event.id === detailId) || null;
+  const [actionError, setActionError] = useState("");
+  const [syncing, setSyncing] = useState(false);
   const [toast, setToast] = useState("");
   const [limit, setLimit] = useState(30);
   const [now, setNow] = useState(Date.now());
   const searchRef = useRef<HTMLInputElement>(null);
-  const connectionAttempt = useRef(0);
   const metrics = useMemo(
     () => getMetrics(feed.events, now),
     [feed.events, now],
@@ -257,7 +289,7 @@ export default function App() {
     setReplay(null);
     setSelectedId(null);
     setHoveredId(null);
-    setDetail(null);
+    setDetailId(null);
   }, [feed.organization]);
   useEffect(() => {
     const reduced = matchMedia("(prefers-reduced-motion: reduce)");
@@ -290,51 +322,38 @@ export default function App() {
     setSelectedId(null);
   }
   function openConnect() {
-    setOrgInput(feed.organization || feed.suggestedOrg);
-    setKeyInput("");
-    setConnectError("");
-    setConnecting(false);
     setModal("connect");
   }
-  function closeConnect() {
-    connectionAttempt.current += 1;
-    feed.cancelConnection();
-    setConnecting(false);
-    setKeyInput("");
-    setModal(null);
-  }
   function useDemo() {
-    connectionAttempt.current += 1;
     feed.useDemo();
-    setConnecting(false);
-    setKeyInput("");
     setModal(null);
-    clearFilters();
-    setReplay(null);
-    setDetail(null);
   }
-  async function connect(e: React.FormEvent) {
-    e.preventDefault();
-    const attempt = ++connectionAttempt.current;
-    setConnecting(true);
-    setConnectError("");
+  async function syncGithub() {
+    setSyncing(true);
+    setActionError("");
     try {
-      await feed.connect(orgInput, keyInput);
-      if (attempt !== connectionAttempt.current) return;
-      setModal(null);
-      setKeyInput("");
-      clearFilters();
-      setReplay(null);
-      setToast("GitHub organization connected");
+      const result = await feed.sync();
+      setToast(result?.notice || "GitHub activity refreshed");
     } catch (error) {
-      if (attempt === connectionAttempt.current)
-        setConnectError(
-          error instanceof Error
-            ? error.message
-            : "Connection failed. Try again.",
-        );
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "Could not sync GitHub activity.",
+      );
     } finally {
-      if (attempt === connectionAttempt.current) setConnecting(false);
+      setSyncing(false);
+    }
+  }
+  async function deleteNote(id: string) {
+    setDetailId(null);
+    setActionError("");
+    try {
+      await feed.deleteNote(id);
+      setToast("Ship note deleted");
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "Could not delete your note.",
+      );
     }
   }
   async function toggleWall() {
@@ -360,7 +379,7 @@ export default function App() {
     return (
       <section
         className={`activity-feed ${full ? "full-feed" : ""}`}
-        aria-label="GitHub activity feed"
+        aria-label="Shipping activity feed"
       >
         <div className="section-heading">
           <h2>
@@ -412,7 +431,9 @@ export default function App() {
                 value={repo}
                 onChange={(e) => setRepo(e.target.value)}
               >
-                <option value="">All repositories</option>
+                <option value="">
+                  {personal ? "All sources" : "All repositories"}
+                </option>
                 {allRepositories.map((r) => (
                   <option key={r} value={r}>
                     {shortRepo(r)}
@@ -435,7 +456,9 @@ export default function App() {
           )}
         </div>
         {feed.paused && (
-          <p className="feed-pause-note">Live updates are paused.</p>
+          <p className="feed-pause-note">
+            Live stream paused. Access is still checked.
+          </p>
         )}
         <div className="event-list">
           {shownEvents.map((event) => {
@@ -469,7 +492,9 @@ export default function App() {
                   <span className="event-title">{event.title}</span>
                   <span className="event-metadata">
                     <span>
-                      {shortRepo(event.repo)}
+                      {event.type === "note"
+                        ? "Private journal"
+                        : shortRepo(event.repo)}
                       {event.number ? ` / #${event.number}` : ""}
                     </span>
                     <span>{EVENT_META[event.type].label}</span>
@@ -479,7 +504,7 @@ export default function App() {
                   <div className="event-expanded">
                     <button
                       className="text-button"
-                      onClick={() => setDetail(event)}
+                      onClick={() => setDetailId(event.id)}
                     >
                       Event details <ArrowUpRight size={13} />
                     </button>
@@ -508,14 +533,18 @@ export default function App() {
                   ? "No matching activity"
                   : replay
                     ? "No activity at this point"
-                    : "Waiting for the first signal"}
+                    : personal
+                      ? "Your journal starts with one ship"
+                      : "Waiting for the first signal"}
             </h3>
             <p>
               {activeFilters
                 ? "Try another repository, activity type, or search."
                 : replay
                   ? "Move the timeline forward to see later events."
-                  : "Received GitHub events will appear here and in Orbit."}
+                  : personal
+                    ? "Add a ship note, or connect GitHub to bring your work into Orbit."
+                    : "Received GitHub events will appear here and in Orbit."}
             </p>
             {activeFilters ? (
               <button className="button secondary" onClick={clearFilters}>
@@ -527,6 +556,13 @@ export default function App() {
                 onClick={() => setReplay(null)}
               >
                 Return to now
+              </button>
+            ) : canWriteNote ? (
+              <button
+                className="button secondary"
+                onClick={() => setModal("note")}
+              >
+                <Plus size={14} /> Add a ship note
               </button>
             ) : !feed.demo ? (
               <button className="text-button" onClick={openConnect}>
@@ -544,7 +580,27 @@ export default function App() {
             <ArrowDown size={14} />
           </button>
         )}
-        {!full && (
+        {!full && personal && (
+          <div className="shared-goal journal-reflection">
+            <div className="goal-label">
+              <span>
+                <LockKeyhole size={12} /> Private journal
+              </span>
+              <span>
+                {visible.filter((event) => event.type === "note").length} ship
+                notes
+              </span>
+            </div>
+            <h3>The story behind the work.</h3>
+            <p>Small wins, experiments, and lessons belong here too.</p>
+            {canWriteNote && (
+              <button className="text-button" onClick={() => setModal("note")}>
+                <Plus size={13} /> Add a ship note
+              </button>
+            )}
+          </div>
+        )}
+        {!full && !personal && (
           <div className="shared-goal">
             <div className="goal-label">
               <span>Shared milestone</span>
@@ -594,6 +650,7 @@ export default function App() {
           ship<span>.</span>live
         </a>
         <button className="organization-switch" onClick={openConnect}>
+          {!feed.demo && <LockKeyhole size={12} />}
           <span>{feed.demo ? "Demo workspace" : feed.organization}</span>
           <ChevronDown size={13} />
         </button>
@@ -606,15 +663,23 @@ export default function App() {
               ["milestones", "Milestones"],
               ["repositories", "Repositories"],
             ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              aria-current={page === id ? "page" : undefined}
-              onClick={() => setPage(id)}
-            >
-              {label}
-            </button>
-          ))}
+          )
+            .filter(
+              ([id]) => !personal || (id !== "team" && id !== "milestones"),
+            )
+            .map(([id, label]) => (
+              <button
+                key={id}
+                aria-current={page === id ? "page" : undefined}
+                onClick={() => setPage(id)}
+              >
+                {personal && id === "feed"
+                  ? "Journal"
+                  : personal && id === "repositories"
+                    ? "Sources"
+                    : label}
+              </button>
+            ))}
         </nav>
         <div className="header-tools">
           <span
@@ -623,6 +688,14 @@ export default function App() {
             <span />
             {status}
           </span>
+          {!feed.session.user && (
+            <button
+              className="text-button sign-in-button"
+              onClick={openConnect}
+            >
+              Sign in
+            </button>
+          )}
           <button
             className="icon-button"
             aria-label="Settings"
@@ -654,8 +727,10 @@ export default function App() {
             <h1>
               {
                 {
-                  orbit: "Work, in orbit.",
-                  feed: "The activity log.",
+                  orbit: personal ? "Your work, in orbit." : "Work, in orbit.",
+                  feed: personal
+                    ? "The shipping journal."
+                    : "The activity log.",
                   team: "The people behind it.",
                   milestones: "Built, together.",
                   repositories: "Where work takes shape.",
@@ -695,15 +770,68 @@ export default function App() {
                 </select>
               </>
             )}
-            {feed.demo && (
-              <button className="button connect-button" onClick={openConnect}>
-                <Github size={15} />
-                Connect GitHub
+            {canWriteNote ? (
+              <button
+                className="button connect-button"
+                onClick={() => setModal("note")}
+              >
+                <Plus size={15} /> Add ship note
               </button>
+            ) : (
+              feed.demo && (
+                <button className="button connect-button" onClick={openConnect}>
+                  <BookOpen size={15} />
+                  {feed.session.user
+                    ? "Open your journal"
+                    : "Start your journal"}
+                </button>
+              )
             )}
           </div>
         </div>
-        {feed.error && (
+        {feed.demo && (
+          <p className="demo-notice">
+            Fictional demo activity.{" "}
+            {feed.session.user
+              ? "Your private journal is in the workspace menu."
+              : "Sign in to start your own private journal."}
+          </p>
+        )}
+        {actionError && (
+          <div className="notice error-notice" role="alert">
+            {actionError}
+          </div>
+        )}
+        {feed.operation && (
+          <div
+            className={`notice ${feed.operation.status === "failed" ? "error-notice" : ""}`}
+            role={feed.operation.status === "failed" ? "alert" : "status"}
+          >
+            <span>
+              {feed.operation.status === "pending"
+                ? feed.operation.kind === "disconnect"
+                  ? "Disconnecting GitHub…"
+                  : "Deleting ship note…"
+                : feed.operation.error}
+            </span>
+            {feed.operation.status === "failed" && (
+              <>
+                <button
+                  className="text-button"
+                  onClick={() => void feed.retryOperation()}
+                >
+                  {feed.operation.kind === "disconnect"
+                    ? "Retry disconnect"
+                    : "Retry delete"}
+                </button>
+                <button className="text-button" onClick={() => feed.refresh()}>
+                  Reload activity
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        {feed.error && !feed.operation && (
           <div className="notice error-notice" role="alert">
             <span>{feed.error}</span>
             <button className="text-button" onClick={openConnect}>
@@ -718,7 +846,7 @@ export default function App() {
             </button>
           </div>
         )}
-        {!feed.error && feed.notice && (
+        {!feed.error && !feed.operation && feed.notice && (
           <div className="notice">
             <span>{feed.notice}</span>
           </div>
@@ -729,7 +857,7 @@ export default function App() {
               <div className="orbit-layout">
                 <section
                   className="orbit-workspace"
-                  aria-label="Organization activity in Orbit"
+                  aria-label="Workspace activity in Orbit"
                 >
                   <div className="orbit-topline">
                     <span>
@@ -739,13 +867,14 @@ export default function App() {
                     <span>
                       {replay
                         ? `Replay · ${clock(cutoff, "7d")}`
-                        : `${repositories.length} ${repositories.length === 1 ? "repository" : "repositories"}`}
+                        : `${repositories.length} ${personal ? (repositories.length === 1 ? "source" : "sources") : repositories.length === 1 ? "repository" : "repositories"}`}
                     </span>
                   </div>
                   <div className="orbit-stage">
                     <OrbitScene
                       events={sceneEvents}
                       repositories={repositories}
+                      journal={personal}
                       rangeStart={range.start}
                       rangeEnd={range.end}
                       cutoff={cutoff}
@@ -764,7 +893,11 @@ export default function App() {
                             ? "Finding your orbit…"
                             : "Your next chapter starts here."}
                         </h2>
-                        <p>No received activity in this time window.</p>
+                        <p>
+                          {personal
+                            ? "A ship note or your next GitHub event will make the first mark."
+                            : "No received activity in this time window."}
+                        </p>
                         {!feed.demo && (
                           <button className="text-button" onClick={useDemo}>
                             Explore Orbit with sample data{" "}
@@ -787,8 +920,13 @@ export default function App() {
                       <span>reviews submitted</span>
                     </div>
                     <div>
-                      <strong>{counts.contributors}</strong>
-                      <span>contributors</span>
+                      <strong>
+                        {personal
+                          ? visible.filter((event) => event.type === "note")
+                              .length
+                          : counts.contributors}
+                      </strong>
+                      <span>{personal ? "ship notes" : "contributors"}</span>
                     </div>
                     <div className="metric-total">
                       <strong>{counts.total}</strong>
@@ -994,7 +1132,9 @@ export default function App() {
         {page === "repositories" && (
           <section className="repositories-page">
             <div className="section-heading">
-              <h2>{allRepositories.length} repositories</h2>
+              <h2>
+                {allRepositories.length} {personal ? "sources" : "repositories"}
+              </h2>
               <span className="period-note">Weekly activity · UTC</span>
             </div>
             <div className="repository-list">
@@ -1037,7 +1177,7 @@ export default function App() {
             {!allRepositories.length && (
               <div className="empty-state">
                 <h3>Repositories appear with activity</h3>
-                <p>Connect your organization to start receiving events.</p>
+                <p>Connect GitHub to start receiving repository activity.</p>
                 <button className="button" onClick={openConnect}>
                   Manage connection
                 </button>
@@ -1048,8 +1188,10 @@ export default function App() {
         <footer className="app-footer">
           <span>
             {feed.demo
-              ? "Sample data · No GitHub account connected"
-              : `${feed.organization} · Received activity only`}
+              ? "Fictional sample data"
+              : personal
+                ? "Private journal · visible only to you"
+                : `${feed.organization} · Private workspace`}
           </span>
           <div>
             {page === "orbit" && (
@@ -1079,63 +1221,22 @@ export default function App() {
         </div>
       )}
       {modal === "connect" && (
-        <Modal title="Connect your organization" onClose={closeConnect}>
-          <p className="modal-description">
-            Bring your team’s GitHub activity into Orbit. Public activity needs
-            only an organization name.
-          </p>
-          <form onSubmit={connect}>
-            <label className="field-label" htmlFor="org">
-              GitHub organization
-            </label>
-            <div className="input-with-prefix">
-              <span>github.com/</span>
-              <input
-                id="org"
-                required
-                value={orgInput}
-                onChange={(e) => setOrgInput(e.target.value)}
-                placeholder="your-organization"
-                autoComplete="off"
-              />
-            </div>
-            <label className="field-label" htmlFor="access-key">
-              Dashboard access key <span>Optional</span>
-            </label>
-            <input
-              id="access-key"
-              className="text-input"
-              type="password"
-              value={keyInput}
-              onChange={(e) => setKeyInput(e.target.value)}
-              placeholder="For a protected feed"
-              autoComplete="off"
-            />
-            <p className="field-hint">
-              Your dashboard key stays in this tab’s memory. GitHub tokens
-              belong on your server.
-            </p>
-            {connectError && (
-              <p className="form-error" role="alert">
-                {connectError}
-              </p>
-            )}
-            <button
-              className="button primary full-width"
-              disabled={connecting}
-              type="submit"
-            >
-              {connecting ? (
-                <LoaderCircle size={16} className="spin" />
-              ) : (
-                <Github size={16} />
-              )}{" "}
-              {connecting ? "Connecting…" : "Connect organization"}
-            </button>
-          </form>
-          <button className="text-button demo-link" onClick={useDemo}>
-            Explore the demo instead <ArrowUpRight size={14} />
-          </button>
+        <Modal
+          title={feed.session.user ? "Your workspace" : "Your shipping journal"}
+          onClose={() => setModal(null)}
+        >
+          <AccountPanel feed={feed} onClose={() => setModal(null)} />
+        </Modal>
+      )}
+      {modal === "note" && canWriteNote && (
+        <Modal title="Add a ship note" onClose={() => setModal(null)}>
+          <ShipNoteComposer
+            onSave={async (input) => {
+              await feed.addNote(input);
+              setModal(null);
+              setToast("Ship note saved privately");
+            }}
+          />
         </Modal>
       )}
       {modal === "rules" && (
@@ -1171,19 +1272,29 @@ export default function App() {
       {modal === "settings" && (
         <Modal title="Workspace settings" onClose={() => setModal(null)}>
           <section className="settings-section">
-            <h3>GitHub connection</h3>
+            <h3>
+              {feed.session.user ? feed.session.user.name : "Your account"}
+            </h3>
             <p>
               {feed.demo
                 ? "You’re exploring fictional sample activity."
-                : `Connected to ${feed.organization}.`}
+                : personal
+                  ? "Your journal is private and visible only to you."
+                  : `Viewing ${feed.organization}. Repository access is checked for your account.`}
             </p>
             <button className="button primary" onClick={openConnect}>
-              <Github size={15} />
-              {feed.demo ? "Connect GitHub" : "Change organization"}
+              {feed.session.user ? "Account and GitHub connections" : "Sign in"}
             </button>
-            {!feed.demo && (
-              <button className="text-button" onClick={useDemo}>
-                Disconnect and use demo
+            {!feed.demo && feed.githubConnected && (
+              <button
+                className="text-button"
+                disabled={syncing}
+                onClick={() => void syncGithub()}
+              >
+                <RefreshCw size={14} className={syncing ? "spin" : ""} />
+                {syncing
+                  ? "Importing recent activity…"
+                  : "Sync GitHub activity"}
               </button>
             )}
           </section>
@@ -1217,18 +1328,18 @@ export default function App() {
             </button>
           </section>
           <section className="settings-section">
-            <h3>Run it for your team</h3>
+            <h3>A journal for what you build</h3>
             <p>
-              Any GitHub organization can use ship.live. Connect organization
-              webhooks on your server for immediate activity from private
-              repositories. See the README for setup.
+              Keep a personal ship journal or follow your team’s work. GitHub
+              connections use the repositories you choose in the GitHub App
+              installation.
             </p>
             <span className="version">ship.live / 0.1.0</span>
           </section>
         </Modal>
       )}
       {detail && (
-        <Modal title="Activity details" onClose={() => setDetail(null)}>
+        <Modal title="Activity details" onClose={() => setDetailId(null)}>
           <div className="detail-person">
             <Avatar
               login={detail.actor.login}
@@ -1243,7 +1354,7 @@ export default function App() {
           <h3 className="detail-title">{detail.title}</h3>
           <p className="detail-repo">
             <FolderGit2 size={15} />
-            {detail.repo}
+            {detail.type === "note" ? "Private journal" : detail.repo}
             {detail.number ? ` #${detail.number}` : ""}
           </p>
           <p className="detail-date">
@@ -1255,10 +1366,18 @@ export default function App() {
               <span>−{detail.deletions ?? 0} deletions</span>
             </p>
           )}
-          <p className="field-hint">
-            Base recognition: {EVENT_META[detail.type].points} XP. The weekly
-            board applies duplicate and review limits.
-          </p>
+          {detail.body && <p className="note-body">{detail.body}</p>}
+          {!personal && detail.type !== "note" && (
+            <p className="field-hint">
+              Base recognition: {EVENT_META[detail.type].points} XP. The weekly
+              board applies duplicate and review limits.
+            </p>
+          )}
+          {detail.type === "note" && (
+            <p className="privacy-note">
+              <LockKeyhole size={14} /> Only you can see this ship note.
+            </p>
+          )}
           {!feed.demo && safeUrl(detail.url) ? (
             <a
               className="button primary full-width"
@@ -1269,11 +1388,21 @@ export default function App() {
               View on GitHub <ExternalLink size={15} />
             </a>
           ) : (
-            <p className="field-hint">
-              {feed.demo
-                ? "This is fictional sample activity."
-                : "No GitHub link was supplied for this event."}
-            </p>
+            detail.type !== "note" && (
+              <p className="field-hint">
+                {feed.demo
+                  ? "This is fictional sample activity."
+                  : "No GitHub link was supplied for this event."}
+              </p>
+            )
+          )}
+          {detail.type === "note" && canWriteNote && (
+            <button
+              className="text-button danger-button"
+              onClick={() => void deleteNote(detail.id)}
+            >
+              <Trash2 size={14} /> Delete ship note
+            </button>
           )}
         </Modal>
       )}
