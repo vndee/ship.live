@@ -1,4 +1,3 @@
-import { EventEmitter } from "node:events";
 import express, {
   type ErrorRequestHandler,
   type Request,
@@ -12,14 +11,14 @@ import {
   webhookOrganization,
 } from "./normalize.js";
 import { verifyAccessKey, verifyWebhookSignature } from "./security.js";
-import { combineEvents, EventStore } from "./store.js";
+import { combineEvents, type EventStore } from "./store.js";
 
 export interface ServerConfig extends GitHubConfig {
   webhookSecret?: string;
   dashboardAccessKey?: string;
 }
 
-export function createApp(
+export async function createApp(
   config: ServerConfig,
   store: EventStore,
   github = new GitHubFeed(config),
@@ -28,16 +27,16 @@ export function createApp(
     throw new Error("GITHUB_ORG must be a GitHub organization name.");
   if ((config.token || config.webhookSecret) && !config.organization)
     throw new Error("Set GITHUB_ORG when configuring GitHub credentials.");
+  if (config.organization && (config.token || config.webhookSecret))
+    await store.protectOrganization(config.organization);
   const app = express();
   app.disable("x-powered-by");
-  const stream = new EventEmitter();
-  stream.setMaxListeners(110);
   let connections = 0;
   const attempts = new Map<string, { count: number; reset: number }>();
 
-  function protectedFeed(org: string): boolean {
+  async function protectedFeed(org: string): Promise<boolean> {
     return (
-      store.requiresProtection(org) ||
+      (await store.requiresProtection(org)) ||
       (org.toLowerCase() === config.organization?.toLowerCase() &&
         Boolean(config.token || config.webhookSecret))
     );
@@ -48,8 +47,16 @@ export function createApp(
       throw new FeedError(400, "Enter a valid GitHub organization name.");
     return organization;
   }
-  function authorize(request: Request, organization: string): void {
-    if (!protectedFeed(organization)) return;
+  async function authorize(
+    request: Request,
+    organization: string,
+  ): Promise<void> {
+    if (!(await protectedFeed(organization))) return;
+    if (organization.toLowerCase() !== config.organization?.toLowerCase())
+      throw new FeedError(
+        403,
+        "This instance does not serve that protected organization.",
+      );
     if (!config.dashboardAccessKey)
       throw new FeedError(
         503,
@@ -92,12 +99,13 @@ export function createApp(
     next();
   });
 
-  app.get("/api/health", (_request, response) => {
+  app.get("/api/health", async (_request, response) => {
+    await store.ping();
     response.json({
       status: "ok",
       configuredOrg: config.organization,
       privateFeed: config.organization
-        ? protectedFeed(config.organization)
+        ? await protectedFeed(config.organization)
         : false,
       webhookConfigured: Boolean(config.webhookSecret),
     });
@@ -106,10 +114,10 @@ export function createApp(
   app.get("/api/feed", async (request, response, next) => {
     try {
       const organization = organizationFromRequest(request);
-      authorize(request, organization);
+      await authorize(request, organization);
       const configured =
         organization.toLowerCase() === config.organization?.toLowerCase();
-      const saved = configured ? store.list(organization) : [];
+      const saved = configured ? await store.list(organization) : [];
       let feed;
       try {
         feed = await github.get(organization);
@@ -127,16 +135,18 @@ export function createApp(
           updatedAt: saved[0].occurredAt,
           notice: `${error.message} Showing saved activity.`,
         };
+        await authorize(request, organization);
         response.json(fallback);
         return;
       }
       if (configured)
         await store.merge(organization, feed.events, { preferExisting: true });
       const result: FeedResponse = {
-        events: combineEvents(
-          feed.events,
-          configured ? store.list(organization) : [],
-        ),
+        // Every configured event has been reconciled in storage. Recombining raw
+        // upstream events could revive an old issue closure outside the feed limit.
+        events: configured
+          ? await store.list(organization)
+          : combineEvents(feed.events),
         organization,
         source: "github",
         updatedAt: feed.updatedAt,
@@ -145,16 +155,19 @@ export function createApp(
             ? "Public GitHub activity plus received webhooks. Webhooks stream live; public API events may be delayed."
             : "Public GitHub activity. GitHub can delay API events by 30 seconds to 6 hours. Connect an organization webhook for live and private activity.",
       };
+      // Another instance may have protected this organization during the read.
+      await authorize(request, organization);
       response.json(result);
     } catch (error) {
       next(error);
     }
   });
 
-  app.get("/api/events", (request, response, next) => {
+  app.get("/api/events", async (request, response, next) => {
     try {
       const organization = organizationFromRequest(request).toLowerCase();
-      authorize(request, organization);
+      await authorize(request, organization);
+      if (request.destroyed) return;
       if (connections >= 100)
         throw new FeedError(
           503,
@@ -169,18 +182,47 @@ export function createApp(
       });
       response.flushHeaders();
       response.write("retry: 5000\nevent: connected\ndata: {}\n\n");
-      const listener = (org: string, event: unknown) => {
-        if (org === organization && !response.writableEnded)
-          response.write(`event: activity\ndata: ${JSON.stringify(event)}\n\n`);
-      };
-      stream.on("activity", listener);
+      let closed = false;
+      let queued = 0;
+      let pending = Promise.resolve();
+      const unsubscribe = store.subscribe((org, eventId) => {
+        if (org !== organization || closed) return;
+        if (++queued > 100) {
+          // Slow clients can recover via the regular feed rather than buffering forever.
+          response.end();
+          return;
+        }
+        pending = pending
+          .then(async () => {
+            if (closed) return;
+            // Recheck existing streams: a different instance can enable private ingestion.
+            await authorize(request, organization);
+            const event = await store.get(organization, eventId);
+            await authorize(request, organization);
+            if (event && !closed && !response.writableEnded) {
+              if (response.writableLength > 1_048_576) response.end();
+              else
+                response.write(
+                  `event: activity\ndata: ${JSON.stringify(event)}\n\n`,
+                );
+            }
+          })
+          .catch(() => {
+            // A revoked key or unavailable database must not leak cached private events.
+            response.end();
+          })
+          .finally(() => {
+            queued -= 1;
+          });
+      });
       const heartbeat = setInterval(
         () => response.write(": heartbeat\n\n"),
         25_000,
       );
-      request.on("close", () => {
+      response.once("close", () => {
+        closed = true;
         clearInterval(heartbeat);
-        stream.off("activity", listener);
+        unsubscribe();
         connections -= 1;
       });
     } catch (error) {
@@ -257,11 +299,6 @@ export function createApp(
           restricted: true,
           deliveryId,
         });
-        const storedEvent = store
-          .list(org)
-          .find((savedEvent) => savedEvent.id === event.id);
-        if (!result.duplicate && storedEvent)
-          stream.emit("activity", org.toLowerCase(), storedEvent);
         response
           .status(202)
           .json({ accepted: true, duplicate: result.duplicate });
@@ -294,7 +331,7 @@ export function createApp(
     ) {
       response.status(413).json({
         error:
-          "Webhook payload is too large. The local MVP accepts payloads up to 2 MB.",
+          "Webhook payload is too large. Payloads up to 2 MB are accepted.",
       });
       return;
     }

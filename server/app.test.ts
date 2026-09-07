@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import test, { type TestContext } from "node:test";
+import type { ActivityEvent, FeedResponse } from "../shared/types.js";
+import { getMetrics } from "../src/lib/activity.js";
 import { createApp, type ServerConfig } from "./app.js";
 import { GitHubFeed } from "./github.js";
-import { EventStore } from "./store.js";
+import { MemoryEventStore, type EventStore } from "./store.js";
 
 const config = {
   organization: "our-team",
@@ -33,14 +35,15 @@ async function setup(
   t: TestContext,
   options: ServerConfig = config,
   existing?: EventStore,
+  upstreamEvents: unknown[] = [],
 ) {
-  const store = existing ?? (await EventStore.open(null));
+  const store = existing ?? new MemoryEventStore();
   const calls: { input: unknown; init?: RequestInit }[] = [];
   const fetcher: typeof fetch = async (input, init) => {
     calls.push({ input, init });
-    return new Response("[]");
+    return new Response(JSON.stringify(upstreamEvents));
   };
-  const app = createApp(options, store, new GitHubFeed(options, fetcher));
+  const app = await createApp(options, store, new GitHubFeed(options, fetcher));
   const server = app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
   t.after(() => {
@@ -103,7 +106,7 @@ test("verified webhook is persisted once and visible only in the authorized orga
   assert.equal((await first.json()).duplicate, false);
   const second = await fetch(`${url}/api/webhooks/github`, signedBody());
   assert.equal((await second.json()).duplicate, true);
-  assert.equal(store.list("our-team").length, 1);
+  assert.equal((await store.list("our-team")).length, 1);
   const response = await fetch(`${url}/api/feed?org=our-team`, {
     headers: { "x-dashboard-key": config.dashboardAccessKey },
   });
@@ -130,7 +133,7 @@ test("webhooks reject tampering and wrong organization without writing any event
     (await fetch(`${url}/api/webhooks/github`, wrongOrg)).status,
     403,
   );
-  assert.equal(store.list("our-team").length, 0);
+  assert.equal((await store.list("our-team")).length, 0);
 });
 
 test("an authenticated SSE connection receives a verified webhook immediately", async (t) => {
@@ -192,6 +195,63 @@ test("reclosing an issue streams the original closure so weekly XP cannot be ear
   await reader.cancel();
 });
 
+test("public refresh cannot revive issue credit when its canonical closure is older than the 2000-event feed", async (t) => {
+  const store = new MemoryEventStore();
+  const issue: ActivityEvent = {
+    id: "our-team/private-service:issue:10:closed",
+    type: "issue",
+    actor: { login: "engineer" },
+    repo: "our-team/private-service",
+    title: "A completed issue",
+    occurredAt: "2026-09-07T08:00:00.000Z",
+    number: 10,
+  };
+  const recent = Array.from({ length: 2000 }, (_, index): ActivityEvent => ({
+    ...issue,
+    id: `recent-push-${index}`,
+    type: "push",
+    occurredAt: new Date(
+      Date.parse("2026-09-14T08:00:00.000Z") + index * 1000,
+    ).toISOString(),
+  }));
+  await store.merge("our-team", [issue, ...recent]);
+  const upstream = [
+    {
+      id: "upstream-reclosed-issue",
+      type: "IssuesEvent",
+      public: true,
+      actor: { login: "engineer" },
+      repo: { name: issue.repo },
+      created_at: "2026-09-15T08:00:00.000Z",
+      payload: {
+        action: "closed",
+        issue: {
+          number: 10,
+          title: issue.title,
+          state_reason: "completed",
+          closed_at: "2026-09-15T08:00:00.000Z",
+        },
+      },
+    },
+  ];
+  const { url } = await setup(t, config, store, upstream);
+  const response = await fetch(`${url}/api/feed?org=our-team`, {
+    headers: { "x-dashboard-key": config.dashboardAccessKey },
+  });
+  assert.equal(response.status, 200);
+  const feed: FeedResponse = await response.json();
+  assert.equal(feed.events.length, 2000);
+  assert.equal(
+    feed.events.some((event) => event.id === issue.id),
+    false,
+  );
+  assert.equal(
+    getMetrics(feed.events, Date.parse("2026-09-16T08:00:00.000Z")).xp,
+    0,
+  );
+  assert.deepEqual(await store.get("our-team", issue.id), issue);
+});
+
 test("webhook configuration alone protects the feed and requires a dashboard key", async (t) => {
   const { url } = await setup(t, {
     organization: "our-team",
@@ -205,7 +265,7 @@ test("webhook configuration alone protects the feed and requires a dashboard key
 });
 
 test("removing webhook credentials does not expose previously saved private data", async (t) => {
-  const store = await EventStore.open(null);
+  const store = new MemoryEventStore();
   await store.merge("our-team", [], { restricted: true });
   const { url } = await setup(t, { organization: "our-team" }, store);
   assert.equal((await fetch(`${url}/api/feed?org=our-team`)).status, 503);
@@ -217,4 +277,37 @@ test("invalid organization inputs are rejected before a GitHub request", async (
   assert.equal((await fetch(`${url}/api/feed?org=..%2Fsecret`)).status, 400);
   assert.equal((await fetch(`${url}/api/feed`)).status, 400);
   assert.equal(calls.length, 0);
+});
+
+test("one organization's dashboard key cannot open another organization's protected stream", async (t) => {
+  const store = new MemoryEventStore();
+  await store.merge("another-team", [], { restricted: true });
+  const { url } = await setup(t, config, store);
+  const response = await fetch(`${url}/api/events?org=another-team`, {
+    headers: { "x-dashboard-key": config.dashboardAccessKey },
+  });
+  await response.body?.cancel();
+  assert.equal(response.status, 403);
+});
+
+test("a webhook on one app reaches an authenticated stream on another app sharing its store", async (t) => {
+  const first = await setup(t);
+  const second = await setup(t, config, first.store);
+  const abort = new AbortController();
+  t.after(() => abort.abort());
+  const response = await fetch(`${second.url}/api/events?org=our-team`, {
+    headers: { "x-dashboard-key": config.dashboardAccessKey },
+    signal: AbortSignal.any([abort.signal, AbortSignal.timeout(1500)]),
+  });
+  const reader = response.body!.getReader();
+  await reader.read();
+  const delivery = await fetch(
+    `${first.url}/api/webhooks/github`,
+    signedBody(),
+  );
+  assert.equal(delivery.status, 202);
+  const frame = new TextDecoder().decode((await reader.read()).value);
+  assert.match(frame, /event: activity/);
+  assert.match(frame, /Private change/);
+  await reader.cancel();
 });

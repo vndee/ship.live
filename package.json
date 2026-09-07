@@ -22,16 +22,20 @@
     "dev:server": "tsx watch server/index.ts",
     "build": "tsc --noEmit && vite build",
     "start": "tsx server/production.ts",
+    "db:migrate": "tsx server/migrate.ts",
+    "db:import-json": "tsx server/import-json.ts",
     "test": "node --import tsx --test src/lib/*.test.ts server/*.test.ts",
+    "test:db": "node --import tsx server/test-database.ts",
     "check": "tsc --noEmit",
-    "format": "prettier --write src server shared docs .github *.json *.ts *.md index.html",
-    "format:check": "prettier --check src server shared docs .github *.json *.ts *.md index.html"
+    "format": "prettier --write src server shared docs .github *.json *.ts *.md *.yaml index.html",
+    "format:check": "prettier --check src server shared docs .github *.json *.ts *.md *.yaml index.html"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.3.0",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "lucide-react": "^0.468.0",
+    "pg": "^8.23.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tsx": "^4.20.5"
@@ -39,6 +43,7 @@
   "devDependencies": {
     "@types/express": "^5.0.3",
     "@types/node": "^22.18.0",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.3",
