@@ -2,8 +2,15 @@ import "dotenv/config";
 import express from "express";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createApp } from "./app.js";
+import { AuthService, authConfigFromEnv } from "./auth.js";
+import { GitHubApp } from "./github-app.js";
 import { PostgresEventStore } from "./postgres-store.js";
+import {
+  githubAppConfigFromEnv,
+  trustProxyHopsFromEnv,
+} from "./runtime-config.js";
+import { createWorkspaceApp } from "./workspace-app.js";
+import { WorkspaceStore } from "./workspace-store.js";
 
 async function main(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
@@ -20,12 +27,6 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const config = {
-    organization: process.env.GITHUB_ORG?.trim() || undefined,
-    token: process.env.GITHUB_TOKEN?.trim() || undefined,
-    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim() || undefined,
-    dashboardAccessKey: process.env.DASHBOARD_ACCESS_KEY?.trim() || undefined,
-  };
   let store: PostgresEventStore;
   try {
     store = await PostgresEventStore.open(databaseUrl);
@@ -37,9 +38,33 @@ async function main(): Promise<void> {
     return;
   }
   try {
-    const app = await createApp(config, store);
+    const authConfig = authConfigFromEnv();
+    const githubConfig = githubAppConfigFromEnv(authConfig);
+    const auth = new AuthService(authConfig, store.pool);
+    const workspaces = new WorkspaceStore(
+      store.pool,
+      process.env.TOKEN_ENCRYPTION_KEY?.trim(),
+    );
+    const app = createWorkspaceApp({
+      auth,
+      store,
+      workspaces,
+      github: githubConfig ? new GitHubApp(githubConfig) : undefined,
+      webhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim(),
+      trustProxyHops: trustProxyHopsFromEnv(),
+    });
     if (process.env.NODE_ENV === "production") {
       const dist = fileURLToPath(new URL("../dist/", import.meta.url));
+      app.use((_request, response, next) => {
+        response.set({
+          "Content-Security-Policy":
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://avatars.githubusercontent.com https://*.googleusercontent.com; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+          "X-Content-Type-Options": "nosniff",
+          "Referrer-Policy": "no-referrer",
+          "X-Frame-Options": "DENY",
+        });
+        next();
+      });
       app.use(express.static(dist));
       app.get(/.*/, (_request, response) =>
         response.sendFile(resolve(dist, "index.html")),
@@ -74,7 +99,7 @@ async function main(): Promise<void> {
   } catch {
     await store.close();
     console.error(
-      "Could not initialize ship.live. Check the organization configuration and database connection.",
+      "Could not initialize ship.live. Check the Supabase, GitHub App, and database configuration.",
     );
     process.exitCode = 1;
   }

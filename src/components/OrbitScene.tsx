@@ -10,6 +10,7 @@ import {
 export interface OrbitSceneProps {
   events: ActivityEvent[];
   repositories: string[];
+  journal?: boolean;
   rangeStart: number;
   rangeEnd: number;
   cutoff: number;
@@ -37,6 +38,7 @@ const verbs: Record<ActivityEvent["type"], string> = {
   issue: "closed an issue",
   release: "released",
   pr: "opened a pull request",
+  note: "added a ship note",
 };
 
 const ink = "#e5e9e3";
@@ -598,8 +600,14 @@ export function OrbitScene(props: OrbitSceneProps) {
       </span>
       <span className="orbit-scene-count">
         {repositoryCount}{" "}
-        {repositoryCount === 1 ? "repository" : "repositories"} ·{" "}
-        {visible.length} {visible.length === 1 ? "event" : "events"}
+        {props.journal
+          ? repositoryCount === 1
+            ? "source"
+            : "sources"
+          : repositoryCount === 1
+            ? "repository"
+            : "repositories"}{" "}
+        · {visible.length} {visible.length === 1 ? "event" : "events"}
       </span>
       <span
         className="orbit-scene-status"

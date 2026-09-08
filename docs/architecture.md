@@ -1,98 +1,95 @@
 # Architecture
 
-ship.live is a React application and an Express API backed by shared PostgreSQL. Vite runs separately in development; the production server serves the built frontend and API together. There is no separate worker, queue service, or hosted analytics dependency. Every API process requires `DATABASE_URL`; the in-memory store exists only for unit tests.
+ship.live is a React interface and Express API backed by PostgreSQL, with Supabase Auth for Google/GitHub sign-in. A separate GitHub App provides repository activity. Production runs as one Node.js service; Vite is separate only during development. No Redis service or separate worker is required.
 
 ## Data flow
 
 ```mermaid
 flowchart LR
-  GH[GitHub public events API] -->|Polled on feed requests| REST[GitHubFeed]
-  REST --> NORMAL[Event normalization]
-  WH[GitHub organization webhook] --> VERIFY[Signature and organization checks]
-  VERIFY --> NORMAL
-  NORMAL --> STORE[Shared PostgreSQL]
-  NORMAL --> FEED[Feed response]
-  STORE --> FEED
-  STORE -->|Committed webhook event reference| NOTIFY[PostgreSQL LISTEN / NOTIFY]
-  NOTIFY --> INSTANCES[App replicas read canonical event]
-  INSTANCES --> SSE[SSE streams]
-  FEED --> HOOK[React useFeed]
-  SSE --> HOOK
-  HOOK --> VIEW[Orbit, feed, and replay]
-  HOOK --> TEAM[Weekly recognition]
+  USER[Browser] -->|Google or GitHub login| BFF[Express Auth routes]
+  BFF --> AUTH[Supabase Auth]
+  AUTH -->|Verified identity| BFF
+  BFF -->|HttpOnly cookies| USER
+  USER -->|Authenticated request| API[Workspace API]
+  API -->|Session and owner checks| DB[(PostgreSQL)]
+  API -->|Viewer user token| GH[GitHub App API]
+  GH -->|Permitted repository IDs| API
+  HOOK[Signed GitHub webhooks] --> INGEST[Installation and repository checks]
+  INGEST --> DB
+  DB -->|Committed event references| LISTEN[LISTEN / NOTIFY]
+  LISTEN -->|Authorized SSE updates| USER
+  API -->|Viewer-filtered feed and journal| USER
 ```
 
-Only the configured organization's public polling results are persisted. Other public organizations are browsed through the server's memory cache. Webhooks belong to the one organization configured on that instance.
+## Identity and session boundary
+
+`server/auth.ts` owns the Supabase PKCE start/callback, session inspection, logout, and mutation checks. A login transaction is random, browser-bound, expiring, and consumed atomically in PostgreSQL. Only Google and GitHub login providers are exposed. Exact `APP_URL` configuration controls redirects and mutation Origin checks.
+
+The callback verifies the Supabase user and stores a profile keyed by that user's UUID. Supabase manages identity linking, including its automatic matching-email behavior; ship.live does not add another email-based linking layer. GitHub data connection is separate from login, so a Google user can write private notes before connecting GitHub.
+
+Supabase access/refresh credentials live in host-only HttpOnly cookies. Login-provider tokens are removed before final cookie writes. An additional opaque app cookie has only its SHA-256 hash stored in PostgreSQL, with a seven-day expiry. This shared guard prevents replaying a still-valid Supabase token after local logout. Session creation rotates the prior app session. There is no browser Supabase client or localStorage token persistence.
+
+`authenticate` verifies the current Supabase user and matches it to the shared app session. `requireMutation` also requires the exact Origin and a session-bound CSRF token. `assertActive` rechecks shared revocation and the original Supabase credential during long-running work/SSE; an expired stream closes so a new HTTP request can refresh cookies. Responses that set or return session state are private and not cacheable.
+
+## Workspaces and repository permissions
+
+The personal workspace belongs to one authenticated UUID. Manual notes have owner-only read/write/delete access. Note events support progress that is not represented by a GitHub event; their XP is zero.
+
+A connected GitHub identity is established with a separate GitHub App user-authorization flow, bound to the app user/session with state and PKCE. Tokens are encrypted with authenticated encryption and an environment key. Refresh updates are serialized in PostgreSQL because GitHub rotates both access and refresh tokens. Replacing the connected GitHub account invalidates prior workspace memberships/connections.
+
+Each new GitHub authorization has a distinct database generation. Reads recheck it after remote requests, and installation attachment checks it inside a transaction. A callback claims its OAuth flow once, retains that claim during code exchange, and commits credentials only while both the claim and app session remain valid. Disconnect invalidates pending claims and workspace associations; a callback already exchanging its code cannot restore that connection. An uncertain token refresh also clears those associations. These operations lock the user row before connection rows so concurrent replicas apply them in order.
+
+GitHub App installations can belong to a personal account or organization. Installation choices and viewer repository grants are obtained with that person's **user token**, not the App's broader installation token. Permissions are the intersection of App access and user access. Returned installation IDs are verified; setup query parameters alone never establish ownership.
+
+Team membership in ship.live is not an organization-wide private-data grant. Feed queries filter immutable repository IDs before applying the event limit. Metrics, repository labels, and search operate on that filtered collection. A viewer who loses access does not receive stored private events as a fallback. Personal and team workspaces are not publicly shareable in this version.
+
+## GitHub ingestion
+
+`server/github-app.ts` handles App OAuth, user/installations/repository lookup, token creation, and bounded recent-history reads. It uses fixed GitHub origins, read-only permissions, explicit timeouts, and complete pagination for access checks. An incomplete or failed permission listing grants no partial cached access.
+
+Recent synchronization examines a limited last-30-day history, in repository batches of 20: up to 100 PRs, 100 closed issues, 100 releases, and the first 100 reviews for up to 30 recently updated PRs per repository. This is a partial import; push activity begins with future webhooks. The API includes a completeness notice and failures rather than implying a full archive.
+
+The webhook handler verifies HMAC over the raw body before interpreting an event. Installation and repository identity determine its storage scope. Lifecycle deliveries revoke user authorization, suspend/remove installations, and invalidate changed repository selections. Repository-selection changes cannot rely solely on a removed-ID list because switching from all repositories to selected repositories may provide an empty list.
+
+Normalized events store activity metadata, not cloned source files or raw webhook bodies. IDs identify the underlying PR, review, push, issue closure, or release where possible. Merges credit the PR author; reviews credit their author. Canonical issue reconciliation preserves the first closure timestamp so reopen/reclose does not create a later week's credit. Delivery IDs and event updates commit transactionally.
+
+## PostgreSQL and realtime
+
+The schema contains shared auth profiles/sessions/flows, encrypted GitHub grants, workspaces, notes, installation/repository associations, event history, and delivery deduplication. Startup runs versioned SQL migrations under an advisory lock. Database failure stops startup; the memory adapter exists only for isolated tests.
+
+Application tables have RLS enabled and `PUBLIC`, `anon`, and `authenticated` grants revoked. They are backend-owned tables, without client Data API policies. Disable Supabase's unused Data API as an additional boundary. The server's owner role can bypass RLS, so parameterized SQL and explicit workspace/repository checks remain essential; database operators are trusted.
+
+Each app process has a query pool and a dedicated session for PostgreSQL `LISTEN`. Committed webhook updates notify other instances using event references, not private titles. Each instance reads canonical records and authorizes its own stream clients. Notifications are transient; listener reconnects and browser polling recover from missed messages. There is no historical SSE replay cursor.
+
+Use a direct connection or session pooler. A transaction pooler cannot preserve the listener session. Stored events and accepted deliveries do not expire automatically; the API/browser show a bounded latest-event view of up to 2,000 events per workspace. Retention, backups, and restore testing belong to the operator.
+
+## Browser and visualization
+
+`useFeed` loads the app session and authorized workspaces, polls the active feed, and reconciles SSE updates by event identity. Credentials and private records are not saved to localStorage. Changing account/workspace or losing authorization clears stale data; abort/generation checks prevent older requests from replacing the current view. Fictional demo activity stays separate.
+
+Orbit and the feed share time, text/type/repository filters, replay cutoff, and selected event. Motion pause, live-update pause, and replay are separate controls. Pausing the browser does not stop server ingestion. Canvas 2D projects deterministic event geometry, handles picking/keyboard navigation, respects reduced motion, and suspends animation when hidden.
+
+Weekly recognition uses the visible authorized events and the current week beginning Monday at 00:00 UTC. Bots, duplicates, and invalid/future timestamps do not earn credit. Base XP is 50 for releases, 30 for merges, 15 for reviews, 10 for completed issues, 5 for opened PRs, and zero for pushes and journal notes. Review XP is capped per reviewer, repository, PR, and UTC day. Incomplete history and differing repository permissions can produce different totals.
 
 ## Modules
 
-| Location                                                                  | Responsibility                                                                                         |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| [`shared/types.ts`](../shared/types.ts)                                   | `ActivityEvent` and `FeedResponse`, shared across frontend and backend.                                |
-| [`server/index.ts`](../server/index.ts)                                   | Loads environment settings, opens the store, and starts Express.                                       |
-| [`server/production.ts`](../server/production.ts)                         | Selects production mode before loading the server.                                                     |
-| [`server/app.ts`](../server/app.ts)                                       | API routes, authorization, webhook processing, live connections, and request limits.                   |
-| [`server/github.ts`](../server/github.ts)                                 | Public GitHub requests, ETag/poll interval caching, token isolation, and upstream errors.              |
-| [`server/normalize.ts`](../server/normalize.ts)                           | Converts supported REST events and webhooks to the same event contract.                                |
-| [`server/security.ts`](../server/security.ts)                             | Constant-time dashboard key comparison and HMAC webhook verification.                                  |
-| [`server/store.ts`](../server/store.ts)                                   | Async store contract, canonical event selection, and an in-memory implementation for unit tests.       |
-| [`server/postgres-store.ts`](../server/postgres-store.ts)                 | Shared event history, transactional deduplication, protection metadata, and schema migration.          |
-| [`server/postgres-notifications.ts`](../server/postgres-notifications.ts) | Dedicated PostgreSQL listener, reconnection, and event-reference distribution.                         |
-| [`server/migrations/`](../server/migrations/)                             | Versioned SQL schema.                                                                                  |
-| [`server/migrate.ts`](../server/migrate.ts)                               | Optional explicit schema migration command; startup also migrates automatically.                       |
-| [`server/import-json.ts`](../server/import-json.ts)                       | CLI for validating and importing a legacy JSON store without changing the source file.                 |
-| [`server/legacy-import.ts`](../server/legacy-import.ts)                   | Whole-file validation of legacy events, delivery IDs, and protection metadata.                         |
-| [`src/hooks/useFeed.ts`](../src/hooks/useFeed.ts)                         | Organization connection, demo state, polling, streaming, reconnects, and browser event reconciliation. |
-| [`src/lib/feedView.ts`](../src/lib/feedView.ts)                           | Time windows, text/type/repository filters, and counts for the current view.                           |
-| [`src/lib/activity.ts`](../src/lib/activity.ts)                           | UTC weekly recognition, XP eligibility, contributor ranking, and shared milestones.                    |
-| [`src/lib/orbit.ts`](../src/lib/orbit.ts)                                 | Deterministic repository/event geometry and camera projection.                                         |
-| [`src/components/OrbitScene.tsx`](../src/components/OrbitScene.tsx)       | Canvas rendering, picking, keyboard interaction, and motion lifecycle.                                 |
-| [`src/App.tsx`](../src/App.tsx)                                           | Shared UI state, navigation, selected events, replay, dialogs, and display controls.                   |
+| Location                                                         | Responsibility                                                                    |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `shared/auth.ts`, `shared/workspaces.ts`, `shared/types.ts`      | Session, workspace, note, and event contracts.                                    |
+| `server/index.ts`, `server/production.ts`                        | Environment validation, store startup, production serving, and shutdown.          |
+| `server/auth.ts`                                                 | Supabase sign-in, shared session guard, secure cookies, CSRF.                     |
+| `server/workspace-app.ts`                                        | Authenticated workspace routes, GitHub connection, webhooks, SSE.                 |
+| `server/workspace-store.ts`                                      | Owner/repository-scoped persistence, notes, encrypted grants, OAuth transactions. |
+| `server/github-app.ts`                                           | GitHub App authentication, permission lookup, and recent activity import.         |
+| `server/normalize.ts`                                            | Canonical activity metadata from GitHub payloads.                                 |
+| `server/postgres-store.ts`, `server/postgres-notifications.ts`   | Event reconciliation, migrations, durable history, database notifications.        |
+| `server/migrations/`                                             | Versioned auth, workspace, and event schemas.                                     |
+| `src/hooks/useFeed.ts`                                           | Session/workspace lifecycle, private feed synchronization, demo separation.       |
+| `src/lib/activity.ts`, `src/lib/feedView.ts`, `src/lib/orbit.ts` | Recognition, view filtering, and geometry.                                        |
+| `src/App.tsx`, `src/components/OrbitScene.tsx`                   | Journal/workspace UI and interactive visualization.                               |
 
-## Ingestion and identity
+The legacy `server/app.ts`, public-organization feed adapter, and JSON importer remain for compatibility tests and data recovery. The production entry point mounts only the authenticated workspace application. Old organization/key routes are not available, and legacy records are not automatically assigned to new accounts. See [upgrade notes](configuration.md#upgrading-an-existing-installation).
 
-Normalized events contain an ID, type, contributor, repository, title, and timestamp, with optional GitHub URL, number, and diff counts. REST and webhook paths share normalization so the same contribution can be reconciled across sources. Unsupported actions never become activity points.
+## Hosting
 
-IDs use the underlying contribution where possible: repository and PR number for merges, review ID for reviews, ref and head for pushes, issue number for closures, and release ID for releases. PR open and merge events are distinct. Merge credit belongs to the PR author; review credit belongs to the reviewer; release credit belongs to its author.
-
-The store combines records by organization and event ID. Public polling preserves existing stored versions, while webhook updates can replace them. Issue closure merging keeps the earliest received closure timestamp, preventing a reopen/reclose cycle from moving its credit into a later week. The canonical stored event is read and emitted to viewers after a successful webhook transaction.
-
-PostgreSQL enforces unique delivery IDs across the shared database and unique event IDs within each organization. Each accepted activity webhook writes its delivery ID, event, and protection metadata in one transaction. Organization row locks serialize canonical merges across processes. A rollback leaves no accepted delivery marker or partial event write. Event identity provides a second reconciliation layer.
-
-All normalized stored events and accepted delivery IDs remain in PostgreSQL without automatic expiration. Feed queries and the browser are capped at the latest 2,000 events per organization. Older stored records are not accessible through the current timeline or a history API. Public API limits and periods without ingestion still leave gaps; persistence does not backfill GitHub history.
-
-## Browser lifecycle
-
-`useFeed` initializes fictional demo data only when no organization is remembered. A saved organization starts with an empty event list while connecting, so demo activity cannot appear under a real organization's name. The legacy `pulse.organization` local-storage key is retained for compatibility. Dashboard credentials stay in React memory.
-
-The hook refreshes every 30 seconds and consumes `/api/events` through streaming `fetch`, which allows the dashboard key to be sent in a request header. Stream events and feed refreshes are merged by event ID, sorted, and capped. Disconnects retry; polling recovers stored events without requiring an SSE replay cursor. Connection generations and abort controllers keep stale responses from a canceled connection from replacing the active feed.
-
-Live-update pause, visual-motion pause, and timeline replay are separate controls. Pausing live updates stops polling and the stream in that browser; it does not stop server webhook ingestion. Pausing motion freezes the sculpture while allowing live data to update. Replay freezes the displayed time interval and applies a cutoff; it does not fetch missing history or change team scores.
-
-## View counts and recognition
-
-Orbit and the feed share a trailing 24-hour, 7-day, or 30-day range, repository/type/text filters, and replay cutoff. These view counts include bot activity. The selected event is synchronized between the feed and sculpture.
-
-Weekly recognition reads the received event collection independently of those view filters and uses the current week beginning Monday at 00:00 UTC. It excludes known bot login patterns, invalid/future timestamps, and duplicate IDs. Base XP is 50 for releases, 30 for merges, 15 for reviews, 10 for completed issues, 5 for opened PRs, and 0 for pushes. Review XP is capped once per reviewer, repository, PR number, and UTC day when the PR number is available; distinct review submissions remain visible in review counts.
-
-Shared weekly targets are 30 merges, 40 reviews, and 5 releases. Event details display base XP, while contributor totals apply eligibility and review caps. These measures celebrate received work; limited upstream history and the browser's 2,000-event window can make them incomplete even when older events exist in PostgreSQL.
-
-## Orbit rendering
-
-Each supplied event becomes one selectable point. Its angle comes from its timestamp, its repository determines its lane, and small ID-based offsets keep simultaneous events distinct. Sorted repository names make geometry independent of delivery ordering. Neutral filaments draw repository paths and do not represent invented events.
-
-The canvas projects the geometry into 2D with depth-based styling. Picking selects the underlying event; dragging and keyboard input change the camera. Idle movement is a bounded sway around the user's orientation. A conservative arrival effect applies only to unseen recent events timestamped after the scene mounted.
-
-The parent chooses motion defaults from the reduced-motion preference and honors an explicit user playback choice. The renderer follows that state, stops animation offscreen or in a hidden document, and releases animation frames, observers, and listeners on unmount.
-
-## Deployment boundary
-
-Each process uses a PostgreSQL query pool and a separate session connection for `LISTEN`. A webhook transaction calls `pg_notify` with only its organization and event ID. PostgreSQL delivers that reference after commit; listening instances check access, read the canonical record, and send it to their own SSE clients. Private event titles and payloads are not copied into notification messages. The database retains normalized events, not raw webhook payloads.
-
-Notifications are transient. The listener reconnects after a lost session, and regular browser polling reconciles missed events from durable storage. Neither PostgreSQL notifications nor the browser stream provide a historical replay cursor. The database endpoint must support a persistent session: use a direct connection or session-mode pooler, not a transaction-mode pooler.
-
-Startup applies versioned SQL migrations under a transaction-scoped advisory lock so concurrent replicas do not race schema setup. An unavailable database or failed migration stops startup; there is no local JSON fallback. `/api/health` checks database connectivity. Shutdown closes live responses, the listener, and the query pool.
-
-Every instance has one configured webhook organization. Replicas serving that organization must use the same database and GitHub/dashboard credentials. Instances configured for different organizations may share the database, but each instance authorizes protected feeds only for its own configured organization. A shared dashboard key is team access control, not user-level authorization or database-level tenant isolation.
-
-Upstream caches, request counters, and SSE connection limits remain local to each process. Use deployment-level controls if limits must apply across replicas. See [Configuration and hosting](configuration.md) for setup, retention, reverse-proxy considerations, and importing the previous JSON store.
+One Node service and PostgreSQL are sufficient. Supabase can provide both Auth and the database, with Railway hosting Node. Shared state supports replicas, while request counters and concurrent-stream limits remain process-local. An HTTPS origin, consistent secrets, database connection capacity, and access-controlled backups are operational requirements. [Configuration](configuration.md) and [Railway deployment](railway.md) describe setup and free-plan limitations.

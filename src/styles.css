@@ -101,8 +101,7 @@ p {
   border: 0;
 }
 .app-shell {
-  max-width: 1880px;
-  margin: auto;
+  width: 100%;
   padding: 0 42px;
 }
 .app-header {
@@ -1861,5 +1860,222 @@ h1 {
     animation: none !important;
     transition: none !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* Account and journal controls share Orbit's quiet surface and type scale. */
+textarea {
+  font: inherit;
+  color: var(--text);
+}
+textarea:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+}
+.demo-notice {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  margin: -12px 0 24px;
+}
+.oauth-buttons {
+  display: grid;
+  gap: 10px;
+}
+.disabled-link {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+.privacy-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 18px 0;
+}
+.privacy-note > svg {
+  margin-top: 3px;
+}
+.account-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 24px;
+}
+.account-identity > div {
+  flex: 1;
+  min-width: 0;
+}
+.account-identity strong,
+.account-identity small {
+  display: block;
+}
+.account-identity strong {
+  font-weight: 500;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.account-identity small {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.workspace-choices {
+  display: grid;
+}
+.workspace-choice {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  text-align: left;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.workspace-choice > span {
+  flex: 1;
+  min-width: 0;
+}
+.workspace-choice strong,
+.workspace-choice small {
+  display: block;
+}
+.workspace-choice strong {
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.workspace-choice small {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 5px;
+  line-height: 1.5;
+}
+.workspace-choice > svg {
+  color: var(--muted);
+}
+.installation-list {
+  display: grid;
+  gap: 16px;
+}
+.installation-choice {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 15px;
+}
+.installation-choice > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.installation-choice strong,
+.installation-choice small {
+  display: block;
+}
+.installation-choice strong {
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.installation-choice small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  margin-top: 3px;
+}
+.installation-choice details {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--muted);
+}
+.installation-choice summary {
+  cursor: pointer;
+}
+.installation-choice ul {
+  list-style: none;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.installation-choice li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 20px;
+  padding: 5px 0;
+}
+.installation-choice li > span {
+  overflow-wrap: anywhere;
+}
+.connection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 15px;
+  align-items: center;
+  margin-top: 20px;
+}
+.connection-actions .text-button {
+  margin-top: 0;
+}
+.operation-status {
+  color: var(--accent);
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  line-height: 1.6;
+  font-size: 12px;
+  margin: 16px 0;
+}
+.operation-status > svg {
+  margin-top: 3px;
+}
+.danger-button {
+  color: #e6aaa0;
+  margin-top: 18px;
+}
+.note-input {
+  resize: vertical;
+  min-height: 160px;
+  line-height: 1.7;
+}
+.note-body {
+  font-size: 14px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 20px 0;
+}
+.journal-reflection .goal-label > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.journal-reflection h3 {
+  margin: 18px 0 8px;
+}
+.journal-reflection p {
+  line-height: 1.7;
+}
+.journal-reflection > .text-button {
+  margin-top: 18px;
+}
+.sign-in-button {
+  white-space: nowrap;
+}
+@media (max-width: 700px) {
+  .app-header {
+    gap: 15px;
+  }
+  .header-tools {
+    gap: 7px;
+  }
+  .demo-notice {
+    font-size: 11px;
   }
 }

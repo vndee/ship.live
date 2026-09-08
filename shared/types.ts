@@ -1,5 +1,5 @@
 export type ActivityType =
-  "merge" | "review" | "push" | "issue" | "release" | "pr";
+  "merge" | "review" | "push" | "issue" | "release" | "pr" | "note";
 
 export interface ActivityEvent {
   id: string;
@@ -12,12 +12,14 @@ export interface ActivityEvent {
   number?: number;
   additions?: number;
   deletions?: number;
+  body?: string;
+  repositoryId?: number;
 }
 
 export interface FeedResponse {
   events: ActivityEvent[];
   organization: string;
-  source: "github" | "demo";
+  source: "github" | "demo" | "workspace";
   updatedAt: string;
   notice?: string;
 }

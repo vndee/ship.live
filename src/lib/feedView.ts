@@ -43,7 +43,12 @@ export function filterEvents(
     if (filters.repo && event.repo !== filters.repo) return false;
     if (filters.kind && event.type !== filters.kind) return false;
     if (!query) return true;
-    const fields = [event.title, event.actor.login, event.repo];
+    const fields = [
+      event.title,
+      event.actor.login,
+      event.repo,
+      event.body || "",
+    ];
     if (event.number !== undefined) fields.push(`#${event.number}`);
     return fields.some((field) => field.toLowerCase().includes(query));
   });

@@ -1,10 +1,10 @@
 # Contributing to ship.live
 
-Small, focused contributions are welcome: bug fixes, accessibility improvements, better documentation, and clearer ways to explore engineering activity. For a substantial change, open an issue describing the problem and proposed behavior first.
+Focused fixes, accessibility improvements, documentation, and useful ways to explore a builder's work are welcome. For substantial changes, open an issue describing the problem and intended behavior first.
 
 ## Local setup
 
-Fork the repository, clone your fork, and use Node.js 22.12+ (`nvm use` selects the version in `.nvmrc`). Docker Compose supplies the local PostgreSQL database.
+Use Node.js 22.12+ (`nvm use` selects `.nvmrc`), npm, and Docker Compose:
 
 ```sh
 npm ci
@@ -13,9 +13,9 @@ docker compose up -d --wait postgres
 npm run dev
 ```
 
-The frontend runs at `http://localhost:5173` and proxies `/api` to port 3001. The API requires `DATABASE_URL` and applies SQL migrations on startup. The example URL matches the local Compose service; its credentials are for development only. Demo mode needs no GitHub credentials. For frontend-only work without an API or database, use `npm run dev:web`.
+Open `http://127.0.0.1:5173`, consistently matching `APP_URL`. Vite proxies `/api` to port 3001. The API applies PostgreSQL migrations at startup. Local database credentials are development defaults; never reuse them for hosting. The fictional demo needs no provider configuration. `npm run dev:web` supports frontend-only demo work without PostgreSQL.
 
-See [configuration.md](docs/configuration.md) for an existing PostgreSQL server, GitHub setup, and deployment settings.
+Real journals need a configured Supabase project with Google/GitHub login. Repository integration needs a separate GitHub App and a public webhook URL. [Configuration](docs/configuration.md) distinguishes the two OAuth integrations. Do not connect a contributor's development environment to production user data.
 
 ## Before a pull request
 
@@ -25,24 +25,25 @@ TEST_DATABASE_URL=postgres://ship_live:ship_live@127.0.0.1:54329/postgres npm ru
 npm run build
 ```
 
-The database test helper creates isolated databases and drops only those databases afterward. Use a dedicated test connection with `CREATE DATABASE` permission. Test commands do not load `.env` or use `DATABASE_URL`; provide `TEST_DATABASE_URL` explicitly. `npm test` can run without PostgreSQL, but skips database integration tests when that variable is absent. Run the full database suite for backend changes; CI always does.
+Use a dedicated test connection with `CREATE DATABASE` permission. The helper creates isolated databases and removes only those afterward. Tests do not load `.env` or use `DATABASE_URL`. `npm test` skips PostgreSQL tests without `TEST_DATABASE_URL`; run the full suite for backend changes. CI always runs it.
 
-Use `npm run format` to apply formatting. Add meaningful tests when behavior changes; cover the original failure for bug fixes. Check affected interactions at desktop and mobile widths, and fullscreen when changing layout. Preserve keyboard navigation, focus handling, reduced motion, and the distinction between demo and connected data.
+OAuth tests exercise real Express/PostgreSQL with mocked provider responses. They do not prove your external Google, GitHub, or Supabase registration works. Any real consent/installation testing must use a controlled test account and repositories.
 
-Describe the problem, resulting behavior, and validation in your pull request. Include before/after screenshots for visible changes, using demo data. Keep unrelated refactoring separate so the change is easy to review.
+Use `npm run format` for formatting. Add meaningful tests for behavioral changes and regressions, especially ownership, repository filtering, callback replay, CSRF, session revocation, and failure paths. Keep SQL migrations compatible with existing data and never expose legacy private records through an implicit ownership claim.
+
+For visible changes, test desktop/mobile, fullscreen where relevant, keyboard navigation, reduced motion, and demo-versus-real workspace separation. Include screenshots using fictional data. Describe the problem, resulting behavior, and validation in the PR; keep unrelated refactoring separate.
 
 ## Project conventions
 
-- Keep organization configuration in environment variables. Never commit `.env`, database credentials or dumps, tokens, webhook secrets, private activity, or legacy store files.
-- Use fictional actors and generic organization names in fixtures and screenshots.
-- `shared/types.ts` defines the normalized event contract. New event types need normalization, recognition semantics, UI labels, and relevant tests.
-- Credit useful outcomes and collaboration. Raw commit volume should not increase scores.
+- Keep provider credentials, session cookies, encryption keys, database URLs/dumps, and private activity out of source control. `.env` and legacy `.data/` are ignored, but custom paths need their own exclusions.
+- Use synthetic identities and repositories in fixtures. Never fetch or record a user's private data just to create a showcase image.
+- Application data goes through the authenticated Express API. Do not add a browser Supabase Data API shortcut around workspace/repository authorization.
+- `shared/types.ts`, `shared/auth.ts`, and `shared/workspaces.ts` define client/server contracts. New event types need normalization, recognition semantics, UI labels, and relevant tests.
+- Credit outcomes and collaboration. Raw commit volume and manual notes should not increase XP.
 - Prefer the existing toolchain and small dependencies with a clear purpose.
 
-See [architecture.md](docs/architecture.md) for how the frontend and server fit together.
+See [architecture](docs/architecture.md) for the boundaries between identity, repository access, storage, and visualization.
 
 ## Reporting issues
 
-Include steps to reproduce, expected and actual behavior, browser/OS, and whether the issue occurs in demo or connected mode. Remove repository names or other private details before attaching screenshots and logs.
-
-For vulnerabilities, follow [SECURITY.md](SECURITY.md) instead of opening a public issue. Keep discussion specific and respectful; critique the work and give contributors room to explain their reasoning.
+Include reproduction steps, expected/actual behavior, browser/OS, and whether the issue occurs in demo, a personal journal, or a team workspace. Remove private details from screenshots and logs. For vulnerabilities, follow [SECURITY.md](SECURITY.md) instead of opening a public issue. Keep discussion specific and respectful.

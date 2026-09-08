@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A live GitHub activity wall that celebrates engineering teams.",
+  "description": "Private ship journals and live GitHub activity for individual builders and teams.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/vndee/ship.live.git"
@@ -32,6 +32,8 @@
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.3.0",
+    "@supabase/ssr": "^0.12.6",
+    "@supabase/supabase-js": "^2.115.0",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "lucide-react": "^0.468.0",
