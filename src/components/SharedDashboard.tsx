@@ -12,11 +12,10 @@ import {
 import { useSharedFeed } from "../hooks/useSharedFeed";
 import { isEffectivelyNoExpiration } from "../../shared/shares";
 import { EVENT_META } from "../lib/activity";
-import { LiveLeaderboard } from "./LiveLeaderboard";
-import { DashboardPulse } from "./DashboardPulse";
 import { ActivityCelebration } from "./ActivityCelebration";
 import { useActivityCelebration } from "../hooks/useActivityCelebration";
 import type { ActivityEvent } from "../../shared/types";
+import { EngineeringWall } from "./EngineeringWall";
 
 const noEvents: ActivityEvent[] = [];
 
@@ -24,7 +23,9 @@ export function SharedDashboard() {
   const [token, setToken] = useState(() => window.location.hash.slice(1));
   const feed = useSharedFeed(token);
   const [now, setNow] = useState(Date.now());
-  const [moving, setMoving] = useState(true);
+  const [moving, setMoving] = useState(
+    () => !matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
   const [wall, setWall] = useState(false);
   const [celebrations, setCelebrations] = useState(true);
   const liveEffects = useActivityCelebration(feed.data?.events || noEvents, {
@@ -111,7 +112,6 @@ export function SharedDashboard() {
             </span>
           )}
         </div>
-        {feed.data && <DashboardPulse events={feed.data.events} now={now} />}
         {!feed.data ? (
           <div
             className="shared-unavailable"
@@ -136,12 +136,17 @@ export function SharedDashboard() {
           </div>
         ) : (
           <div className="dashboard-layout">
-            <LiveLeaderboard
+            <EngineeringWall
               key={token}
+              snapshot={feed.data.wall}
               events={feed.data.events}
               now={now}
+              demo={false}
               moving={moving}
+              loading={feed.loading}
               onToggleMotion={() => setMoving((value) => !value)}
+              onRules={() => undefined}
+              onMilestones={() => undefined}
               status={feed.connected ? "Live" : "Reconnecting"}
             />
             <aside className="dashboard-sidebar">

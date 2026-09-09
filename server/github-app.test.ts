@@ -20,6 +20,10 @@ const permissions = {
   contents: "read",
   pull_requests: "read",
   issues: "read",
+  actions: "read",
+  checks: "read",
+  statuses: "read",
+  deployments: "read",
 };
 const installation = (id = 7, account = "our-team") => ({
   id,

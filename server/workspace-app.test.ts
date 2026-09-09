@@ -17,6 +17,7 @@ import { createTestDatabase } from "./test-database.js";
 import { createWorkspaceApp } from "./workspace-app.js";
 import { HealthStore } from "./health-store.js";
 import { WorkspaceStore } from "./workspace-store.js";
+import { WallStore } from "./wall-store.js";
 
 const APP_URL = "http://localhost:3000";
 const SECRET = "synthetic-workspace-webhook-secret";
@@ -325,6 +326,22 @@ test("dashboard shares expose only the creator's pinned repositories and never n
       event("missing-repo"),
       { ...event("private-note", 101), type: "note", body: "private journal" },
     ]);
+    const wall = new WallStore(store.pool);
+    for (const repository of [repoA, repoB])
+      await wall.apply(70, repository.id, repository.name, randomUUID(), [
+        {
+          kind: "pipeline",
+          observedAt: "2026-09-10T12:00:00Z",
+          value: {
+            id: `check:${repository.id}`,
+            name: "CI",
+            provider: "github-actions",
+            headSha: "a".repeat(40),
+            status: "passing",
+            updatedAt: "2026-09-10T12:00:00Z",
+          },
+        },
+      ]);
     const created = await request(
       `/api/workspaces/${workspace.id}/share`,
       users[0],
@@ -343,9 +360,16 @@ test("dashboard shares expose only the creator's pinned repositories and never n
     const response = await read();
     assert.equal(response.status, 200);
     assert.match(response.headers.get("cache-control") || "", /no-store/);
+    const shared = await response.json();
     assert.deepEqual(
-      (await response.json()).events.map((e: ActivityEvent) => e.id),
+      shared.events.map((e: ActivityEvent) => e.id),
       ["allowed"],
+    );
+    assert.deepEqual(
+      shared.wall.repositories.map(
+        (repository: { repositoryId: number }) => repository.repositoryId,
+      ),
+      [101],
     );
     // New permission grants must not silently widen an already distributed link.
     provider.visible.set("token-a", [repoA, repoB]);
@@ -1045,7 +1069,7 @@ test("signed webhooks ingest only known active installation repositories and pre
     const post = (payload: unknown, id?: string) =>
       request("/api/webhooks/github", null, delivery(payload, id));
     assert.equal((await post(mergePayload(999))).status, 202);
-    await connect(workspaces, users[0], 1);
+    const workspace = await connect(workspaces, users[0], 1);
     assert.equal((await post(mergePayload(70, 999))).status, 202);
     assert.deepEqual(await store.list("installation-70"), []);
     const payload = mergePayload();
@@ -1055,6 +1079,46 @@ test("signed webhooks ingest only known active installation repositories and pre
     const saved = await store.list("installation-70");
     assert.equal(saved.length, 1);
     assert.equal(saved[0].repositoryId, 101);
+    const check = delivery(
+      {
+        installation: { id: 70 },
+        repository: {
+          id: 101,
+          full_name: "team/alpha",
+          owner: { id: 700, login: "team" },
+        },
+        check_run: {
+          id: 44,
+          name: "CI",
+          head_sha: "a".repeat(40),
+          status: "completed",
+          conclusion: "success",
+          completed_at: "2026-09-10T12:00:00Z",
+          details_url: "https://github.com/team/alpha/actions/runs/44",
+          app: { slug: "github-actions" },
+        },
+      },
+      randomUUID(),
+    );
+    (check.headers as Record<string, string>)["x-github-event"] = "check_run";
+    assert.equal(
+      (await request("/api/webhooks/github", null, check)).status,
+      202,
+    );
+    assert.equal(
+      (await request("/api/webhooks/github", null, check)).status,
+      202,
+    );
+    const wall = await (
+      await request(`/api/workspaces/${workspace.id}/wall`, users[0])
+    ).json();
+    assert.deepEqual(
+      wall.repositories.flatMap(
+        (repository: { pipelines: Array<{ status: string }> }) =>
+          repository.pipelines.map((pipeline) => pipeline.status),
+      ),
+      ["passing"],
+    );
     const forged = delivery(payload);
     (forged.headers as Record<string, string>)["x-hub-signature-256"] =
       `sha256=${"0".repeat(64)}`;

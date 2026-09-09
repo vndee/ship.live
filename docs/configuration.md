@@ -80,7 +80,7 @@ Register an App installable on the personal accounts and organizations you inten
 
 Use a publicly reachable HTTPS URL for actual webhook delivery. The setup return is navigation only: a returned `installation_id` does not prove ownership. The server verifies installations and repositories using the current user's GitHub App user token. [GitHub setup URL security](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/about-the-setup-url).
 
-Grant **read-only** repository permissions: Metadata, Pull requests, Issues, and Contents. Subscribe to pull request, pull request review, issues, push, and release events. Lifecycle events also drive revocation handling. No write permission, organization-membership permission, source cloning, or source-file download is needed by ship.live. Contents read allows broader GitHub access, but this app uses it for activity metadata. [GitHub webhook permissions](https://docs.github.com/en/webhooks/webhook-events-and-payloads).
+Grant **read-only** repository permissions: Metadata, Pull requests, Issues, Contents, Actions, Checks, Commit statuses, and Deployments. Subscribe to pull request, pull request review, issues, push, release, check run, status, workflow run, deployment, and deployment status events. Lifecycle events also drive revocation handling. Existing installations must approve added permissions before engineering-wall signals can load. No write permission, organization-membership permission, source cloning, source-file download, CI logs, or check annotations are needed by ship.live. [GitHub webhook permissions](https://docs.github.com/en/webhooks/webhook-events-and-payloads).
 
 Generate the App's private key and populate the server variables. In ship.live:
 

@@ -1,4 +1,5 @@
 import type { FeedResponse } from "./types";
+import type { EngineeringWallSnapshot } from "./wall";
 
 export const SHARE_DURATIONS = [
   { seconds: 3600, label: "1 hour" },
@@ -64,4 +65,5 @@ export interface CreatedDashboardShare extends DashboardShare {
 }
 export interface SharedFeedResponse extends FeedResponse {
   expiresAt: string;
+  wall: EngineeringWallSnapshot;
 }
