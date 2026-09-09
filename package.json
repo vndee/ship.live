@@ -20,7 +20,7 @@
     "dev": "concurrently -k -n api,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
     "dev:web": "vite --host 127.0.0.1",
     "dev:server": "tsx watch server/index.ts",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && NODE_ENV=production vite build",
     "start": "tsx server/production.ts",
     "db:migrate": "tsx server/migrate.ts",
     "db:import-json": "tsx server/import-json.ts",

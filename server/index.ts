@@ -65,6 +65,14 @@ async function main(): Promise<void> {
         });
         next();
       });
+      // Vite fingerprints assets; only these files can be cached across deploys.
+      app.use(
+        "/assets",
+        express.static(resolve(dist, "assets"), {
+          maxAge: "1y",
+          immutable: true,
+        }),
+      );
       app.use(express.static(dist));
       app.get(/.*/, (_request, response) =>
         response.sendFile(resolve(dist, "index.html")),

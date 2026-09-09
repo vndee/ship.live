@@ -102,8 +102,9 @@ export function createWorkspaceApp({
   async function viewer(
     principal: Principal,
     workspaceId: string,
+    sessionAlreadyVerified = false,
   ): Promise<Viewer> {
-    await auth.assertActive(principal);
+    if (!sessionAlreadyVerified) await auth.assertActive(principal);
     const workspace = await workspaces.get(principal.user.id, workspaceId);
     if (!workspace.installationId) {
       return notesOnly(principal, workspaceId);
@@ -499,7 +500,9 @@ export function createWorkspaceApp({
   });
   app.get("/api/workspaces/:id/feed", async (request, response) => {
     const principal = await auth.authenticate(request, response);
-    const initial = await viewer(principal, request.params.id);
+    // authenticate just verified this session. Each viewer read still verifies
+    // it again after resolving permissions, including the final response read.
+    const initial = await viewer(principal, request.params.id, true);
     const saved = await workspaces.feed(
       principal.user.id,
       initial.workspace,
@@ -507,7 +510,7 @@ export function createWorkspaceApp({
     );
     // An upstream read or database query can overlap logout, disconnect, or an
     // access change. Recheck the original session and filter against fresh IDs.
-    const current = await viewer(principal, initial.workspace.id);
+    const current = await viewer(principal, initial.workspace.id, true);
     const result: FeedResponse = {
       events: visible(saved, current, initial.workspace),
       organization: current.workspace.name,

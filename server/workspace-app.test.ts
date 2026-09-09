@@ -708,6 +708,28 @@ test("health probes do not consume the authenticated request-rate budget", async
   });
 });
 
+test("feed verifies the session after each permission read without redundant entry checks", async (t) => {
+  await withApp(t, async ({ workspaces, store, auth, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    await store.merge("installation-70", [event("alpha", 101)], {
+      restricted: true,
+    });
+    let checks = 0;
+    const verify = auth.assertActive.bind(auth);
+    auth.assertActive = async (principal) => {
+      checks++;
+      await verify(principal);
+    };
+    const response = await request(`/api/workspaces/${workspace.id}/feed`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      (await response.json()).events.map((item: ActivityEvent) => item.id),
+      ["alpha"],
+    );
+    assert.equal(checks, 2);
+  });
+});
+
 test("each viewer gets a fresh immutable repository intersection, including access changes during a feed read", async (t) => {
   await withApp(t, async ({ store, workspaces, users, provider, request }) => {
     const workspace = await connect(workspaces, users[0], 1);
