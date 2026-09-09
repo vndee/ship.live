@@ -1,0 +1,418 @@
+.service-health {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+.health-heading h2,
+.health-actions,
+.health-service-heading,
+.health-service-heading > div,
+.health-probe-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.health-heading h2 {
+  gap: 9px;
+}
+.health-actions {
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.health-intro,
+.health-footnote,
+.health-result,
+.health-empty p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.health-intro {
+  margin: -4px 0 20px;
+}
+.health-service {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin-top: 16px;
+  overflow: hidden;
+}
+.health-service-heading {
+  justify-content: space-between;
+  padding: 17px 20px;
+  background: var(--surface);
+  flex-wrap: wrap;
+}
+.health-service h3 {
+  font-size: 15px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.health-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  color: #a4afb6;
+}
+.health-badge > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.health-healthy {
+  color: #9bceae;
+}
+.health-degraded {
+  color: #e3ba8a;
+}
+.health-down {
+  color: #ef9b9b;
+}
+.health-paused {
+  color: #acabc4;
+}
+.health-probe {
+  padding: 18px 20px;
+  border-top: 1px solid var(--line);
+}
+.health-probe-top {
+  justify-content: space-between;
+  font-size: 13px;
+}
+.health-probe-top strong {
+  overflow-wrap: anywhere;
+}
+.health-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 38px;
+  margin: 18px 0 8px;
+}
+.health-metrics > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.health-metrics strong {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  margin-top: 5px;
+  font-weight: 500;
+}
+.health-metrics small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+.health-history {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  height: 23px;
+  margin: 13px 0;
+}
+.health-history > span:not(.health-no-history) {
+  flex: 1;
+  max-width: 20px;
+  border-radius: 2px;
+}
+.health-pass {
+  background: #69917c;
+}
+.health-fail {
+  background: #c67f80;
+}
+.health-no-history {
+  color: var(--muted);
+  font-size: 12px;
+}
+.health-timeline {
+  color: var(--muted);
+  font-size: 12px;
+}
+.health-timeline summary {
+  cursor: pointer;
+  width: fit-content;
+  padding: 4px 0;
+}
+.health-timeline ul {
+  list-style: none;
+  padding: 8px 0;
+  margin: 0;
+}
+.health-timeline li {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  margin: 9px 0;
+  flex-wrap: wrap;
+}
+.health-probe-actions {
+  margin-top: 15px;
+}
+.health-empty {
+  padding: 24px 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.health-empty h3 {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: 15px;
+}
+.health-error {
+  color: #ef9b9b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.health-notice,
+.health-change {
+  color: #b9d6c2;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.health-change {
+  padding: 12px 16px;
+  border-left: 2px solid currentColor;
+  background: #17231e;
+  animation: health-arrival 0.35s ease-out;
+}
+.health-service-form {
+  display: flex;
+  align-items: end;
+  gap: 16px;
+  padding: 16px 0;
+  flex-wrap: wrap;
+}
+.health-service-form-actions {
+  min-height: 40px;
+}
+.health-editor {
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  padding: 20px;
+}
+.health-editor h4 {
+  margin: 0 0 18px;
+  font-size: 15px;
+}
+.health-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.health-editor label,
+.health-service-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.health-editor input,
+.health-editor select,
+.health-editor textarea,
+.health-service-form input {
+  min-width: 0;
+  width: 100%;
+  color: var(--text);
+  background: var(--background);
+  border: 1px solid #414b51;
+  border-radius: 5px;
+  padding: 10px 12px;
+  font: inherit;
+}
+.health-editor textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+.health-headers {
+  margin-top: 18px;
+}
+.health-editor .health-checkbox {
+  flex-direction: row;
+  align-items: center;
+  margin: 14px 0;
+}
+.health-checkbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+.health-confirm {
+  padding: 18px 20px;
+  border: 1px solid #945b60;
+  margin-top: 16px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.service-health button:focus-visible,
+.service-health input:focus-visible,
+.service-health select:focus-visible,
+.service-health textarea:focus-visible,
+.service-health summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+.service-health button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@keyframes health-arrival {
+  from {
+    opacity: 0.5;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .health-change {
+    animation: none;
+  }
+}
+@media (max-width: 600px) {
+  .health-heading {
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  .health-service-heading,
+  .health-probe,
+  .health-editor {
+    padding: 16px;
+  }
+  .health-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .health-metrics {
+    gap: 16px 22px;
+  }
+  .health-service-heading > div {
+    flex-wrap: wrap;
+  }
+  .health-actions {
+    gap: 14px;
+  }
+}
+.health-editor-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.latency-chart {
+  margin: 20px 0 16px;
+}
+.latency-chart-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.latency-chart-heading h4 {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0;
+}
+.latency-chart-range {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.latency-chart-range button {
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  padding: 6px 9px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.latency-chart-range button[aria-pressed="true"] {
+  background: #29343c;
+  color: var(--text);
+}
+.latency-chart-caption {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 10px 0 0;
+}
+.latency-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 220px;
+  overflow: visible;
+}
+.latency-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.latency-axis {
+  fill: var(--muted);
+  font-size: 11px;
+  font-family: inherit;
+}
+.latency-line {
+  fill: none;
+  stroke: #a4c8e5;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+}
+.latency-point {
+  fill: #a4c8e5;
+}
+.latency-chart-empty {
+  padding: 24px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.latency-data {
+  font-size: 11px;
+  color: var(--muted);
+}
+.latency-data summary {
+  width: fit-content;
+  cursor: pointer;
+  padding: 4px 0;
+}
+.latency-table-scroll {
+  overflow-x: auto;
+  max-height: 250px;
+  margin-top: 12px;
+}
+.latency-data table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+.latency-data caption {
+  text-align: left;
+  margin-bottom: 8px;
+}
+.latency-data th,
+.latency-data td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.latency-data th {
+  color: var(--text);
+  font-weight: 500;
+}
+.latency-chart button:focus-visible,
+.latency-chart summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}

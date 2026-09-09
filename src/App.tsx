@@ -45,6 +45,9 @@ import {
   getWindowEvents,
 } from "./lib/feedView";
 import { useFeed, type FeedController } from "./hooks/useFeed";
+import { HealthSharePanel } from "./components/HealthSharePanel";
+import { SharedHealth } from "./components/SharedHealth";
+import { ServiceHealth } from "./components/ServiceHealth";
 import { AccountPanel } from "./components/AccountPanel";
 import { ShipNoteComposer } from "./components/ShipNoteComposer";
 import { Modal } from "./components/Modal";
@@ -56,7 +59,8 @@ import { DashboardPulse } from "./components/DashboardPulse";
 import { ActivityCelebration } from "./components/ActivityCelebration";
 import { useActivityCelebration } from "./hooks/useActivityCelebration";
 
-type Page = "dashboard" | "feed" | "team" | "milestones" | "repositories";
+type Page =
+  "dashboard" | "feed" | "team" | "milestones" | "repositories" | "health";
 type Kind = ActivityEvent["type"];
 type Period = "24h" | "7d" | "30d";
 const icons: Record<Kind, ElementType> = {
@@ -153,6 +157,8 @@ function Avatar({
 }
 
 export default function App() {
+  if (window.location.pathname.replace(/\/$/, "") === "/share/health")
+    return <SharedHealth />;
   return window.location.pathname.replace(/\/$/, "") === "/share" ? (
     <SharedDashboard />
   ) : (
@@ -187,7 +193,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   const [wall, setWall] = useState(false);
   const [celebrations, setCelebrations] = useState(true);
   const [modal, setModal] = useState<
-    "connect" | "rules" | "settings" | "note" | "share" | null
+    "connect" | "rules" | "settings" | "note" | "share" | "health-share" | null
   >(null);
   useEffect(() => {
     if (!feed.session.user || !feed.workspace) return;
@@ -371,7 +377,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   async function toggleWall() {
     const next = !wall;
     setWall(next);
-    if (next) setPage("dashboard");
+    if (next && page !== "health") setPage("dashboard");
     try {
       if (next) await document.documentElement.requestFullscreen?.();
       else if (document.fullscreenElement) await document.exitFullscreen();
@@ -637,6 +643,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
           {(
             [
               ["dashboard", "Dashboard"],
+              ["health", "Service Health"],
               ["feed", "Live feed"],
               ["team", "Team"],
               ["milestones", "Milestones"],
@@ -644,7 +651,10 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             ] as const
           )
             .filter(
-              ([id]) => !personal || (id !== "team" && id !== "milestones"),
+              ([id]) =>
+                (!personal || (id !== "team" && id !== "milestones")) &&
+                (id !== "health" ||
+                  (!feed.demo && feed.workspace?.kind === "team")),
             )
             .map(([id, label]) => (
               <button
@@ -661,12 +671,14 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             ))}
         </nav>
         <div className="header-tools">
-          <span
-            className={`connection-status ${feed.error ? "has-error" : ""}`}
-          >
-            <span />
-            {status}
-          </span>
+          {page !== "health" && (
+            <span
+              className={`connection-status ${feed.error ? "has-error" : ""}`}
+            >
+              <span />
+              {status}
+            </span>
+          )}
           {!feed.session.user && (
             <button
               className="text-button sign-in-button"
@@ -712,6 +724,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                   feed: personal
                     ? "The shipping journal."
                     : "The activity log.",
+                  health: "Service Health",
                   team: "The people behind it.",
                   milestones: "Built, together.",
                   repositories: "Where work takes shape.",
@@ -733,9 +746,12 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             {!personal && (
               <button
                 className="button secondary share-dashboard-button"
-                onClick={() => setModal("share")}
+                onClick={() =>
+                  setModal(page === "health" ? "health-share" : "share")
+                }
               >
-                <Share2 size={15} /> Share dashboard
+                <Share2 size={15} />{" "}
+                {page === "health" ? "Share service health" : "Share dashboard"}
               </button>
             )}
             {page === "feed" && (
@@ -830,7 +846,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             )}
           </div>
         )}
-        {feed.error && !feed.operation && (
+        {page !== "health" && feed.error && !feed.operation && (
           <div className="notice error-notice" role="alert">
             <span>{feed.error}</span>
             <button className="text-button" onClick={openConnect}>
@@ -845,7 +861,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             </button>
           </div>
         )}
-        {!feed.error && !feed.operation && feed.notice && (
+        {page !== "health" && !feed.error && !feed.operation && feed.notice && (
           <div className="notice">
             <span>{feed.notice}</span>
           </div>
@@ -935,6 +951,15 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             )}
           </>
         )}
+        {page === "health" &&
+          !feed.demo &&
+          feed.workspace?.kind === "team" &&
+          feed.session.csrfToken && (
+            <ServiceHealth
+              workspaceId={feed.workspace.id}
+              csrfToken={feed.session.csrfToken}
+            />
+          )}
         {page === "team" && (
           <section className="team-page">
             <div className="section-heading">
@@ -1107,22 +1132,24 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                 ? "Private journal · visible only to you"
                 : `${feed.organization} · Private workspace`}
           </span>
-          <div>
-            <span>
-              {feed.demo
-                ? "Explore at your own pace"
-                : `Updated ${ago(feed.updatedAt, now)}`}
-            </span>
-            <button
-              className="icon-button"
-              aria-label="Refresh activity"
-              title="Refresh activity"
-              disabled={feed.loading}
-              onClick={() => void feed.refresh()}
-            >
-              <RefreshCw size={13} className={feed.loading ? "spin" : ""} />
-            </button>
-          </div>
+          {page !== "health" && (
+            <div>
+              <span>
+                {feed.demo
+                  ? "Explore at your own pace"
+                  : `Updated ${ago(feed.updatedAt, now)}`}
+              </span>
+              <button
+                className="icon-button"
+                aria-label="Refresh activity"
+                title="Refresh activity"
+                disabled={feed.loading}
+                onClick={() => void feed.refresh()}
+              >
+                <RefreshCw size={13} className={feed.loading ? "spin" : ""} />
+              </button>
+            </div>
+          )}
         </footer>
       </main>
       <ActivityCelebration
@@ -1136,6 +1163,17 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
           {toast}
         </div>
       )}
+      {modal === "health-share" &&
+        !feed.demo &&
+        feed.workspace?.kind === "team" &&
+        feed.session.csrfToken && (
+          <Modal title="Share service health" onClose={() => setModal(null)}>
+            <HealthSharePanel
+              workspaceId={feed.workspace.id}
+              csrfToken={feed.session.csrfToken}
+            />
+          </Modal>
+        )}
       {modal === "share" && feed.demo && (
         <Modal title="Share dashboard" onClose={() => setModal(null)}>
           <p className="modal-description">

@@ -1198,6 +1198,8 @@ h1 {
   .app-header nav {
     order: 4;
     width: 100%;
+    min-width: 0;
+    overflow-x: auto;
     min-height: 38px;
     gap: 27px;
     margin-left: 0;

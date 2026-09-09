@@ -33,14 +33,24 @@ const metadata = (row: ShareRow): DashboardShare => ({
 });
 
 export class DashboardShareStore {
-  constructor(private readonly pool: Pool) {}
+  private readonly table: string;
+  constructor(
+    private readonly pool: Pool,
+    kind: "dashboard" | "health" = "dashboard",
+  ) {
+    // Table names are selected only from this internal allowlist, never request input.
+    this.table =
+      kind === "health"
+        ? "ship_live_health_shares"
+        : "ship_live_dashboard_shares";
+  }
 
   async current(
     userId: string,
     workspaceId: string,
   ): Promise<DashboardShare | null> {
     const result = await this.pool.query<ShareRow>(
-      "SELECT * FROM ship_live_dashboard_shares WHERE creator_user_id=$1 AND workspace_id=$2",
+      `SELECT * FROM ${this.table} WHERE creator_user_id=$1 AND workspace_id=$2`,
       [userId, workspaceId],
     );
     return result.rows[0] ? metadata(result.rows[0]) : null;
@@ -59,7 +69,7 @@ export class DashboardShareStore {
     // authorization. Conflict handling makes simultaneous creations/rotations atomic.
     const result = await this.pool.query<ShareRow>(
       `WITH changed AS (
-        INSERT INTO ship_live_dashboard_shares(id,workspace_id,creator_user_id,connection_generation,installation_id,repository_ids,token_hash,expires_at)
+        INSERT INTO ${this.table}(id,workspace_id,creator_user_id,connection_generation,installation_id,repository_ids,token_hash,expires_at)
         SELECT $1,w.id,$3,c.generation,w.installation_id,$6,$7,now()+($8 * interval '1 second')
         FROM ship_live_workspaces w
         JOIN ship_live_workspace_members m ON m.workspace_id=w.id AND m.user_id=$3
@@ -70,7 +80,7 @@ export class DashboardShareStore {
           id=EXCLUDED.id,connection_generation=EXCLUDED.connection_generation,
           installation_id=EXCLUDED.installation_id,repository_ids=EXCLUDED.repository_ids,
           token_hash=EXCLUDED.token_hash,created_at=now(),expires_at=EXCLUDED.expires_at
-        WHERE $9 OR ship_live_dashboard_shares.expires_at<=now()
+        WHERE $9 OR ${this.table}.expires_at<=now()
         RETURNING *
       ) SELECT changed.*,pg_notify($10,$11) FROM changed`,
       [
@@ -100,7 +110,7 @@ export class DashboardShareStore {
 
   async revoke(userId: string, workspaceId: string): Promise<void> {
     await this.pool.query(
-      `WITH removed AS (DELETE FROM ship_live_dashboard_shares WHERE creator_user_id=$1 AND workspace_id=$2 RETURNING id)
+      `WITH removed AS (DELETE FROM ${this.table} WHERE creator_user_id=$1 AND workspace_id=$2 RETURNING id)
        SELECT pg_notify($3,$4) FROM removed`,
       [
         userId,
@@ -117,7 +127,7 @@ export class DashboardShareStore {
   async resolve(token: string | undefined): Promise<ShareRow> {
     if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw unavailableShare();
     const result = await this.pool.query<ShareRow>(
-      `SELECT s.* FROM ship_live_dashboard_shares s
+      `SELECT s.* FROM ${this.table} s
        JOIN ship_live_workspaces w ON w.id=s.workspace_id AND w.kind='team' AND w.installation_id=s.installation_id
        JOIN ship_live_workspace_members m ON m.workspace_id=w.id AND m.user_id=s.creator_user_id
        JOIN ship_live_github_connections c ON c.user_id=s.creator_user_id AND c.generation=s.connection_generation
