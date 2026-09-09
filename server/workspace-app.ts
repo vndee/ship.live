@@ -8,6 +8,7 @@ import { normalizeWebhook, object } from "./normalize.js";
 import type { PostgresEventStore } from "./postgres-store.js";
 import { verifyWebhookSignature } from "./security.js";
 import type { WorkspaceStore } from "./workspace-store.js";
+import { dashboardShareRouter } from "./share-app.js";
 
 interface WorkspaceAppOptions {
   store: PostgresEventStore;
@@ -335,6 +336,7 @@ export function createWorkspaceApp({
 
   app.use(express.json({ limit: "64kb" }));
   app.use(auth.router);
+  app.use(dashboardShareRouter({ auth, store, workspaces, github, viewer }));
 
   app.get("/api/workspaces", async (request, response) => {
     const principal = await auth.authenticate(request, response);
