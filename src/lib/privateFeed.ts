@@ -6,6 +6,7 @@ export interface PrivateFeedState {
   events: ActivityEvent[];
   updatedAt: string;
   loading: boolean;
+  hasSnapshot: boolean;
   streaming: boolean;
   error: string;
   notice: string;
@@ -34,6 +35,7 @@ export const emptyPrivateFeed: PrivateFeedState = {
   events: [],
   updatedAt: "",
   loading: false,
+  hasSnapshot: false,
   streaming: false,
   error: "",
   notice: "",
@@ -65,6 +67,7 @@ export function privateFeedReducer(
         updatedAt: action.updatedAt,
         notice: action.notice || "",
         loading: false,
+        hasSnapshot: true,
         error: "",
       };
     case "loading":

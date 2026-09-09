@@ -2,6 +2,10 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import type { ActivityEvent, FeedResponse } from "../../shared/types";
 import type { SessionResponse } from "../../shared/auth";
 import type {
+  CreatedDashboardShare,
+  DashboardShare,
+} from "../../shared/shares";
+import type {
   InstallationChoice,
   ShipNoteInput,
   Workspace,
@@ -95,6 +99,7 @@ export function useFeed() {
   const csrf = useRef<string | undefined>(undefined);
   const channel = useRef<BroadcastChannel | null>(null);
   const initialSelection = useRef(true);
+  const demoSequence = useRef(0);
   const demo = !workspace;
 
   const clearPrivate = useCallback((error = "", sample = false) => {
@@ -619,6 +624,33 @@ export function useFeed() {
     refresh: retry,
     selectWorkspace,
     useDemo: () => selectWorkspace(null),
+    simulateActivity: () => {
+      // Demo events stay in the browser and can never enter a real workspace.
+      if (currentWorkspace.current || !demo || paused) return;
+      const index = demoSequence.current++;
+      const type = (["release", "merge", "review"] as const)[index % 3];
+      const occurredAt = new Date().toISOString();
+      const event: ActivityEvent = {
+        id: `demo-live-${crypto.randomUUID()}`,
+        type,
+        actor: { login: "emmarivera" },
+        repo: "design-system",
+        title:
+          type === "release"
+            ? "v3.0 — a smoother experience, shipped together"
+            : type === "merge"
+              ? "Ship the new accessible component library"
+              : "Review the next round of design system improvements",
+        occurredAt,
+        ...(type === "release" ? {} : { number: 500 + index }),
+      };
+      dispatch({
+        type: "snapshot",
+        generation: generation.current,
+        events: [event, ...state.events].slice(0, 2000),
+        updatedAt: occurredAt,
+      });
+    },
     loadSession,
     loadWorkspaces,
     logout,
@@ -629,6 +661,21 @@ export function useFeed() {
     sync,
     addNote,
     deleteNote,
+    readShare: () =>
+      request<{ share: DashboardShare | null }>(
+        `/api/workspaces/${encodeURIComponent(workspace!.id)}/share`,
+      ),
+    createShare: (expiresIn: number, rotate: boolean) =>
+      mutate<CreatedDashboardShare>(
+        `/api/workspaces/${encodeURIComponent(workspace!.id)}/share${rotate ? "/rotate" : ""}`,
+        { expiresIn },
+      ),
+    revokeShare: () =>
+      mutate<void>(
+        `/api/workspaces/${encodeURIComponent(workspace!.id)}/share`,
+        undefined,
+        "DELETE",
+      ),
     scopeKey: `${session.user?.id || "demo"}:${workspace?.id || "demo"}:${state.revision}`,
   };
 }

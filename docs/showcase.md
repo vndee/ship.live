@@ -2,11 +2,13 @@
 
 Real screenshots of the running application, captured using the built-in fictional demo. No private repositories, tokens, or organization activity appear in these images. The dates and counters reflect the capture session, not a production deployment.
 
-## Work, in orbit
+## Live team leaderboard
 
-The fullscreen wall pairs an interactive repository visualization with live activity, current-view metrics, shared milestones, and a replay timeline. Selecting a contribution highlights its point in Orbit.
+The dashboard pairs animated weekly contributor rankings with live GitHub activity, today’s momentum, a seven-day activity chart, and the nearest weekly milestone. New contributions highlight in the feed and announce earned XP; merges and releases launch confetti, with a larger burst when the team reaches a milestone.
 
-![Orbit fullscreen wall with a selected merge and the timeline fully visible](images/orbit.jpg)
+![Live team XP leaderboard with fictional contributors and recent activity](images/leaderboard.jpg)
+
+![A live release highlights in the feed with earned XP and confetti](images/live-celebration.jpg)
 
 ## The people behind it
 
@@ -23,9 +25,10 @@ Team milestones track shared progress toward merges, reviews, and releases durin
 ## Refreshing the screenshots
 
 1. Run `npm run dev` and use **Demo workspace**. Disconnect any real organization before capture.
-2. Capture Orbit using the app's fullscreen button. Keep the header, timeline, and footer inside the image; select a recent merge to show the connection between the feed and visualization.
+2. Capture Dashboard with all leaderboard rows visible. Use the fullscreen button to check the wall layout.
+   Use **Try live activity** in demo mode to preview highlights, XP updates, rank changes, and confetti. Reloading resets simulated activity and does not replay celebrations.
 3. Capture Team and Milestones at a desktop viewport with all relevant rows visible.
-4. Save the unedited application screenshots into `docs/images/` with the existing filenames. Check the files visually, including the canvas, before committing them.
+4. Save the unedited application screenshots into `docs/images/` with the existing filenames. Check the files visually, including contributor names and scores, before committing them.
 5. Restore any temporary viewport override and confirm no private information appears in the images.
 
-The README uses `orbit.jpg` as its lead image. These files can also be used in a GitHub release or project introduction.
+The README uses `leaderboard.jpg` as its lead image. These files can also be used in a GitHub release or project introduction.

@@ -16,6 +16,7 @@ Include the affected commit, synthetic reproduction steps, impact, and any propo
 - Mutations require the exact configured Origin and a session-bound CSRF token. Login and GitHub connection callbacks use short-lived, single-use browser/session bindings. Provider tokens and private event data are not stored in browser localStorage.
 - Personal notes are owner-only. Private GitHub events require a separate GitHub App connection and the current viewer's repository permissions. Organization membership, an installation callback ID, or an App installation token alone does not authorize a viewer.
 - Repository IDs are filtered before feed limits and aggregate metrics. Asynchronous responses and SSE emissions recheck access. Authorization failures do not use cached private results as a fallback.
+- Explicit dashboard sharing uses random bearer tokens stored only as hashes, pinned repository IDs, mandatory expiration, and atomic rotation. Public reads recheck the creator’s current GitHub access and exclude notes. Anyone possessing a valid link can view its scoped activity.
 - The old public-organization/shared-dashboard-key API is not mounted by the current runtime. Legacy stored events are not automatically claimed by a matching organization name or first login.
 
 ## GitHub credentials and ingestion

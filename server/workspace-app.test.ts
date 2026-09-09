@@ -314,6 +314,197 @@ function event(id: string, repositoryId?: number): ActivityEvent {
     ...(repositoryId ? { repositoryId } : {}),
   };
 }
+
+test("dashboard shares expose only the creator's pinned repositories and never notes", async (t) => {
+  await withApp(t, async ({ store, workspaces, users, provider, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    await store.merge("installation-70", [
+      event("allowed", 101),
+      event("other-repo", 102),
+      event("missing-repo"),
+      { ...event("private-note", 101), type: "note", body: "private journal" },
+    ]);
+    const created = await request(
+      `/api/workspaces/${workspace.id}/share`,
+      users[0],
+      {
+        method: "POST",
+        body: JSON.stringify({ expiresIn: 86400 }),
+      },
+    );
+    assert.equal(created.status, 201);
+    const link = await created.json();
+    assert.match(link.token, /^[A-Za-z0-9_-]{43}$/);
+    const read = () =>
+      request("/api/shared/feed", null, {
+        headers: { "x-dashboard-share": link.token },
+      });
+    const response = await read();
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("cache-control") || "", /no-store/);
+    assert.deepEqual(
+      (await response.json()).events.map((e: ActivityEvent) => e.id),
+      ["allowed"],
+    );
+    // New permission grants must not silently widen an already distributed link.
+    provider.visible.set("token-a", [repoA, repoB]);
+    assert.deepEqual(
+      (await (await read()).json()).events.map((e: ActivityEvent) => e.id),
+      ["allowed"],
+    );
+    provider.visible.set("token-a", [repoB]);
+    assert.deepEqual((await (await read()).json()).events, []);
+    const row = (
+      await store.pool.query("SELECT * FROM ship_live_dashboard_shares")
+    ).rows[0];
+    assert.equal(
+      row.token_hash,
+      createHash("sha256").update(link.token).digest("hex"),
+    );
+    assert.ok(!JSON.stringify(row).includes(link.token));
+  });
+});
+
+test("share creation and management require membership, CSRF, and creator ownership", async (t) => {
+  await withApp(t, async ({ workspaces, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const path = `/api/workspaces/${workspace.id}/share`;
+    const post = { method: "POST", body: JSON.stringify({ expiresIn: 3600 }) };
+    assert.equal((await request(path, null, post)).status, 401);
+    assert.equal((await request(path, users[1], post)).status, 404);
+    assert.equal(
+      (
+        await request(path, users[0], {
+          ...post,
+          headers: { "x-csrf-token": "bad" },
+        })
+      ).status,
+      403,
+    );
+    for (const expiresIn of [0, -1, "86400", 2592001, null]) {
+      assert.equal(
+        (
+          await request(path, users[0], {
+            method: "POST",
+            body: JSON.stringify({ expiresIn }),
+          })
+        ).status,
+        400,
+      );
+    }
+    const link = await (await request(path, users[0], post)).json();
+    assert.equal((await request(path, users[0], post)).status, 409);
+    await connect(workspaces, users[1], 2);
+    assert.equal((await (await request(path, users[1])).json()).share, null);
+    await request(path, users[1], { method: "DELETE" });
+    assert.equal(
+      (
+        await request("/api/shared/feed", null, {
+          headers: { "x-dashboard-share": link.token },
+        })
+      ).status,
+      200,
+    );
+    const personal = await workspaces.ensurePersonal(users[0]);
+    assert.equal(
+      (await request(`/api/workspaces/${personal.id}/share`, users[0], post))
+        .status,
+      400,
+    );
+  });
+});
+
+test("rotating, revoking, and expiring a share invalidates its bearer token", async (t) => {
+  await withApp(t, async ({ store, workspaces, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const path = `/api/workspaces/${workspace.id}/share`;
+    const post = { method: "POST", body: JSON.stringify({ expiresIn: 3600 }) };
+    const old = await (await request(path, users[0], post)).json();
+    const rotated = await request(`${path}/rotate`, users[0], post);
+    assert.equal(rotated.status, 200);
+    const next = await rotated.json();
+    assert.notEqual(next.token, old.token);
+    const read = (token: string) =>
+      request("/api/shared/feed", null, {
+        headers: { "x-dashboard-share": token },
+      });
+    assert.equal((await read(old.token)).status, 410);
+    assert.equal((await read(next.token)).status, 200);
+    await store.pool.query(
+      "UPDATE ship_live_dashboard_shares SET expires_at=now()-interval '1 second'",
+    );
+    assert.equal((await read(next.token)).status, 410);
+    const fresh = await (await request(path, users[0], post)).json();
+    assert.equal(
+      (await request(path, users[0], { method: "DELETE" })).status,
+      204,
+    );
+    assert.equal((await read(fresh.token)).status, 410);
+    assert.equal((await read("invalid")).status, 410);
+    assert.equal((await request("/api/shared/feed", null)).status, 410);
+  });
+});
+
+test("shared feed fails closed on disconnect and concurrent rotation during GitHub checks", async (t) => {
+  await withApp(t, async ({ workspaces, users, provider, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const path = `/api/workspaces/${workspace.id}/share`;
+    const post = { method: "POST", body: JSON.stringify({ expiresIn: 3600 }) };
+    const link = await (await request(path, users[0], post)).json();
+    provider.beforeRepositories(async () => {
+      await request(`${path}/rotate`, users[0], post);
+    });
+    assert.equal(
+      (
+        await request("/api/shared/feed", null, {
+          headers: { "x-dashboard-share": link.token },
+        })
+      ).status,
+      410,
+    );
+    const next = await (await request(`${path}/rotate`, users[0], post)).json();
+    await workspaces.disconnect(users[0].id);
+    assert.equal(
+      (
+        await request("/api/shared/feed", null, {
+          headers: { "x-dashboard-share": next.token },
+        })
+      ).status,
+      410,
+    );
+  });
+});
+
+test("an open shared stream receives revocation when another replica rotates its link", async (t) => {
+  await withApp(t, async ({ workspaces, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const path = `/api/workspaces/${workspace.id}/share`;
+    const post = { method: "POST", body: JSON.stringify({ expiresIn: 3600 }) };
+    const link = await (await request(path, users[0], post)).json();
+    const controller = new AbortController();
+    const response = await request("/api/shared/events", null, {
+      signal: controller.signal,
+      headers: { "x-dashboard-share": link.token },
+    });
+    assert.equal(response.status, 200);
+    const reader = response.body!.getReader();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    try {
+      await reader.read();
+      await request(`${path}/rotate`, users[0], post);
+      let text = "";
+      while (!text.includes("access-revoked")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += new TextDecoder().decode(value);
+      }
+      assert.match(text, /event: access-revoked/);
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+    }
+  });
+});
 function delivery(payload: unknown, id: string = randomUUID()): RequestInit {
   const body = JSON.stringify(payload);
   return {
@@ -346,6 +537,85 @@ function mergePayload(installationId = 70, ownerId = 700) {
     },
   };
 }
+
+test("concurrent share rotations leave exactly one usable token", async (t) => {
+  await withApp(t, async ({ workspaces, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const path = `/api/workspaces/${workspace.id}/share`;
+    const post = { method: "POST", body: JSON.stringify({ expiresIn: 3600 }) };
+    assert.equal((await request(path, users[0], post)).status, 201);
+    const responses = await Promise.all([
+      request(`${path}/rotate`, users[0], post),
+      request(`${path}/rotate`, users[0], post),
+    ]);
+    const tokens = await Promise.all(
+      responses.map(async (response) => {
+        assert.equal(response.status, 200);
+        return (await response.json()).token as string;
+      }),
+    );
+    const statuses = await Promise.all(
+      tokens.map(
+        async (token) =>
+          (
+            await request("/api/shared/feed", null, {
+              headers: { "x-dashboard-share": token },
+            })
+          ).status,
+      ),
+    );
+    assert.deepEqual(statuses.sort(), [200, 410]);
+  });
+});
+
+test("shared streams expire even without new activity or a revocation notification", async (t) => {
+  await withApp(t, async ({ store, workspaces, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const created = await request(
+      `/api/workspaces/${workspace.id}/share`,
+      users[0],
+      { method: "POST", body: JSON.stringify({ expiresIn: 3600 }) },
+    );
+    assert.equal(created.status, 201);
+    const { token } = await created.json();
+    await store.pool.query(
+      "UPDATE ship_live_dashboard_shares SET expires_at=now()+interval '1 second'",
+    );
+    const controller = new AbortController();
+    const response = await request("/api/shared/events", null, {
+      headers: { "x-dashboard-share": token },
+      signal: controller.signal,
+    });
+    assert.equal(response.status, 200);
+    const timer = setTimeout(() => controller.abort(), 4000);
+    try {
+      assert.match(await response.text(), /event: access-revoked/);
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+    }
+  });
+});
+
+test("shared feeds never return cached private activity when GitHub access cannot be verified", async (t) => {
+  await withApp(t, async ({ store, workspaces, users, provider, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    await store.merge("installation-70", [event("private", 101)]);
+    const created = await request(
+      `/api/workspaces/${workspace.id}/share`,
+      users[0],
+      { method: "POST", body: JSON.stringify({ expiresIn: 3600 }) },
+    );
+    assert.equal(created.status, 201);
+    const { token } = await created.json();
+    provider.unavailable();
+    const response = await request("/api/shared/feed", null, {
+      headers: { "x-dashboard-share": token },
+    });
+    assert.equal(response.status, 410);
+    assert.equal((await response.json()).events, undefined);
+  });
+});
 
 test("workspace HTTP routes keep notes owner-only, enforce mutation checks and remove legacy public/key routes", async (t) => {
   await withApp(t, async ({ request, users }) => {

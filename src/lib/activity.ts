@@ -96,6 +96,15 @@ export function getWeekStart(now = Date.now()): Date {
   return start;
 }
 
+export function isHumanActor(login: string): boolean {
+  const value = login.trim().toLowerCase();
+  return (
+    Boolean(value) &&
+    !/\[bot\]$|-bot$/i.test(value) &&
+    !["dependabot", "renovate", "github-actions"].includes(value)
+  );
+}
+
 function eligibleEvents(
   events: ActivityEvent[],
   now: number,
@@ -103,12 +112,9 @@ function eligibleEvents(
 ): ActivityEvent[] {
   const seen = new Set<string>();
   return events.filter((event) => {
-    const login = event.actor.login.toLowerCase();
     const timestamp = Date.parse(event.occurredAt);
     if (
-      !login ||
-      /\[bot\]$|-bot$/i.test(login) ||
-      ["dependabot", "renovate", "github-actions"].includes(login) ||
+      !isHumanActor(event.actor.login) ||
       !Number.isFinite(timestamp) ||
       timestamp < since ||
       timestamp > now ||

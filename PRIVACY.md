@@ -39,7 +39,12 @@ analytics trackers, or AI-training pipeline. Its fonts are bundled locally.
 
 Personal notes are available only to their owner through the application. GitHub
 activity is filtered according to the repositories each signed-in viewer can
-currently access. Public journal publishing is not implemented.
+currently access. A team member can also create an expiring, read-only dashboard
+link. Anyone with that link can view contributor names, XP, repository names, and
+GitHub activity titles within its scope, including private repository activity.
+The scope remains limited by the creator’s current repository permissions.
+Personal notes and event bodies are excluded; public journal publishing is not
+implemented.
 
 The hosted service uses **Northflank** for the application and **Supabase** for
 authentication and PostgreSQL storage, with application and database resources
@@ -65,6 +70,12 @@ Account records, notes, and stored activity do not have an automatic retention
 deadline in the current version. Deleting a note removes it from the application's
 active database. A 24-hour or 30-day activity filter is a display filter, not a
 data-deletion schedule.
+
+You can rotate or revoke your own dashboard links in the Share dialog. Links
+expire after the chosen duration; rotation immediately replaces the previous
+link. Only a hash of each link token is stored, along with its creator, workspace,
+repository scope, and expiration. Expiration disables access but does not delete
+the underlying activity or recall copies already made by viewers.
 
 You can delete your own notes and disconnect GitHub in the app. Disconnecting
 removes your stored GitHub user grant and workspace associations, while retaining

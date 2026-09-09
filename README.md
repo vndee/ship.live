@@ -1,10 +1,10 @@
 # ship.live
 
-**Work, in orbit.**
+**Great work. Shared momentum.**
 
 A private shipping journal for individual builders and a live GitHub activity wall for engineering teams. Connect the repositories you choose, capture the story behind your work, and see what you have shipped.
 
-![ship.live Orbit view with an activity feed, team metrics, repository filters, and replay timeline](docs/images/orbit.jpg)
+![ship.live live team XP leaderboard and activity feed](docs/images/leaderboard.jpg)
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
@@ -19,9 +19,12 @@ A private shipping journal for individual builders and a live GitHub activity wa
 
 - **Personal journal.** Keep private notes about launches, experiments, decisions, and progress. Add GitHub activity from selected repositories when you are ready.
 - **Google or GitHub sign-in.** Supabase Auth handles identity. A separate GitHub App connection grants repository access, including for someone who signed in with Google.
-- **Orbit.** Explore one point per event, repository orbits, linked event selection, and a camera you can rotate.
+- **Live team leaderboard.** Follow weekly XP, animated rank changes, contribution bars, and live XP gains beside the activity feed.
+- **Team momentum.** See today’s contributions, a seven-day activity chart, and the nearest weekly milestone at a glance.
+- **Live celebrations.** New contributions briefly highlight in the feed and announce earned XP. Merges and releases launch confetti, with a bigger burst for milestones. Motion and celebration controls keep the dashboard comfortable; try a fictional event with **Try live activity** in demo mode.
 - **Live activity and replay.** Follow merges, reviews, releases, pushes, issues, and journal entries. Filter by repository, type, time, or text; replay the last 24 hours, 7 days, or 30 days.
 - **Shared recognition.** Weekly contributor spotlights and team milestones celebrate outcomes and collaboration. Raw commit counts and personal notes earn no XP.
+- **Expiring dashboard links.** Share a read-only team dashboard without requiring sign-in. Choose 1 hour, 24 hours, 7 days, or 30 days; rotate or revoke your link at any time.
 - **Private by default.** Personal notes belong to their owner. GitHub events are filtered to repositories each viewer can currently access through the GitHub App.
 - **Self-hosted.** React, Express, and shared PostgreSQL, with bundled fonts and no analytics. One Node.js service serves the frontend and API.
 
@@ -99,7 +102,7 @@ The database suite creates and removes isolated test databases. Use a dedicated 
 
 ## Current scope
 
-Personal journals and team workspaces are private. Public profiles, public journal publishing, and invitation-based sharing outside GitHub repository permissions are not implemented.
+Personal journals remain private. Team members can explicitly share a read-only dashboard through an expiring link. Each member manages one link per workspace; rotating it immediately invalidates their previous link. Sharing pins the creator’s current repository IDs and rechecks their live GitHub permissions on reads. Notes are never shared. Newly accessible repositories require a new link. Public profiles and journal publishing are not implemented.
 
 GitHub connection imports a bounded recent history, not a complete activity archive. Subsequent signed webhooks supply live events; push history begins with those webhooks. The UI displays at most 2,000 events per workspace. Stored events and accepted delivery IDs do not expire automatically, so operators must plan retention and backups. Request counters and live-connection limits remain per process.
 

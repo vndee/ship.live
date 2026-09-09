@@ -306,119 +306,15 @@ h1 {
   border-color: #dda397;
   color: #e9bbb1;
 }
-.orbit-layout {
+.dashboard-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(305px, 33%);
   gap: 35px;
-}
-.orbit-workspace {
-  min-width: 0;
-}
-.orbit-topline {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  align-items: center;
-  color: var(--muted);
-  font-size: 11px;
-  padding: 0 0 5px;
 }
 .subtle-divider {
   display: inline-block;
   color: #536268;
   padding: 0 8px;
-}
-.orbit-stage {
-  height: clamp(405px, 34vw, 560px);
-  position: relative;
-}
-.orbit-scene {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
-.orbit-canvas-control {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  cursor: grab;
-  touch-action: pan-y;
-}
-.orbit-canvas-control:active {
-  cursor: grabbing;
-}
-.orbit-canvas-control canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-.orbit-scene-hint,
-.orbit-scene-count {
-  position: absolute;
-  bottom: 7px;
-  color: var(--muted);
-  font-size: 11px;
-  pointer-events: none;
-}
-.orbit-scene-hint {
-  left: 0;
-}
-.orbit-scene-count {
-  right: 0;
-}
-.orbit-scene-status {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-}
-.orbit-empty {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 13px;
-  text-align: center;
-  pointer-events: none;
-  padding: 20px;
-}
-.orbit-empty h2 {
-  font-size: 22px;
-  font-weight: 400;
-  letter-spacing: -0.6px;
-}
-.orbit-empty p {
-  font-size: 12px;
-  color: var(--muted);
-}
-.orbit-empty button {
-  pointer-events: auto;
-  margin-top: 5px;
-}
-.empty-orbit {
-  width: 100px;
-  height: 62px;
-  border: 1px solid #52615e;
-  border-radius: 50%;
-  transform: rotate(-24deg);
-  margin-bottom: 10px;
-  position: relative;
-}
-.empty-orbit::after {
-  content: "";
-  position: absolute;
-  inset: 9px -8px;
-  border: 1px solid #293a3b;
-  border-radius: 50%;
-  transform: rotate(40deg);
 }
 .view-metrics {
   display: grid;
@@ -441,35 +337,6 @@ h1 {
   color: var(--muted);
   margin-top: 9px;
 }
-.repository-orbits {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px 22px;
-  padding-top: 20px;
-}
-.repository-orbits button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  color: var(--muted);
-  padding: 0;
-  text-align: left;
-  font-size: 11px;
-}
-.repository-orbits button[aria-pressed="true"] {
-  color: var(--accent);
-}
-.repo-orbit-dot {
-  width: 7px;
-  height: 7px;
-  border: 1px solid currentColor;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.repository-orbits button[aria-pressed="true"] .repo-orbit-dot {
-  background: currentColor;
-}
 .repo-name {
   flex: 1;
   overflow: hidden;
@@ -479,7 +346,7 @@ h1 {
 .repo-count {
   font-variant-numeric: tabular-nums;
 }
-.orbit-sidebar {
+.dashboard-sidebar {
   border-left: 1px solid var(--line);
   padding-left: 30px;
   min-width: 0;
@@ -1232,18 +1099,18 @@ h1 {
 .wall-mode .header-tools {
   margin-left: auto;
 }
-.wall-mode .orbit-layout {
+.wall-mode .dashboard-layout {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 31%);
 }
 @media (min-width: 1600px) {
   .app-shell {
     padding: 0 58px;
   }
-  .orbit-layout {
+  .dashboard-layout {
     gap: 48px;
     grid-template-columns: minmax(0, 1fr) minmax(370px, 30%);
   }
-  .orbit-sidebar {
+  .dashboard-sidebar {
     padding-left: 38px;
   }
   .event-row.selected::before {
@@ -1264,8 +1131,7 @@ h1 {
   .view-metrics strong {
     font-size: 44px;
   }
-  .view-metrics span,
-  .repository-orbits button {
+  .view-metrics span {
     font-size: 12px;
   }
 }
@@ -1286,11 +1152,11 @@ h1 {
   .organization-switch > span {
     max-width: 135px;
   }
-  .orbit-layout {
+  .dashboard-layout {
     gap: 25px;
     grid-template-columns: minmax(0, 1fr) 320px;
   }
-  .orbit-sidebar {
+  .dashboard-sidebar {
     padding-left: 23px;
   }
   .event-row.selected::before {
@@ -1314,9 +1180,6 @@ h1 {
   }
   .view-metrics strong {
     font-size: 31px;
-  }
-  .repository-orbits {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .search-box input {
     width: 118px;
@@ -1359,32 +1222,15 @@ h1 {
   h1 {
     font-size: 33px;
   }
-  .orbit-layout {
+  .dashboard-layout {
     grid-template-columns: minmax(0, 1fr) 282px;
     gap: 21px;
   }
-  .orbit-sidebar {
+  .dashboard-sidebar {
     padding-left: 20px;
   }
   .event-row.selected::before {
     left: -21px;
-  }
-  .orbit-stage {
-    height: 382px;
-  }
-  .orbit-topline {
-    font-size: 10px;
-  }
-  .orbit-scene-hint,
-  .orbit-scene-count {
-    font-size: 10px;
-  }
-  .orbit-scene-hint {
-    max-width: 125px;
-  }
-  .orbit-scene-count {
-    max-width: 128px;
-    text-align: right;
   }
   .event-topline {
     font-size: 10px;
@@ -1492,20 +1338,9 @@ h1 {
     max-width: 150px;
     font-size: 12px;
   }
-  .orbit-layout,
-  .wall-mode .orbit-layout {
+  .dashboard-layout,
+  .wall-mode .dashboard-layout {
     display: block;
-  }
-  .orbit-stage {
-    height: 390px;
-  }
-  .orbit-topline {
-    font-size: 11px;
-  }
-  .orbit-scene-hint,
-  .orbit-scene-count {
-    font-size: 11px;
-    max-width: 48%;
   }
   .view-metrics {
     padding: 22px 0;
@@ -1516,12 +1351,7 @@ h1 {
   .view-metrics span {
     font-size: 11px;
   }
-  .repository-orbits {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    padding-bottom: 27px;
-    gap: 15px 22px;
-  }
-  .orbit-sidebar {
+  .dashboard-sidebar {
     padding: 22px 0 0;
     border-left: 0;
     border-top: 1px solid var(--line);
@@ -1686,13 +1516,6 @@ h1 {
   .app-header nav button {
     font-size: 11px;
   }
-  .orbit-stage {
-    height: 338px;
-  }
-  .orbit-topline > span:last-child {
-    max-width: 48%;
-    text-align: right;
-  }
   .view-metrics strong {
     font-size: 31px;
   }
@@ -1733,7 +1556,7 @@ h1 {
 .wall-mode .page-heading {
   margin: 22px 0;
 }
-.wall-mode .orbit-layout,
+.wall-mode .dashboard-layout,
 .wall-mode
   main
   > :is(.feed-page, .team-page, .milestones-page, .repositories-page) {
@@ -1744,34 +1567,22 @@ h1 {
 .wall-mode .feed-page {
   width: 100%;
 }
-.wall-mode .orbit-workspace,
-.wall-mode .orbit-sidebar .activity-feed {
+.wall-mode .dashboard-sidebar .activity-feed {
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
-.wall-mode .orbit-workspace > *,
-.wall-mode .orbit-sidebar .activity-feed > * {
+.wall-mode .dashboard-sidebar .activity-feed > * {
   flex-shrink: 0;
 }
-.wall-mode .orbit-stage {
-  flex: 1;
-  height: auto;
-  min-height: 140px;
-}
-.wall-mode .repository-orbits {
-  max-height: 110px;
-  overflow: auto;
-  padding-bottom: 4px;
-}
-.wall-mode .orbit-sidebar {
+.wall-mode .dashboard-sidebar {
   min-height: 0;
   overflow: auto;
 }
-.wall-mode .orbit-sidebar .activity-feed {
+.wall-mode .dashboard-sidebar .activity-feed {
   height: 100%;
 }
-.wall-mode .orbit-sidebar :is(.event-list, .empty-state) {
+.wall-mode .dashboard-sidebar :is(.event-list, .empty-state) {
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -1794,31 +1605,22 @@ h1 {
 }
 /* Small displays scroll the workspace as a whole, keeping playback in reach. */
 @media (max-width: 680px), (max-height: 600px) {
-  .wall-mode .orbit-layout {
+  .wall-mode .dashboard-layout {
     display: block;
   }
-  .wall-mode .orbit-workspace,
-  .wall-mode .orbit-sidebar .activity-feed {
+  .wall-mode .dashboard-sidebar .activity-feed {
     display: block;
   }
-  .wall-mode .orbit-stage {
-    height: clamp(220px, 40dvh, 390px);
-  }
-  .wall-mode .repository-orbits {
-    max-height: none;
-    overflow: visible;
-    padding-bottom: 22px;
-  }
-  .wall-mode .orbit-sidebar {
+  .wall-mode .dashboard-sidebar {
     overflow: visible;
     border-left: 0;
     border-top: 1px solid var(--line);
     padding: 22px 0 0;
   }
-  .wall-mode .orbit-sidebar .activity-feed {
+  .wall-mode .dashboard-sidebar .activity-feed {
     height: auto;
   }
-  .wall-mode .orbit-sidebar :is(.event-list, .empty-state) {
+  .wall-mode .dashboard-sidebar :is(.event-list, .empty-state) {
     overflow: visible;
   }
   .wall-mode .page-heading {
@@ -1838,9 +1640,6 @@ h1 {
 @media (pointer: coarse) {
   .icon-button {
     min-height: 40px;
-  }
-  .repository-orbits button {
-    min-height: 36px;
   }
   .text-button {
     min-height: 36px;

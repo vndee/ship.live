@@ -41,7 +41,17 @@ Each new GitHub authorization has a distinct database generation. Reads recheck 
 
 GitHub App installations can belong to a personal account or organization. Installation choices and viewer repository grants are obtained with that person's **user token**, not the App's broader installation token. Permissions are the intersection of App access and user access. Returned installation IDs are verified; setup query parameters alone never establish ownership.
 
-Team membership in ship.live is not an organization-wide private-data grant. Feed queries filter immutable repository IDs before applying the event limit. Metrics, repository labels, and search operate on that filtered collection. A viewer who loses access does not receive stored private events as a fallback. Personal and team workspaces are not publicly shareable in this version.
+Team membership in ship.live is not an organization-wide private-data grant. Feed queries filter immutable repository IDs before applying the event limit. Metrics, repository labels, and search operate on that filtered collection. A viewer who loses access does not receive stored private events as a fallback. Personal journals are never shared. Team dashboards support explicit, expiring read-only links as described below.
+
+## Dashboard sharing
+
+`server/share-app.ts` and `server/share-store.ts` provide a separate read-only bearer capability. Authenticated team members can create, inspect, rotate, and revoke their own link. Mutations retain the normal Origin, CSRF, membership, session, and live GitHub checks. There is one record per creator/workspace, with a pinned installation, GitHub authorization generation, repository IDs, and mandatory expiration (1 hour, 24 hours, 7 days, or 30 days).
+
+Tokens contain 32 random bytes; PostgreSQL stores only their SHA-256 hashes. Creation returns the token once. The UI retains it only in memory and offers rotation if it no longer has the secret. Links use `/share#token`; the browser sends the token in `x-dashboard-share`, keeping it out of request URLs and referrers. Shared requests omit account cookies, return `no-store`, and expose neither notes nor event bodies. Anyone holding a valid link can see contributor names, GitHub activity titles, repository names, and XP from the pinned scope.
+
+Reads intersect pinned repository IDs with the creator’s current user-token permissions, checking the persisted capability again after remote calls. Newly granted repositories never widen a distributed link. Disconnect, changed authorization generation, removed membership, installation suspension, expiry, rotation, or revocation deny access. No session impersonation is used: links intentionally outlive the creator’s login session until their own expiry or revocation.
+
+Rotation replaces the token atomically and notifies all replicas through PostgreSQL. Shared SSE streams send only refresh/revocation signals, revalidate access, and close at expiry. The client clears data on revocation, expiry, or failed verification and ignores in-flight stale responses. Polling revalidates every 15 seconds if live updates disconnect. Revocation prevents further access; it cannot recall content a viewer has already copied. Request and stream limits remain per process.
 
 ## GitHub ingestion
 
@@ -67,26 +77,30 @@ Use a direct connection or session pooler. A transaction pooler cannot preserve 
 
 `useFeed` loads the app session and authorized workspaces, polls the active feed, and reconciles SSE updates by event identity. Credentials and private records are not saved to localStorage. Changing account/workspace or losing authorization clears stale data; abort/generation checks prevent older requests from replacing the current view. Fictional demo activity stays separate.
 
-Orbit and the feed share time, text/type/repository filters, replay cutoff, and selected event. Motion pause, live-update pause, and replay are separate controls. Pausing the browser does not stop server ingestion. Canvas 2D projects deterministic event geometry, handles picking/keyboard navigation, respects reduced motion, and suspends animation when hidden.
+The dashboard shows the complete current UTC week’s XP leaderboard beside recent activity. Rank changes animate by stable contributor identity, XP counts interpolate, and new awards are highlighted. Reduced-motion preferences and a motion toggle suppress animation. Search, repository filters, and replay remain in the Live feed page and do not change weekly recognition. Pausing the browser does not stop server ingestion.
+
+The dashboard and shared view also show today’s UTC contribution count, a seven-day activity chart, and the closest incomplete weekly milestone. These insights use the same bot exclusion and deduplication rules as recognition; personal notes are excluded.
+
+Live effects observe verified feed snapshots. The first snapshot is a silent baseline, including an empty workspace. Unseen human activity from the last two minutes receives a six-second feed highlight and XP notice; historical imports and repeated event IDs do not trigger effects. Merge and release notices can launch confetti, and newly reached milestones use a larger burst. Confetti has an eight-second cooldown. Hidden, paused, replaying, or syncing views consume updates silently instead of replaying effects on resume. Access loss clears notices alongside the feed. Reduced-motion preferences and the dashboard motion toggle suppress animation; a separate celebration toggle disables both notices and highlights. Demo activity simulation only updates browser memory.
 
 Weekly recognition uses the visible authorized events and the current week beginning Monday at 00:00 UTC. Bots, duplicates, and invalid/future timestamps do not earn credit. Base XP is 50 for releases, 30 for merges, 15 for reviews, 10 for completed issues, 5 for opened PRs, and zero for pushes and journal notes. Review XP is capped per reviewer, repository, PR, and UTC day. Incomplete history and differing repository permissions can produce different totals.
 
 ## Modules
 
-| Location                                                         | Responsibility                                                                    |
-| ---------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `shared/auth.ts`, `shared/workspaces.ts`, `shared/types.ts`      | Session, workspace, note, and event contracts.                                    |
-| `server/index.ts`, `server/production.ts`                        | Environment validation, store startup, production serving, and shutdown.          |
-| `server/auth.ts`                                                 | Supabase sign-in, shared session guard, secure cookies, CSRF.                     |
-| `server/workspace-app.ts`                                        | Authenticated workspace routes, GitHub connection, webhooks, SSE.                 |
-| `server/workspace-store.ts`                                      | Owner/repository-scoped persistence, notes, encrypted grants, OAuth transactions. |
-| `server/github-app.ts`                                           | GitHub App authentication, permission lookup, and recent activity import.         |
-| `server/normalize.ts`                                            | Canonical activity metadata from GitHub payloads.                                 |
-| `server/postgres-store.ts`, `server/postgres-notifications.ts`   | Event reconciliation, migrations, durable history, database notifications.        |
-| `server/migrations/`                                             | Versioned auth, workspace, and event schemas.                                     |
-| `src/hooks/useFeed.ts`                                           | Session/workspace lifecycle, private feed synchronization, demo separation.       |
-| `src/lib/activity.ts`, `src/lib/feedView.ts`, `src/lib/orbit.ts` | Recognition, view filtering, and geometry.                                        |
-| `src/App.tsx`, `src/components/OrbitScene.tsx`                   | Journal/workspace UI and interactive visualization.                               |
+| Location                                                               | Responsibility                                                                    |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `shared/auth.ts`, `shared/workspaces.ts`, `shared/types.ts`            | Session, workspace, note, and event contracts.                                    |
+| `server/index.ts`, `server/production.ts`                              | Environment validation, store startup, production serving, and shutdown.          |
+| `server/auth.ts`                                                       | Supabase sign-in, shared session guard, secure cookies, CSRF.                     |
+| `server/workspace-app.ts`                                              | Authenticated workspace routes, GitHub connection, webhooks, SSE.                 |
+| `server/workspace-store.ts`                                            | Owner/repository-scoped persistence, notes, encrypted grants, OAuth transactions. |
+| `server/github-app.ts`                                                 | GitHub App authentication, permission lookup, and recent activity import.         |
+| `server/normalize.ts`                                                  | Canonical activity metadata from GitHub payloads.                                 |
+| `server/postgres-store.ts`, `server/postgres-notifications.ts`         | Event reconciliation, migrations, durable history, database notifications.        |
+| `server/migrations/`                                                   | Versioned auth, workspace, and event schemas.                                     |
+| `src/hooks/useFeed.ts`                                                 | Session/workspace lifecycle, private feed synchronization, demo separation.       |
+| `src/lib/activity.ts`, `src/lib/feedView.ts`, `src/lib/leaderboard.ts` | Recognition, view filtering, and rank changes.                                    |
+| `src/App.tsx`, `src/components/LiveLeaderboard.tsx`                    | Journal/workspace UI and animated weekly leaderboard.                             |
 
 The legacy `server/app.ts`, public-organization feed adapter, and JSON importer remain for compatibility tests and data recovery. The production entry point mounts only the authenticated workspace application. Old organization/key routes are not available, and legacy records are not automatically assigned to new accounts. See [upgrade notes](configuration.md#upgrading-an-existing-installation).
 
