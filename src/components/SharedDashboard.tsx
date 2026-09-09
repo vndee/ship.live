@@ -10,6 +10,7 @@ import {
   Unlink,
 } from "lucide-react";
 import { useSharedFeed } from "../hooks/useSharedFeed";
+import { isEffectivelyNoExpiration } from "../../shared/shares";
 import { EVENT_META } from "../lib/activity";
 import { LiveLeaderboard } from "./LiveLeaderboard";
 import { DashboardPulse } from "./DashboardPulse";
@@ -104,7 +105,9 @@ export function SharedDashboard() {
           {feed.data && (
             <span className="share-expiry-badge">
               <Clock3 size={14} />
-              Expires {new Date(feed.data.expiresAt).toLocaleString()}
+              {isEffectivelyNoExpiration(feed.data.expiresAt, now)
+                ? "No expiration"
+                : `Expires ${new Date(feed.data.expiresAt).toLocaleString()}`}
             </span>
           )}
         </div>
@@ -197,7 +200,7 @@ export function SharedDashboard() {
                   <h3>A live window into the team.</h3>
                   <p>
                     This dashboard updates as the team ships. Access ends when
-                    the link expires or its creator revokes it.
+                    the link is revoked or its lifetime ends.
                   </p>
                 </div>
               </section>

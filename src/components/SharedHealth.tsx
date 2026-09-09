@@ -11,6 +11,7 @@ import {
   Unlink,
 } from "lucide-react";
 import type { HealthStatus, PublicHealthProbe } from "../../shared/health";
+import { isEffectivelyNoExpiration } from "../../shared/shares";
 import { useSharedHealth } from "../hooks/useSharedHealth";
 import { aggregate } from "../lib/service-status-strip";
 import "./service-health.css";
@@ -130,7 +131,9 @@ function SharedHealthView({ token }: { token: string }) {
           {feed.data && (
             <span className="share-expiry-badge">
               <Clock3 size={14} />
-              Expires {new Date(feed.data.expiresAt).toLocaleString()}
+              {isEffectivelyNoExpiration(feed.data.expiresAt, now)
+                ? "No expiration"
+                : `Expires ${new Date(feed.data.expiresAt).toLocaleString()}`}
             </span>
           )}
         </div>
@@ -345,7 +348,9 @@ function SharedHealthView({ token }: { token: string }) {
         )}
         <footer className="app-footer">
           <span>Shared service health · Read only</span>
-          <span>Access ends when this link expires or is revoked.</span>
+          <span>
+            Access ends when this link is revoked or its lifetime ends.
+          </span>
         </footer>
       </main>
     </div>

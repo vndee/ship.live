@@ -9,11 +9,12 @@ import {
   Unlink,
 } from "lucide-react";
 import {
-  SHARE_DURATIONS,
+  isEffectivelyNoExpiration,
   type CreatedDashboardShare,
   type DashboardShare,
 } from "../../shared/shares";
 import type { FeedController } from "../hooks/useFeed";
+import { ExpirationPicker } from "./ExpirationPicker";
 
 export function SharePanel({
   feed,
@@ -55,6 +56,9 @@ export function SharePanel({
     };
   }, []);
   const expired = share && Date.parse(share.expiresAt) <= now;
+  const noExpiration = Boolean(
+    share && !expired && isEffectivelyNoExpiration(share.expiresAt, now),
+  );
   const url =
     link && share?.id === link.id && !expired
       ? `${window.location.origin}/share#${link.token}`
@@ -110,7 +114,7 @@ export function SharePanel({
     <div className="share-panel">
       <p className="modal-description">
         Give your team a live view of the work. Anyone with this link can view
-        this dashboard until it expires.
+        this dashboard for the lifetime you choose.
       </p>
       <div className="share-scope">
         <ShieldCheck size={20} />
@@ -148,8 +152,12 @@ export function SharePanel({
                 {share.repositoryCount === 1 ? "repository" : "repositories"}
               </span>
               <p>
-                <Clock3 size={13} /> {expired ? "Expired" : "Expires"}{" "}
-                {new Date(share.expiresAt).toLocaleString()}
+                <Clock3 size={13} />
+                {expired
+                  ? `Expired ${new Date(share.expiresAt).toLocaleString()}`
+                  : noExpiration
+                    ? "No expiration"
+                    : `Expires ${new Date(share.expiresAt).toLocaleString()}`}
               </p>
             </div>
           )}
@@ -179,21 +187,13 @@ export function SharePanel({
               a new link to copy.
             </p>
           ) : null}
-          <label className="share-expiration">
-            {share && !expired ? "New link expires in" : "Link expires in"}
-            <select
-              value={duration}
-              onChange={(e) => setDuration(Number(e.target.value))}
-              disabled={busy}
-              aria-label="Link expiration"
-            >
-              {SHARE_DURATIONS.map((item) => (
-                <option key={item.seconds} value={item.seconds}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <ExpirationPicker
+            label={share && !expired ? "New link lifetime" : "Link lifetime"}
+            ariaLabel="Link expiration"
+            value={duration}
+            disabled={busy}
+            onChange={setDuration}
+          />
           <div className="share-actions">
             <button
               className="button primary"

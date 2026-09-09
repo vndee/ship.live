@@ -370,7 +370,10 @@ test("share creation and management require membership, CSRF, and creator owners
   await withApp(t, async ({ workspaces, users, request }) => {
     const workspace = await connect(workspaces, users[0], 1);
     const path = `/api/workspaces/${workspace.id}/share`;
-    const post = { method: "POST", body: JSON.stringify({ expiresIn: 3600 }) };
+    const post = {
+      method: "POST",
+      body: JSON.stringify({ expiresIn: 3_155_760_000 }),
+    };
     assert.equal((await request(path, null, post)).status, 401);
     assert.equal((await request(path, users[1], post)).status, 404);
     assert.equal(
@@ -394,6 +397,10 @@ test("share creation and management require membership, CSRF, and creator owners
       );
     }
     const link = await (await request(path, users[0], post)).json();
+    assert.ok(
+      Date.parse(link.expiresAt) > Date.now() + 99 * 365 * 86_400_000,
+      "the no-expiration option must persist a roughly 100-year expiry",
+    );
     assert.equal((await request(path, users[0], post)).status, 409);
     await connect(workspaces, users[1], 2);
     assert.equal((await (await request(path, users[1])).json()).share, null);

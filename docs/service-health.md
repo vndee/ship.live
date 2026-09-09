@@ -31,7 +31,7 @@ New Down and recovery transitions highlight and announce on the dashboard. The f
 
 From the **Service Health** tab, choose **Share service health**. Anyone with the link can view the team's current and future service names, probe names, statuses, latency, check success and recent history without signing in. Endpoint URLs, secret headers and condition values are excluded. Viewers cannot change configuration or queue checks.
 
-Choose a lifetime of 1 hour, 24 hours, 7 days or 30 days. Copy the newly created link; its secret token is shown only when created or rotated. **Rotate** creates a new link and invalidates the old one. **Revoke** immediately withdraws the link. Existing live viewers are disconnected on revoke/rotation and at expiration; the page clears its data. Creator membership, connected GitHub account generation and current access are revalidated.
+Choose a lifetime from 1 hour through 10 years, or **No expiration**. No expiration is represented by a 100-year lifetime so it uses the same expiration, rotation and revocation safeguards. Copy the newly created link; its secret token is shown only when created or rotated. **Rotate** creates a new link and invalidates the old one. **Revoke** immediately withdraws the link. Existing live viewers are disconnected on revoke/rotation and when a finite lifetime ends; the page clears its data. Creator membership, connected GitHub account generation and current access are revalidated.
 
 Health shares use `/share/health#…` and are independent of `/share#…` dashboard links. Rotating one does not affect the other. Tokens are stored as hashes and sent in request headers, not query strings. Link metadata is scoped to its creator and team.
 
