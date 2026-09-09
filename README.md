@@ -11,6 +11,7 @@ A private shipping journal for individual builders and a live GitHub activity wa
   <a href="docs/configuration.md">Connect accounts</a> ·
   <a href="docs/railway.md">Deploy on Railway</a> ·
   <a href="docs/showcase.md">Screenshots</a> ·
+  <a href="PRIVACY.md">Hosted service privacy</a> ·
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
