@@ -1,7 +1,9 @@
 import { LatencyChart } from "./LatencyChart";
+import { ServiceStatusStrip } from "./ServiceStatusStrip";
 import { useEffect, useRef, useState } from "react";
 import {
   Clock3,
+  ChevronDown,
   Eye,
   Maximize2,
   Minimize2,
@@ -10,6 +12,7 @@ import {
 } from "lucide-react";
 import type { HealthStatus, PublicHealthProbe } from "../../shared/health";
 import { useSharedHealth } from "../hooks/useSharedHealth";
+import { aggregate } from "../lib/service-status-strip";
 import "./service-health.css";
 
 function statusOf(probe: PublicHealthProbe, now: number): HealthStatus {
@@ -35,6 +38,9 @@ function SharedHealthView({ token }: { token: string }) {
   const [now, setNow] = useState(Date.now());
   const [wall, setWall] = useState(false);
   const [announcement, setAnnouncement] = useState("");
+  const [expandedServiceId, setExpandedServiceId] = useState<string | null>(
+    null,
+  );
   const previous = useRef<Map<string, HealthStatus> | null>(null);
   useEffect(() => {
     const clock = setInterval(() => setNow(Date.now()), 500);
@@ -177,128 +183,156 @@ function SharedHealthView({ token }: { token: string }) {
               const statuses = service.probes.map((probe) =>
                 statusOf(probe, now),
               );
-              const status =
-                (
-                  ["down", "degraded", "unknown", "healthy", "paused"] as const
-                ).find((value) => statuses.includes(value)) || "unknown";
+              const status = aggregate(statuses);
+              const expanded = expandedServiceId === service.id;
               return (
-                <article className="health-service" key={service.id}>
+                <article
+                  className={`health-service ${expanded ? "is-expanded" : ""}`}
+                  key={service.id}
+                >
                   <div className="health-service-heading">
-                    <h3>{service.name}</h3>
-                    <Badge status={status} />
+                    <button
+                      className="health-service-toggle"
+                      type="button"
+                      aria-expanded={expanded}
+                      onClick={() =>
+                        setExpandedServiceId((current) =>
+                          current === service.id ? null : service.id,
+                        )
+                      }
+                    >
+                      <ChevronDown aria-hidden="true" size={16} />
+                      <span className="health-service-name">
+                        {service.name}
+                      </span>
+                      <Badge status={status} />
+                      <span className="health-probe-count">
+                        {service.probes.length}{" "}
+                        {service.probes.length === 1 ? "probe" : "probes"}
+                      </span>
+                      <ServiceStatusStrip probes={service.probes} />
+                    </button>
                   </div>
-                  {!service.probes.length && (
-                    <p className="health-empty">No probes configured.</p>
-                  )}
-                  {service.probes.map((probe) => (
-                    <div className="health-probe" key={probe.id}>
-                      <div className="health-probe-top">
-                        <strong>{probe.name}</strong>
-                        <Badge status={statusOf(probe, now)} />
-                      </div>
-                      <div className="health-metrics">
-                        <span>
-                          Latency
-                          <strong>
-                            {probe.lastCheck
-                              ? `${Math.round(probe.lastCheck.latencyMs)} ms`
-                              : "—"}
-                          </strong>
-                        </span>
-                        <span>
-                          Last check
-                          <strong>
-                            {probe.lastCheck ? (
-                              <time dateTime={probe.lastCheck.checkedAt}>
-                                {new Date(
-                                  probe.lastCheck.checkedAt,
-                                ).toLocaleString()}
-                              </time>
-                            ) : (
-                              "Never"
-                            )}
-                          </strong>
-                        </span>
-                        <span>
-                          Check success · 24h
-                          <strong>
-                            {probe.successRate24h === null
-                              ? "—"
-                              : `${probe.successRate24h.toFixed(1)}%`}{" "}
-                            <small>({probe.checks24h} checks)</small>
-                          </strong>
-                        </span>
-                      </div>
-                      {statusOf(probe, now) === "unknown" && (
-                        <p className="health-result">
-                          {probe.lastCheck
-                            ? "Check overdue. Waiting for a fresh result."
-                            : "Waiting for the first check."}
-                        </p>
+                  {expanded && (
+                    <div className="health-service-details">
+                      {!service.probes.length && (
+                        <p className="health-empty">No probes configured.</p>
                       )}
-                      <LatencyChart
-                        name={probe.name}
-                        history={probe.history}
-                        daily={probe.latencyHistory}
-                        now={now}
-                      />
-                      <div
-                        className="health-history"
-                        role="img"
-                        aria-label={`Recent checks for ${probe.name}, oldest to newest: ${
-                          probe.history
-                            .slice(0, 40)
-                            .reverse()
-                            .map((check) => (check.ok ? "passed" : "failed"))
-                            .join(", ") || "no checks"
-                        }`}
-                      >
-                        {probe.history
-                          .slice(0, 40)
-                          .reverse()
-                          .map((check, index) => (
-                            <span
-                              key={`${check.checkedAt}-${index}`}
-                              className={
-                                check.ok ? "health-pass" : "health-fail"
-                              }
-                              title={`${new Date(check.checkedAt).toLocaleString()} · ${check.ok ? "Passed" : "Failed"} · ${Math.round(check.latencyMs)} ms`}
-                            />
-                          ))}
-                        {!probe.history.length && (
-                          <span className="health-no-history">
-                            No recorded checks
-                          </span>
-                        )}
-                      </div>
-                      <details className="health-timeline">
-                        <summary>State-change timeline</summary>
-                        <ul>
-                          {probe.history
-                            .slice()
-                            .reverse()
-                            .filter(
-                              (check, index, history) =>
-                                index === 0 ||
-                                check.status !== history[index - 1].status,
-                            )
-                            .slice(-8)
-                            .reverse()
-                            .map((check, index) => (
-                              <li key={`${check.checkedAt}-${index}`}>
-                                <Badge status={check.status} />
-                                <time dateTime={check.checkedAt}>
-                                  {new Date(check.checkedAt).toLocaleString()}
-                                </time>
-                              </li>
-                            ))}
-                        </ul>
-                        {!probe.history.length && (
-                          <p>No state changes recorded.</p>
-                        )}
-                      </details>
+                      {service.probes.map((probe) => (
+                        <div className="health-probe" key={probe.id}>
+                          <div className="health-probe-top">
+                            <strong>{probe.name}</strong>
+                            <Badge status={statusOf(probe, now)} />
+                          </div>
+                          <div className="health-metrics">
+                            <span>
+                              Latency
+                              <strong>
+                                {probe.lastCheck
+                                  ? `${Math.round(probe.lastCheck.latencyMs)} ms`
+                                  : "—"}
+                              </strong>
+                            </span>
+                            <span>
+                              Last check
+                              <strong>
+                                {probe.lastCheck ? (
+                                  <time dateTime={probe.lastCheck.checkedAt}>
+                                    {new Date(
+                                      probe.lastCheck.checkedAt,
+                                    ).toLocaleString()}
+                                  </time>
+                                ) : (
+                                  "Never"
+                                )}
+                              </strong>
+                            </span>
+                            <span>
+                              Check success · 24h
+                              <strong>
+                                {probe.successRate24h === null
+                                  ? "—"
+                                  : `${probe.successRate24h.toFixed(1)}%`}{" "}
+                                <small>({probe.checks24h} checks)</small>
+                              </strong>
+                            </span>
+                          </div>
+                          {statusOf(probe, now) === "unknown" && (
+                            <p className="health-result">
+                              {probe.lastCheck
+                                ? "Check overdue. Waiting for a fresh result."
+                                : "Waiting for the first check."}
+                            </p>
+                          )}
+                          <LatencyChart
+                            name={probe.name}
+                            history={probe.history}
+                            daily={probe.latencyHistory}
+                            now={now}
+                          />
+                          <div
+                            className="health-history"
+                            role="img"
+                            aria-label={`Recent checks for ${probe.name}, oldest to newest: ${
+                              probe.history
+                                .slice(0, 40)
+                                .reverse()
+                                .map((check) =>
+                                  check.ok ? "passed" : "failed",
+                                )
+                                .join(", ") || "no checks"
+                            }`}
+                          >
+                            {probe.history
+                              .slice(0, 40)
+                              .reverse()
+                              .map((check, index) => (
+                                <span
+                                  key={`${check.checkedAt}-${index}`}
+                                  className={
+                                    check.ok ? "health-pass" : "health-fail"
+                                  }
+                                  title={`${new Date(check.checkedAt).toLocaleString()} · ${check.ok ? "Passed" : "Failed"} · ${Math.round(check.latencyMs)} ms`}
+                                />
+                              ))}
+                            {!probe.history.length && (
+                              <span className="health-no-history">
+                                No recorded checks
+                              </span>
+                            )}
+                          </div>
+                          <details className="health-timeline">
+                            <summary>State-change timeline</summary>
+                            <ul>
+                              {probe.history
+                                .slice()
+                                .reverse()
+                                .filter(
+                                  (check, index, history) =>
+                                    index === 0 ||
+                                    check.status !== history[index - 1].status,
+                                )
+                                .slice(-8)
+                                .reverse()
+                                .map((check, index) => (
+                                  <li key={`${check.checkedAt}-${index}`}>
+                                    <Badge status={check.status} />
+                                    <time dateTime={check.checkedAt}>
+                                      {new Date(
+                                        check.checkedAt,
+                                      ).toLocaleString()}
+                                    </time>
+                                  </li>
+                                ))}
+                            </ul>
+                            {!probe.history.length && (
+                              <p>No state changes recorded.</p>
+                            )}
+                          </details>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </article>
               );
             })}

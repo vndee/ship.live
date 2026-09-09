@@ -1,7 +1,8 @@
 import { LatencyChart } from "./LatencyChart";
+import { ServiceStatusStrip } from "./ServiceStatusStrip";
 import { createHealthRefresh } from "../lib/health-refresh";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Activity, Plus, RefreshCw } from "lucide-react";
+import { Activity, ChevronDown, Plus, RefreshCw } from "lucide-react";
 import type {
   HealthProbe,
   HealthSnapshot,
@@ -9,6 +10,7 @@ import type {
   ProbeInput,
 } from "../../shared/health";
 import "./service-health.css";
+import { aggregate } from "../lib/service-status-strip";
 
 const defaults: ProbeInput = {
   name: "",
@@ -39,12 +41,6 @@ function currentStatus(probe: HealthProbe, now: number): HealthStatus {
   )
     return "unknown";
   return probe.status;
-}
-function summary(statuses: HealthStatus[]): HealthStatus {
-  if (!statuses.length) return "unknown";
-  return (["down", "degraded", "unknown", "healthy", "paused"] as const).find(
-    (status) => statuses.includes(status),
-  )!;
 }
 function Badge({ status }: { status: HealthStatus }) {
   return (
@@ -82,6 +78,11 @@ export function ServiceHealth({
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [editor, setEditor] = useState<Editor | null>(null);
+  const [expandedServiceId, setExpandedServiceId] = useState<string | null>(
+    null,
+  );
+  const [serviceIdsBeforeCreate, setServiceIdsBeforeCreate] =
+    useState<Set<string> | null>(null);
   const [serviceEditor, setServiceEditor] = useState<{
     id?: string;
     name: string;
@@ -192,6 +193,15 @@ export function ServiceHealth({
     const timer = setTimeout(() => setChanges([]), 12000);
     return () => clearTimeout(timer);
   }, [changes]);
+  useEffect(() => {
+    if (!snapshot || !serviceIdsBeforeCreate) return;
+    const created = snapshot.services.find(
+      (service) => !serviceIdsBeforeCreate.has(service.id),
+    );
+    if (!created) return;
+    setExpandedServiceId(created.id);
+    setServiceIdsBeforeCreate(null);
+  }, [snapshot, serviceIdsBeforeCreate]);
   async function mutate(
     path: string,
     method: string,
@@ -319,6 +329,10 @@ export function ServiceHealth({
           className="health-service-form"
           onSubmit={async (event) => {
             event.preventDefault();
+            const creating = !serviceEditor.id;
+            const existingIds = new Set(
+              snapshot?.services.map((service) => service.id) || [],
+            );
             if (
               await mutate(
                 serviceEditor.id
@@ -328,10 +342,12 @@ export function ServiceHealth({
                 { name: serviceEditor.name },
                 "Service saved",
               )
-            )
+            ) {
+              if (creating) setServiceIdsBeforeCreate(existingIds);
               setServiceEditor((current) =>
                 current === serviceEditor ? null : current,
               );
+            }
           }}
         >
           <label>
@@ -375,240 +391,274 @@ export function ServiceHealth({
           </p>
         </div>
       )}
-      {snapshot?.services.map((service) => (
-        <article className="health-service" key={service.id}>
-          <div className="health-service-heading">
-            <div>
-              <h3>{service.name}</h3>
-              <Badge
-                status={summary(
-                  service.probes.map((probe) => currentStatus(probe, now)),
-                )}
-              />
-            </div>
-            <div className="health-actions">
+      {snapshot?.services.map((service) => {
+        const expanded = expandedServiceId === service.id;
+        const status = aggregate(
+          service.probes.map((probe) => currentStatus(probe, now)),
+        );
+        return (
+          <article
+            className={`health-service ${expanded ? "is-expanded" : ""}`}
+            key={service.id}
+          >
+            <div className="health-service-heading">
               <button
-                className="text-button"
-                onClick={() => {
-                  setEditor({ serviceId: service.id });
-                  setServiceEditor(null);
-                }}
-              >
-                Add probe
-              </button>
-              <button
-                className="text-button"
-                onClick={() => {
-                  setServiceEditor({ id: service.id, name: service.name });
-                  setEditor(null);
-                }}
-              >
-                Rename
-              </button>
-              <button
-                className="text-button"
+                className="health-service-toggle"
+                type="button"
+                aria-expanded={expanded}
                 onClick={() =>
-                  setDeleting({
-                    path: `/services/${service.id}`,
-                    label: `${service.name} and all its probes`,
-                  })
+                  setExpandedServiceId((current) =>
+                    current === service.id ? null : service.id,
+                  )
                 }
               >
-                Delete service
+                <ChevronDown aria-hidden="true" size={16} />
+                <span className="health-service-name">{service.name}</span>
+                <Badge status={status} />
+                <span className="health-probe-count">
+                  {service.probes.length}{" "}
+                  {service.probes.length === 1 ? "probe" : "probes"}
+                </span>
+                <ServiceStatusStrip probes={service.probes} />
               </button>
+              {expanded && (
+                <div className="health-actions health-service-actions">
+                  <button
+                    className="text-button"
+                    onClick={() => {
+                      setEditor({ serviceId: service.id });
+                      setServiceEditor(null);
+                    }}
+                  >
+                    Add probe
+                  </button>
+                  <button
+                    className="text-button"
+                    onClick={() => {
+                      setServiceEditor({ id: service.id, name: service.name });
+                      setEditor(null);
+                    }}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    className="text-button"
+                    onClick={() =>
+                      setDeleting({
+                        path: `/services/${service.id}`,
+                        label: `${service.name} and all its probes`,
+                      })
+                    }
+                  >
+                    Delete service
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
-          {!service.probes.length && (
-            <p className="health-empty">
-              No probes yet. Add a public endpoint to check this service.
-            </p>
-          )}
-          {service.probes.map((probe) => (
-            <div className="health-probe" key={probe.id}>
-              <div className="health-probe-top">
-                <strong>{probe.name}</strong>
-                <Badge status={currentStatus(probe, now)} />
-              </div>
-              <div className="health-metrics">
-                <span>
-                  Latency{" "}
-                  <strong>
-                    {probe.lastCheck
-                      ? `${Math.round(probe.lastCheck.latencyMs)} ms`
-                      : "—"}
-                  </strong>
-                </span>
-                <span>
-                  Last check{" "}
-                  <strong>
-                    {probe.lastCheck ? (
-                      <time
-                        dateTime={probe.lastCheck.checkedAt}
-                        title={new Date(
-                          probe.lastCheck.checkedAt,
-                        ).toLocaleString()}
-                      >
-                        {relative(probe.lastCheck.checkedAt, now)}
-                      </time>
-                    ) : (
-                      "Never"
+            {expanded && (
+              <div className="health-service-details">
+                {!service.probes.length && (
+                  <p className="health-empty">
+                    No probes yet. Add a public endpoint to check this service.
+                  </p>
+                )}
+                {service.probes.map((probe) => (
+                  <div className="health-probe" key={probe.id}>
+                    <div className="health-probe-top">
+                      <strong>{probe.name}</strong>
+                      <Badge status={currentStatus(probe, now)} />
+                    </div>
+                    <div className="health-metrics">
+                      <span>
+                        Latency{" "}
+                        <strong>
+                          {probe.lastCheck
+                            ? `${Math.round(probe.lastCheck.latencyMs)} ms`
+                            : "—"}
+                        </strong>
+                      </span>
+                      <span>
+                        Last check{" "}
+                        <strong>
+                          {probe.lastCheck ? (
+                            <time
+                              dateTime={probe.lastCheck.checkedAt}
+                              title={new Date(
+                                probe.lastCheck.checkedAt,
+                              ).toLocaleString()}
+                            >
+                              {relative(probe.lastCheck.checkedAt, now)}
+                            </time>
+                          ) : (
+                            "Never"
+                          )}
+                        </strong>
+                      </span>
+                      <span>
+                        Check success · 24h{" "}
+                        <strong>
+                          {probe.successRate24h === null
+                            ? "—"
+                            : `${probe.successRate24h.toFixed(1)}%`}{" "}
+                          <small>({probe.checks24h} checks)</small>
+                        </strong>
+                      </span>
+                    </div>
+                    {probe.lastCheck && (
+                      <p className="health-result">
+                        {probe.lastCheck.statusCode === null
+                          ? "No HTTP response"
+                          : `HTTP ${probe.lastCheck.statusCode}`}
+                        {probe.lastCheck.reason
+                          ? ` · ${probe.lastCheck.reason}`
+                          : ""}
+                      </p>
                     )}
-                  </strong>
-                </span>
-                <span>
-                  Check success · 24h{" "}
-                  <strong>
-                    {probe.successRate24h === null
-                      ? "—"
-                      : `${probe.successRate24h.toFixed(1)}%`}{" "}
-                    <small>({probe.checks24h} checks)</small>
-                  </strong>
-                </span>
-              </div>
-              {probe.lastCheck && (
-                <p className="health-result">
-                  {probe.lastCheck.statusCode === null
-                    ? "No HTTP response"
-                    : `HTTP ${probe.lastCheck.statusCode}`}
-                  {probe.lastCheck.reason ? ` · ${probe.lastCheck.reason}` : ""}
-                </p>
-              )}
-              {currentStatus(probe, now) === "unknown" && (
-                <p className="health-result">
-                  {probe.lastCheck
-                    ? "Check overdue. Waiting for a fresh result."
-                    : "Waiting for the first check."}
-                </p>
-              )}
-              <LatencyChart
-                name={probe.name}
-                history={probe.history}
-                daily={probe.latencyHistory}
-                now={now}
-              />
-              <div
-                className="health-history"
-                role="img"
-                aria-label={`Recent checks for ${probe.name}, oldest to newest: ${
-                  probe.history
-                    .slice(0, 40)
-                    .reverse()
-                    .map((check) => (check.ok ? "passed" : "failed"))
-                    .join(", ") || "no checks"
-                }`}
-              >
-                {probe.history
-                  .slice(0, 40)
-                  .reverse()
-                  .map((check, index) => (
-                    <span
-                      key={`${check.checkedAt}-${index}`}
-                      className={check.ok ? "health-pass" : "health-fail"}
-                      title={`${new Date(check.checkedAt).toLocaleString()} · ${check.ok ? "Passed" : "Failed"} · ${Math.round(check.latencyMs)} ms`}
+                    {currentStatus(probe, now) === "unknown" && (
+                      <p className="health-result">
+                        {probe.lastCheck
+                          ? "Check overdue. Waiting for a fresh result."
+                          : "Waiting for the first check."}
+                      </p>
+                    )}
+                    <LatencyChart
+                      name={probe.name}
+                      history={probe.history}
+                      daily={probe.latencyHistory}
+                      now={now}
                     />
-                  ))}
-                {!probe.history.length && (
-                  <span className="health-no-history">No recorded checks</span>
+                    <div
+                      className="health-history"
+                      role="img"
+                      aria-label={`Recent checks for ${probe.name}, oldest to newest: ${
+                        probe.history
+                          .slice(0, 40)
+                          .reverse()
+                          .map((check) => (check.ok ? "passed" : "failed"))
+                          .join(", ") || "no checks"
+                      }`}
+                    >
+                      {probe.history
+                        .slice(0, 40)
+                        .reverse()
+                        .map((check, index) => (
+                          <span
+                            key={`${check.checkedAt}-${index}`}
+                            className={check.ok ? "health-pass" : "health-fail"}
+                            title={`${new Date(check.checkedAt).toLocaleString()} · ${check.ok ? "Passed" : "Failed"} · ${Math.round(check.latencyMs)} ms`}
+                          />
+                        ))}
+                      {!probe.history.length && (
+                        <span className="health-no-history">
+                          No recorded checks
+                        </span>
+                      )}
+                    </div>
+                    <details className="health-timeline">
+                      <summary>State-change timeline</summary>
+                      <ul>
+                        {probe.history
+                          .slice()
+                          .reverse()
+                          .filter(
+                            (check, index, history) =>
+                              index === 0 ||
+                              check.status !== history[index - 1].status,
+                          )
+                          .slice(-8)
+                          .reverse()
+                          .map((check, index) => (
+                            <li key={`${check.checkedAt}-${index}`}>
+                              <Badge status={check.status} />
+                              <time dateTime={check.checkedAt}>
+                                {new Date(check.checkedAt).toLocaleString()}
+                              </time>
+                            </li>
+                          ))}
+                      </ul>
+                      {!probe.history.length && (
+                        <p>No state changes recorded.</p>
+                      )}
+                    </details>
+                    <div className="health-actions health-probe-actions">
+                      <button
+                        className="text-button"
+                        disabled={busy || !probe.enabled}
+                        onClick={() =>
+                          void mutate(
+                            `/probes/${probe.id}/check`,
+                            "POST",
+                            undefined,
+                            "Check queued. The result will appear when it finishes.",
+                          )
+                        }
+                      >
+                        Check now
+                      </button>
+                      <button
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() =>
+                          void mutate(
+                            `/probes/${probe.id}`,
+                            "PUT",
+                            { ...definition(probe), enabled: !probe.enabled },
+                            probe.enabled ? "Probe paused" : "Probe resumed",
+                          )
+                        }
+                      >
+                        {probe.enabled ? "Pause" : "Resume"}
+                      </button>
+                      <button
+                        className="text-button"
+                        onClick={() => {
+                          setEditor({ serviceId: service.id, probe });
+                          setServiceEditor(null);
+                        }}
+                      >
+                        Edit probe
+                      </button>
+                      <button
+                        className="text-button"
+                        onClick={() =>
+                          setDeleting({
+                            path: `/probes/${probe.id}`,
+                            label: probe.name,
+                          })
+                        }
+                      >
+                        Delete probe
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {editor?.serviceId === service.id && (
+                  <ProbeEditor
+                    key={editor.probe?.id || "new"}
+                    probe={editor.probe}
+                    busy={busy}
+                    onCancel={() => setEditor(null)}
+                    onSave={async (input) => {
+                      const ok = await mutate(
+                        editor.probe
+                          ? `/probes/${editor.probe.id}`
+                          : `/services/${service.id}/probes`,
+                        editor.probe ? "PUT" : "POST",
+                        input,
+                        "Probe saved",
+                      );
+                      if (ok)
+                        setEditor((current) =>
+                          current === editor ? null : current,
+                        );
+                    }}
+                  />
                 )}
               </div>
-              <details className="health-timeline">
-                <summary>State-change timeline</summary>
-                <ul>
-                  {probe.history
-                    .slice()
-                    .reverse()
-                    .filter(
-                      (check, index, history) =>
-                        index === 0 ||
-                        check.status !== history[index - 1].status,
-                    )
-                    .slice(-8)
-                    .reverse()
-                    .map((check, index) => (
-                      <li key={`${check.checkedAt}-${index}`}>
-                        <Badge status={check.status} />
-                        <time dateTime={check.checkedAt}>
-                          {new Date(check.checkedAt).toLocaleString()}
-                        </time>
-                      </li>
-                    ))}
-                </ul>
-                {!probe.history.length && <p>No state changes recorded.</p>}
-              </details>
-              <div className="health-actions health-probe-actions">
-                <button
-                  className="text-button"
-                  disabled={busy || !probe.enabled}
-                  onClick={() =>
-                    void mutate(
-                      `/probes/${probe.id}/check`,
-                      "POST",
-                      undefined,
-                      "Check queued. The result will appear when it finishes.",
-                    )
-                  }
-                >
-                  Check now
-                </button>
-                <button
-                  className="text-button"
-                  disabled={busy}
-                  onClick={() =>
-                    void mutate(
-                      `/probes/${probe.id}`,
-                      "PUT",
-                      { ...definition(probe), enabled: !probe.enabled },
-                      probe.enabled ? "Probe paused" : "Probe resumed",
-                    )
-                  }
-                >
-                  {probe.enabled ? "Pause" : "Resume"}
-                </button>
-                <button
-                  className="text-button"
-                  onClick={() => {
-                    setEditor({ serviceId: service.id, probe });
-                    setServiceEditor(null);
-                  }}
-                >
-                  Edit probe
-                </button>
-                <button
-                  className="text-button"
-                  onClick={() =>
-                    setDeleting({
-                      path: `/probes/${probe.id}`,
-                      label: probe.name,
-                    })
-                  }
-                >
-                  Delete probe
-                </button>
-              </div>
-            </div>
-          ))}
-          {editor?.serviceId === service.id && (
-            <ProbeEditor
-              key={editor.probe?.id || "new"}
-              probe={editor.probe}
-              busy={busy}
-              onCancel={() => setEditor(null)}
-              onSave={async (input) => {
-                const ok = await mutate(
-                  editor.probe
-                    ? `/probes/${editor.probe.id}`
-                    : `/services/${service.id}/probes`,
-                  editor.probe ? "PUT" : "POST",
-                  input,
-                  "Probe saved",
-                );
-                if (ok)
-                  setEditor((current) => (current === editor ? null : current));
-              }}
-            />
-          )}
-        </article>
-      ))}
+            )}
+          </article>
+        );
+      })}
       {deleting && (
         <div className="health-confirm" role="alert">
           <p>

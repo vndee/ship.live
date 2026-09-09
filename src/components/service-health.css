@@ -38,9 +38,81 @@
 }
 .health-service-heading {
   justify-content: space-between;
-  padding: 17px 20px;
+  padding: 0;
   background: var(--surface);
   flex-wrap: wrap;
+}
+.health-service-toggle {
+  display: flex;
+  align-items: center;
+  flex: 1 1 520px;
+  min-width: 0;
+  gap: 12px;
+  padding: 16px 20px;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.health-service-toggle > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+  transform: rotate(-90deg);
+  transition: transform 160ms ease;
+}
+.health-service-toggle[aria-expanded="true"] > svg {
+  transform: rotate(0);
+}
+.health-service-name {
+  min-width: 100px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 600;
+}
+.health-probe-count {
+  color: var(--muted);
+  white-space: nowrap;
+  font-size: 11px;
+}
+.health-service-strip {
+  display: grid;
+  grid-template-columns: repeat(20, minmax(4px, 1fr));
+  gap: 3px;
+  width: min(240px, 24vw);
+  height: 18px;
+  margin-left: auto;
+}
+.health-service-block {
+  min-width: 0;
+  border-radius: 2px;
+  background: #252d32;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 4%);
+}
+.health-service-block-healthy {
+  background: #629c79;
+}
+.health-service-block-degraded {
+  background: #c19954;
+}
+.health-service-block-down {
+  background: #c76669;
+}
+.health-service-block-unknown {
+  background: #626c72;
+}
+.health-service-block-paused {
+  background: #77758b;
+}
+.health-service-actions {
+  padding: 0 20px 14px 48px;
+}
+.health-service-details {
+  animation: health-expand 160ms ease-out;
 }
 .health-service h3 {
   font-size: 15px;
@@ -269,9 +341,23 @@
     opacity: 1;
   }
 }
+@keyframes health-expand {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .health-change {
+  .health-change,
+  .health-service-details {
     animation: none;
+  }
+  .health-service-toggle > svg {
+    transition: none;
   }
 }
 @media (max-width: 600px) {
@@ -279,10 +365,35 @@
     flex-wrap: wrap;
     gap: 14px;
   }
-  .health-service-heading,
   .health-probe,
   .health-editor {
     padding: 16px;
+  }
+  .health-service-toggle {
+    flex-wrap: wrap;
+    gap: 9px 10px;
+    padding: 15px 16px;
+  }
+  .health-service-name {
+    min-width: 0;
+    max-width: calc(100% - 130px);
+  }
+  .health-probe-count {
+    margin-left: auto;
+  }
+  .health-service-strip {
+    grid-template-columns: repeat(10, minmax(5px, 1fr));
+    flex: 1 0 calc(100% - 26px);
+    width: auto;
+    height: 13px;
+    margin-left: 26px;
+  }
+  .health-service-block:nth-child(-n + 10) {
+    display: none;
+  }
+  .health-service-actions {
+    width: 100%;
+    padding: 0 16px 14px 42px;
   }
   .health-form-grid {
     grid-template-columns: 1fr;
