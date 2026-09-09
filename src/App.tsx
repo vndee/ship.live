@@ -26,6 +26,8 @@ import {
   Rocket,
   Search,
   Settings2,
+  Share2,
+  Sparkles,
   Users,
   X,
 } from "lucide-react";
@@ -40,16 +42,21 @@ import {
   filterEvents,
   getTimelineCutoff,
   getTimelineRange,
-  getViewCounts,
   getWindowEvents,
 } from "./lib/feedView";
 import { useFeed, type FeedController } from "./hooks/useFeed";
 import { AccountPanel } from "./components/AccountPanel";
 import { ShipNoteComposer } from "./components/ShipNoteComposer";
 import { Modal } from "./components/Modal";
-import { OrbitScene } from "./components/OrbitScene";
+import { LiveLeaderboard } from "./components/LiveLeaderboard";
+import { SharePanel } from "./components/SharePanel";
+import { SharedDashboard } from "./components/SharedDashboard";
+import type { CreatedDashboardShare } from "../shared/shares";
+import { DashboardPulse } from "./components/DashboardPulse";
+import { ActivityCelebration } from "./components/ActivityCelebration";
+import { useActivityCelebration } from "./hooks/useActivityCelebration";
 
-type Page = "orbit" | "feed" | "team" | "milestones" | "repositories";
+type Page = "dashboard" | "feed" | "team" | "milestones" | "repositories";
 type Kind = ActivityEvent["type"];
 type Period = "24h" | "7d" | "30d";
 const icons: Record<Kind, ElementType> = {
@@ -146,6 +153,14 @@ function Avatar({
 }
 
 export default function App() {
+  return window.location.pathname.replace(/\/$/, "") === "/share" ? (
+    <SharedDashboard />
+  ) : (
+    <PrivateApp />
+  );
+}
+
+function PrivateApp() {
   const feed = useFeed();
   return <WorkspaceView key={feed.scopeKey} feed={feed} />;
 }
@@ -154,7 +169,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   const personal = feed.workspace?.kind === "personal";
   const canWriteNote =
     personal && feed.workspace?.owner && feed.operation?.status !== "pending";
-  const [page, setPage] = useState<Page>("orbit");
+  const [page, setPage] = useState<Page>("dashboard");
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<Kind | "">("");
   const [repo, setRepo] = useState("");
@@ -163,13 +178,16 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     null,
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [shareLink, setShareLink] = useState<CreatedDashboardShare | null>(
+    null,
+  );
   const [moving, setMoving] = useState(
     () => !matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
   const [wall, setWall] = useState(false);
+  const [celebrations, setCelebrations] = useState(true);
   const [modal, setModal] = useState<
-    "connect" | "rules" | "settings" | "note" | null
+    "connect" | "rules" | "settings" | "note" | "share" | null
   >(null);
   useEffect(() => {
     if (!feed.session.user || !feed.workspace) return;
@@ -193,6 +211,17 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   const detail = feed.events.find((event) => event.id === detailId) || null;
   const [actionError, setActionError] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const liveEffects = useActivityCelebration(feed.events, {
+    scope: feed.scopeKey,
+    ready: feed.demo || (feed.hasSnapshot && !feed.error),
+    enabled:
+      celebrations &&
+      page === "dashboard" &&
+      !feed.paused &&
+      !replay &&
+      !syncing &&
+      !modal,
+  });
   const [toast, setToast] = useState("");
   const [limit, setLimit] = useState(30);
   const [now, setNow] = useState(Date.now());
@@ -219,17 +248,9 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     () => getWindowEvents(feed.events, range.start, range.end),
     [feed.events, range.start, range.end],
   );
-  const repositories = useMemo(
-    () => [...new Set(windowEvents.map((e) => e.repo))].sort(),
-    [windowEvents],
-  );
   const allRepositories = useMemo(
     () => [...new Set(feed.events.map((e) => e.repo))].sort(),
     [feed.events],
-  );
-  const sceneEvents = useMemo(
-    () => filterEvents(windowEvents, { repo: "", kind, query }),
-    [windowEvents, kind, query],
   );
   const visible = useMemo(
     () =>
@@ -238,17 +259,12 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
       ),
     [windowEvents, repo, kind, query, cutoff],
   );
-  const counts = useMemo(() => getViewCounts(visible), [visible]);
-  const repositoryButtons =
-    repo && !repositories.includes(repo)
-      ? [...repositories, repo].sort()
-      : repositories;
   const activeFilters = Boolean(query || kind || repo);
   const selected = visible.find((e) => e.id === selectedId);
   const shownEvents =
-    page === "orbit" && selected
+    page === "dashboard" && selected
       ? [selected, ...visible.filter((e) => e.id !== selected.id)].slice(0, 5)
-      : visible.slice(0, page === "orbit" ? 5 : limit);
+      : visible.slice(0, page === "dashboard" ? 5 : limit);
   const status = feed.demo
     ? "Demo"
     : feed.loading
@@ -288,7 +304,6 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     setQuery("");
     setReplay(null);
     setSelectedId(null);
-    setHoveredId(null);
     setDetailId(null);
   }, [feed.organization]);
   useEffect(() => {
@@ -299,7 +314,8 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
-        searchRef.current?.focus();
+        setPage("feed");
+        requestAnimationFrame(() => searchRef.current?.focus());
       }
       if (e.key === "Escape") setWall(false);
     };
@@ -323,10 +339,6 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   }
   function openConnect() {
     setModal("connect");
-  }
-  function useDemo() {
-    feed.useDemo();
-    setModal(null);
   }
   async function syncGithub() {
     setSyncing(true);
@@ -359,17 +371,13 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   async function toggleWall() {
     const next = !wall;
     setWall(next);
-    if (next) setPage("orbit");
+    if (next) setPage("dashboard");
     try {
       if (next) await document.documentElement.requestFullscreen?.();
       else if (document.fullscreenElement) await document.exitFullscreen();
     } catch {
       /* The display layout also works without browser fullscreen. */
     }
-  }
-  function chooseRepo(value: string) {
-    setRepo(value === repo ? "" : value);
-    setSelectedId(null);
   }
   function selectEvent(event: ActivityEvent) {
     setSelectedId(event.id);
@@ -467,9 +475,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             return (
               <article
                 key={event.id}
-                className={`event-row ${isSelected ? "selected" : ""}`}
-                onMouseEnter={() => setHoveredId(event.id)}
-                onMouseLeave={() => setHoveredId(null)}
+                className={`event-row ${isSelected ? "selected" : ""} ${liveEffects.highlightedIds.has(event.id) ? `activity-new ${moving ? "with-activity-motion" : ""}` : ""}`}
               >
                 <button
                   className="event-select"
@@ -497,7 +503,12 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                         : shortRepo(event.repo)}
                       {event.number ? ` / #${event.number}` : ""}
                     </span>
-                    <span>{EVENT_META[event.type].label}</span>
+                    <span>
+                      {liveEffects.highlightedIds.has(event.id) && (
+                        <span className="new-activity-badge">New</span>
+                      )}
+                      {EVENT_META[event.type].label}
+                    </span>
                   </span>
                 </button>
                 {isSelected && (
@@ -543,8 +554,8 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                 : replay
                   ? "Move the timeline forward to see later events."
                   : personal
-                    ? "Add a ship note, or connect GitHub to bring your work into Orbit."
-                    : "Received GitHub events will appear here and in Orbit."}
+                    ? "Add a ship note, or connect GitHub to bring your work into your dashboard."
+                    : "Received GitHub events will appear here and on the leaderboard."}
             </p>
             {activeFilters ? (
               <button className="button secondary" onClick={clearFilters}>
@@ -600,38 +611,6 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             )}
           </div>
         )}
-        {!full && !personal && (
-          <div className="shared-goal">
-            <div className="goal-label">
-              <span>Shared milestone</span>
-              <span>
-                {achievements[0].progress} / {achievements[0].target}
-              </span>
-            </div>
-            <h3>{achievements[0].title}</h3>
-            <p>{achievements[0].description}</p>
-            <div
-              className="goal-track"
-              role="progressbar"
-              aria-label={achievements[0].title}
-              aria-valuemin={0}
-              aria-valuemax={achievements[0].target}
-              aria-valuenow={achievements[0].progress}
-            >
-              <span
-                style={{
-                  width: `${(achievements[0].progress / achievements[0].target) * 100}%`,
-                }}
-              />
-            </div>
-            <button
-              className="text-button"
-              onClick={() => setPage("milestones")}
-            >
-              All team milestones <ArrowUpRight size={13} />
-            </button>
-          </div>
-        )}
       </section>
     );
   }
@@ -644,7 +623,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
           href="#"
           onClick={(e) => {
             e.preventDefault();
-            setPage("orbit");
+            setPage("dashboard");
           }}
         >
           ship<span>.</span>live
@@ -657,7 +636,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
         <nav aria-label="Main navigation">
           {(
             [
-              ["orbit", "Orbit"],
+              ["dashboard", "Dashboard"],
               ["feed", "Live feed"],
               ["team", "Team"],
               ["milestones", "Milestones"],
@@ -727,7 +706,9 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             <h1>
               {
                 {
-                  orbit: personal ? "Your work, in orbit." : "Work, in orbit.",
+                  dashboard: personal
+                    ? "Your week, in motion."
+                    : "Great work. Shared momentum.",
                   feed: personal
                     ? "The shipping journal."
                     : "The activity log.",
@@ -739,7 +720,25 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             </h1>
           </div>
           <div className="page-tools">
-            {(page === "orbit" || page === "feed") && (
+            {feed.demo && page === "dashboard" && (
+              <button
+                className="button secondary demo-activity-button"
+                onClick={feed.simulateActivity}
+                disabled={feed.paused || Boolean(liveEffects.celebration)}
+                title="Add a fictional activity to preview live updates"
+              >
+                <Sparkles size={15} /> Try live activity
+              </button>
+            )}
+            {!personal && (
+              <button
+                className="button secondary share-dashboard-button"
+                onClick={() => setModal("share")}
+              >
+                <Share2 size={15} /> Share dashboard
+              </button>
+            )}
+            {page === "feed" && (
               <>
                 <label className="search-box">
                   <Search size={15} />
@@ -851,174 +850,89 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             <span>{feed.notice}</span>
           </div>
         )}
-        {(page === "orbit" || page === "feed") && (
+        {page === "dashboard" && !personal && (
+          <DashboardPulse
+            events={feed.events}
+            now={now}
+            onMilestones={() => setPage("milestones")}
+          />
+        )}
+        {(page === "dashboard" || page === "feed") && (
           <>
-            {page === "orbit" ? (
-              <div className="orbit-layout">
-                <section
-                  className="orbit-workspace"
-                  aria-label="Workspace activity in Orbit"
-                >
-                  <div className="orbit-topline">
-                    <span>
-                      Orbit <span className="subtle-divider">/</span>{" "}
-                      {periodNames[period].toLowerCase()}
-                    </span>
-                    <span>
-                      {replay
-                        ? `Replay · ${clock(cutoff, "7d")}`
-                        : `${repositories.length} ${personal ? (repositories.length === 1 ? "source" : "sources") : repositories.length === 1 ? "repository" : "repositories"}`}
-                    </span>
-                  </div>
-                  <div className="orbit-stage">
-                    <OrbitScene
-                      events={sceneEvents}
-                      repositories={repositories}
-                      journal={personal}
-                      rangeStart={range.start}
-                      rangeEnd={range.end}
-                      cutoff={cutoff}
-                      selectedId={selectedId}
-                      hoveredId={hoveredId}
-                      selectedRepo={repo}
-                      playing={moving}
-                      onSelect={selectEvent}
-                      onHover={setHoveredId}
-                    />
-                    {!windowEvents.length && (
-                      <div className="orbit-empty">
-                        <span className="empty-orbit" aria-hidden="true" />
-                        <h2>
-                          {feed.loading
-                            ? "Finding your orbit…"
-                            : "Your next chapter starts here."}
-                        </h2>
-                        <p>
-                          {personal
-                            ? "A ship note or your next GitHub event will make the first mark."
-                            : "No received activity in this time window."}
-                        </p>
-                        {!feed.demo && (
-                          <button className="text-button" onClick={useDemo}>
-                            Explore Orbit with sample data{" "}
-                            <ArrowUpRight size={14} />
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div
-                    className="view-metrics"
-                    aria-label="Activity in the current view"
-                  >
-                    <div>
-                      <strong>{counts.merges}</strong>
-                      <span>pull requests merged</span>
-                    </div>
-                    <div>
-                      <strong>{counts.reviews}</strong>
-                      <span>reviews submitted</span>
-                    </div>
-                    <div>
-                      <strong>
-                        {personal
-                          ? visible.filter((event) => event.type === "note")
-                              .length
-                          : counts.contributors}
-                      </strong>
-                      <span>{personal ? "ship notes" : "contributors"}</span>
-                    </div>
-                    <div className="metric-total">
-                      <strong>{counts.total}</strong>
-                      <span>events in view</span>
-                    </div>
-                  </div>
-                  {repositoryButtons.length > 0 && (
-                    <div
-                      className="repository-orbits"
-                      aria-label="Filter Orbit by repository"
-                    >
-                      {repositoryButtons.map((repository) => (
-                        <button
-                          key={repository}
-                          aria-pressed={repo === repository}
-                          aria-label={`Filter ${repository}`}
-                          onClick={() => chooseRepo(repository)}
-                        >
-                          <span className="repo-orbit-dot" />
-                          <span className="repo-name" title={repository}>
-                            {shortRepo(repository)}
-                          </span>
-                          <span className="repo-count">
-                            {
-                              sceneEvents.filter(
-                                (e) =>
-                                  e.repo === repository &&
-                                  Date.parse(e.occurredAt) <= cutoff,
-                              ).length
-                            }
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </section>
-                <aside className="orbit-sidebar">{renderFeed()}</aside>
+            {page === "dashboard" ? (
+              <div className="dashboard-layout">
+                <LiveLeaderboard
+                  events={feed.events}
+                  now={now}
+                  demo={feed.demo}
+                  moving={moving}
+                  loading={feed.loading}
+                  onToggleMotion={() => setMoving(!moving)}
+                  onRules={() => setModal("rules")}
+                  status={
+                    feed.demo
+                      ? "Demo"
+                      : feed.paused
+                        ? "Paused"
+                        : feed.streaming
+                          ? "Live"
+                          : feed.loading
+                            ? "Syncing"
+                            : "Polling"
+                  }
+                />
+                <aside className="dashboard-sidebar">{renderFeed()}</aside>
               </div>
             ) : (
               <div className="feed-page">{renderFeed(true)}</div>
             )}
-            <div className="timeline">
-              <button
-                className="icon-button motion-button"
-                aria-label={moving ? "Pause movement" : "Resume movement"}
-                aria-pressed={!moving}
-                title={moving ? "Pause movement" : "Resume movement"}
-                onClick={() => setMoving(!moving)}
-              >
-                {moving ? <Pause size={16} /> : <Play size={16} />}
-              </button>
-              <div className="timeline-track">
-                <label className="sr-only" htmlFor="activity-timeline">
-                  Activity timeline
-                </label>
-                <input
-                  id="activity-timeline"
-                  type="range"
-                  min="0"
-                  max="100"
-                  step="0.1"
-                  value={replay?.percent ?? 100}
-                  aria-valuetext={clock(cutoff, "7d")}
-                  onChange={(e) => {
-                    const percent = Number(e.target.value);
-                    setReplay(
-                      percent === 100
-                        ? null
-                        : { end: replay?.end ?? now, percent },
-                    );
-                  }}
-                />
-                <div className="timeline-labels">
-                  {[0, 0.25, 0.5, 0.75, 1].map((fraction, i) => (
-                    <span key={fraction} className={i % 2 ? "minor-tick" : ""}>
-                      {clock(
-                        range.start + (range.end - range.start) * fraction,
-                        period,
-                      )}
-                    </span>
-                  ))}
+            {page === "feed" && (
+              <div className="timeline">
+                <div className="timeline-track">
+                  <label className="sr-only" htmlFor="activity-timeline">
+                    Activity timeline
+                  </label>
+                  <input
+                    id="activity-timeline"
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    value={replay?.percent ?? 100}
+                    aria-valuetext={clock(cutoff, "7d")}
+                    onChange={(e) => {
+                      const percent = Number(e.target.value);
+                      setReplay(
+                        percent === 100
+                          ? null
+                          : { end: replay?.end ?? now, percent },
+                      );
+                    }}
+                  />
+                  <div className="timeline-labels">
+                    {[0, 0.25, 0.5, 0.75, 1].map((fraction, i) => (
+                      <span
+                        key={fraction}
+                        className={i % 2 ? "minor-tick" : ""}
+                      >
+                        {clock(
+                          range.start + (range.end - range.start) * fraction,
+                          period,
+                        )}
+                      </span>
+                    ))}
+                  </div>
                 </div>
+                <button
+                  className={`timeline-now ${!replay ? "is-live" : ""}`}
+                  onClick={() => setReplay(null)}
+                  aria-label="Return to latest activity"
+                >
+                  <span />
+                  Now
+                </button>
               </div>
-              <button
-                className={`timeline-now ${!replay ? "is-live" : ""}`}
-                onClick={() => setReplay(null)}
-                aria-label="Return to latest activity"
-              >
-                <span />
-                Now
-              </button>
-            </div>
+            )}
           </>
         )}
         {page === "team" && (
@@ -1150,7 +1064,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                       setRepo(repository);
                       setPeriod("30d");
                       setReplay(null);
-                      setPage("orbit");
+                      setPage("dashboard");
                     }}
                   >
                     <FolderGit2 size={21} />
@@ -1194,9 +1108,6 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                 : `${feed.organization} · Private workspace`}
           </span>
           <div>
-            {page === "orbit" && (
-              <span className="point-key">One point, one event</span>
-            )}
             <span>
               {feed.demo
                 ? "Explore at your own pace"
@@ -1214,11 +1125,36 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
           </div>
         </footer>
       </main>
+      <ActivityCelebration
+        celebration={liveEffects.celebration}
+        moving={moving}
+        displayName={displayName}
+      />
       {toast && (
         <div className="toast" role="status">
           <Check size={16} />
           {toast}
         </div>
+      )}
+      {modal === "share" && feed.demo && (
+        <Modal title="Share dashboard" onClose={() => setModal(null)}>
+          <p className="modal-description">
+            Share a connected team dashboard with a read-only link. Choose an
+            expiration, rotate the link, or revoke access at any time.
+          </p>
+          <p className="field-hint">
+            Sign in and connect a team workspace to create a share link.
+            Fictional demo activity cannot be shared.
+          </p>
+          <button className="button primary" onClick={openConnect}>
+            {feed.session.user ? "Choose team workspace" : "Sign in to share"}
+          </button>
+        </Modal>
+      )}
+      {modal === "share" && feed.workspace?.kind === "team" && (
+        <Modal title="Share dashboard" onClose={() => setModal(null)}>
+          <SharePanel feed={feed} link={shareLink} onLink={setShareLink} />
+        </Modal>
       )}
       {modal === "connect" && (
         <Modal
@@ -1301,7 +1237,15 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
           <section className="settings-section">
             <h3>Motion and live updates</h3>
             <label className="settings-toggle">
-              <span>Animate Orbit</span>
+              <span>Highlight and celebrate new activity</span>
+              <input
+                type="checkbox"
+                checked={celebrations}
+                onChange={(e) => setCelebrations(e.target.checked)}
+              />
+            </label>
+            <label className="settings-toggle">
+              <span>Animate dashboard</span>
               <input
                 type="checkbox"
                 checked={moving}

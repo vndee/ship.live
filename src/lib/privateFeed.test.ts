@@ -31,6 +31,34 @@ test("a fresh snapshot removes revoked repository activity and deleted notes", (
   assert.deepEqual(after.events, []);
 });
 
+test("live effects can distinguish an empty verified snapshot from initial loading or lost access", () => {
+  assert.equal(emptyPrivateFeed.hasSnapshot, false);
+  const loaded = privateFeedReducer(emptyPrivateFeed, {
+    type: "snapshot",
+    generation: 0,
+    events: [],
+    updatedAt: event.occurredAt,
+  });
+  assert.equal(loaded.hasSnapshot, true);
+  assert.equal(
+    privateFeedReducer(loaded, { type: "loading", generation: 0, value: true })
+      .hasSnapshot,
+    true,
+  );
+  assert.equal(
+    privateFeedReducer(loaded, { type: "reset", generation: 1 }).hasSnapshot,
+    false,
+  );
+  assert.equal(
+    privateFeedReducer(loaded, {
+      type: "error",
+      generation: 1,
+      message: "Access lost",
+    }).hasSnapshot,
+    false,
+  );
+});
+
 test("logout clears data and rejects late responses from the previous identity", () => {
   const before = {
     ...emptyPrivateFeed,
