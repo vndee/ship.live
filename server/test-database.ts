@@ -70,7 +70,7 @@ if (
     process.exitCode = 1;
   } else {
     const root = fileURLToPath(new URL("../", import.meta.url));
-    const directories = ["src/lib", "server"];
+    const directories = ["src/lib", "shared", "server"];
     const files = (
       await Promise.all(
         directories.map(async (directory) =>

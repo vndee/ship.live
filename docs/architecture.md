@@ -45,7 +45,7 @@ Team membership in ship.live is not an organization-wide private-data grant. Fee
 
 ## Dashboard sharing
 
-`server/share-app.ts` and `server/share-store.ts` provide a separate read-only bearer capability. Authenticated team members can create, inspect, rotate, and revoke their own link. Mutations retain the normal Origin, CSRF, membership, session, and live GitHub checks. There is one record per creator/workspace, with a pinned installation, GitHub authorization generation, repository IDs, and mandatory expiration (1 hour, 24 hours, 7 days, or 30 days).
+`server/share-app.ts` and `server/share-store.ts` provide a separate read-only bearer capability. Authenticated team members can create, inspect, rotate, and revoke their own link. Mutations retain the normal Origin, CSRF, membership, session, and live GitHub checks. There is one record per creator/workspace, with a pinned installation, GitHub authorization generation, repository IDs, and a selected lifetime from 1 hour through 10 years. The **No expiration** option stores a 100-year expiry while preserving the same rotation and revocation path.
 
 Tokens contain 32 random bytes; PostgreSQL stores only their SHA-256 hashes. Creation returns the token once. The UI retains it only in memory and offers rotation if it no longer has the secret. Links use `/share#token`; the browser sends the token in `x-dashboard-share`, keeping it out of request URLs and referrers. Shared requests omit account cookies, return `no-store`, and expose neither notes nor event bodies. Anyone holding a valid link can see contributor names, GitHub activity titles, repository names, and XP from the pinned scope.
 

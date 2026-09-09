@@ -15,6 +15,7 @@ import { GitHubApp, type InstallationInfo, type Repo } from "./github-app.js";
 import { PostgresEventStore } from "./postgres-store.js";
 import { createTestDatabase } from "./test-database.js";
 import { createWorkspaceApp } from "./workspace-app.js";
+import { HealthStore } from "./health-store.js";
 import { WorkspaceStore } from "./workspace-store.js";
 
 const APP_URL = "http://localhost:3000";
@@ -369,7 +370,10 @@ test("share creation and management require membership, CSRF, and creator owners
   await withApp(t, async ({ workspaces, users, request }) => {
     const workspace = await connect(workspaces, users[0], 1);
     const path = `/api/workspaces/${workspace.id}/share`;
-    const post = { method: "POST", body: JSON.stringify({ expiresIn: 3600 }) };
+    const post = {
+      method: "POST",
+      body: JSON.stringify({ expiresIn: 3_155_760_000 }),
+    };
     assert.equal((await request(path, null, post)).status, 401);
     assert.equal((await request(path, users[1], post)).status, 404);
     assert.equal(
@@ -393,6 +397,10 @@ test("share creation and management require membership, CSRF, and creator owners
       );
     }
     const link = await (await request(path, users[0], post)).json();
+    assert.ok(
+      Date.parse(link.expiresAt) > Date.now() + 99 * 365 * 86_400_000,
+      "the no-expiration option must persist a roughly 100-year expiry",
+    );
     assert.equal((await request(path, users[0], post)).status, 409);
     await connect(workspaces, users[1], 2);
     assert.equal((await (await request(path, users[1])).json()).share, null);
@@ -1235,6 +1243,381 @@ test("SSE closes when the user's installation grant disappears and notes emit re
       await live.frame("access-revoked");
     } finally {
       await live.close();
+    }
+  });
+});
+
+test("team health UI routes enforce access and CSRF, validate public probes and stream updates", async (t) => {
+  await withApp(t, async ({ workspaces, auth, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const base = `/api/workspaces/${workspace.id}/health`;
+    assert.equal((await request(base, null)).status, 401);
+    assert.equal((await request(base, users[1])).status, 404);
+    const rejected = await request(`${base}/services`, users[0], {
+      method: "POST",
+      headers: { "x-csrf-token": "invalid" },
+      body: JSON.stringify({ name: "API" }),
+    });
+    assert.equal(rejected.status, 403);
+    const mutate = (path: string, method: string, body?: unknown) =>
+      request(`${base}${path}`, users[0], {
+        method,
+        headers: { "x-csrf-token": "fixture-csrf" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+    const created = await mutate("/services", "POST", { name: "Platform API" });
+    assert.equal(created.status, 201);
+    const service = (await created.json()) as { id: string };
+    const invalid = await mutate(`/services/${service.id}/probes`, "POST", {
+      name: "Private",
+      url: "http://127.0.0.1/health",
+    });
+    assert.equal(invalid.status, 400);
+    const createdProbe = await mutate(
+      `/services/${service.id}/probes`,
+      "POST",
+      { name: "Readiness", url: "https://example.com/health" },
+    );
+    assert.equal(createdProbe.status, 201);
+    const probe = (await createdProbe.json()) as { id: string };
+    const snapshot = await (await request(base)).json();
+    assert.equal(snapshot.services[0].probes[0].status, "unknown");
+    assert.equal(
+      (await mutate(`/probes/${probe.id}/check`, "POST")).status,
+      202,
+    );
+    const controller = new AbortController();
+    const response = await request(`${base}/events`, users[0], {
+      signal: controller.signal,
+    });
+    assert.equal(response.status, 200);
+    const reader = response.body!.getReader();
+    try {
+      assert.match(
+        new TextDecoder().decode((await reader.read()).value),
+        /event: health/,
+      );
+      const frame = reader.read();
+      assert.equal(
+        (
+          await mutate(`/services/${service.id}`, "PATCH", {
+            name: "Renamed API",
+          })
+        ).status,
+        204,
+      );
+      const update = await Promise.race([
+        frame,
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Missing health invalidation")),
+            2000,
+          ).unref(),
+        ),
+      ]);
+      assert.match(new TextDecoder().decode(update.value), /event: health/);
+    } finally {
+      controller.abort();
+      await reader.cancel().catch(() => {});
+    }
+    const personal = await workspaces.ensurePersonal(users[0]);
+    assert.equal(
+      (await request(`/api/workspaces/${personal.id}/health`)).status,
+      403,
+    );
+    assert.equal(
+      (await mutate(`/services/${service.id}`, "DELETE")).status,
+      204,
+    );
+    assert.equal((await (await request(base)).json()).services.length, 0);
+    auth.active.delete(users[0].id);
+    assert.equal((await request(base)).status, 401);
+  });
+});
+
+test("health share links expose only status data and rotate independently of dashboard links", async (t) => {
+  await withApp(t, async ({ workspaces, store, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const base = `/api/workspaces/${workspace.id}`;
+    const createdService = await (
+      await request(`${base}/health/services`, users[0], {
+        method: "POST",
+        body: JSON.stringify({ name: "Public status name" }),
+      })
+    ).json();
+    const probe = await (
+      await request(
+        `${base}/health/services/${createdService.id}/probes`,
+        users[0],
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name: "Readiness",
+            url: "https://example.com/private-probe-path?key=private-query",
+            jsonPath: "internal.state",
+            jsonExpected: "private-condition",
+          }),
+        },
+      )
+    ).json();
+    assert.ok(probe.id);
+    const dashboardResponse = await request(`${base}/share`, users[0], {
+      method: "POST",
+      body: JSON.stringify({ expiresIn: 3600 }),
+    });
+    assert.equal(dashboardResponse.status, 201);
+    const dashboard = await dashboardResponse.json();
+    const created = await request(`${base}/health/share`, users[0], {
+      method: "POST",
+      body: JSON.stringify({ expiresIn: 3600 }),
+    });
+    assert.equal(created.status, 201);
+    const link = await created.json();
+    assert.ok(link.token);
+    const healthRead = (token: string) =>
+      request("/api/shared/health", null, {
+        headers: { "x-health-share": token },
+      });
+    const publicResponse = await healthRead(link.token);
+    assert.equal(publicResponse.status, 200);
+    const text = await publicResponse.text();
+    assert.match(text, /Public status name/);
+    assert.doesNotMatch(
+      text,
+      /private-probe-path|private-query|private-condition|internal.state|hasHeaders|statusMin|jsonPath|"url"/,
+    );
+    assert.equal((await healthRead(dashboard.token)).status, 410);
+    assert.equal(
+      (
+        await request("/api/shared/feed", null, {
+          headers: { "x-dashboard-share": link.token },
+        })
+      ).status,
+      410,
+    );
+    const persisted = await store.pool.query(
+      "SELECT token_hash FROM ship_live_health_shares",
+    );
+    assert.ok(!JSON.stringify(persisted.rows).includes(link.token));
+    const rotated = await (
+      await request(`${base}/health/share/rotate`, users[0], {
+        method: "POST",
+        body: JSON.stringify({ expiresIn: 86400 }),
+      })
+    ).json();
+    assert.notEqual(rotated.token, link.token);
+    assert.equal((await healthRead(link.token)).status, 410);
+    assert.equal((await healthRead(rotated.token)).status, 200);
+    assert.equal(
+      (
+        await request("/api/shared/feed", null, {
+          headers: { "x-dashboard-share": dashboard.token },
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await request(`${base}/health/share`, users[1], {
+          method: "POST",
+          body: JSON.stringify({ expiresIn: 3600 }),
+        })
+      ).status,
+      404,
+    );
+    await request(`${base}/health/share`, users[0], { method: "DELETE" });
+    assert.equal((await healthRead(rotated.token)).status, 410);
+  });
+});
+
+test("health shares expire, revoke live viewers and reject loss of creator access", async (t) => {
+  await withApp(t, async ({ workspaces, store, users, provider, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const base = `/api/workspaces/${workspace.id}/health/share`;
+    const create = async () => {
+      const response = await request(base, users[0], {
+        method: "POST",
+        body: JSON.stringify({ expiresIn: 3600 }),
+      });
+      assert.equal(response.status, 201);
+      return response.json() as Promise<{ token: string }>;
+    };
+    assert.equal(
+      (
+        await request(base, users[0], {
+          method: "POST",
+          headers: { "x-csrf-token": "invalid" },
+          body: JSON.stringify({ expiresIn: 3600 }),
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await request(base, users[0], {
+          method: "POST",
+          body: JSON.stringify({ expiresIn: 10 }),
+        })
+      ).status,
+      400,
+    );
+    const link = await create();
+    const controller = new AbortController();
+    const stream = await request("/api/shared/health/events", null, {
+      headers: { "x-health-share": link.token },
+      signal: controller.signal,
+    });
+    assert.equal(stream.status, 200);
+    assert.match(stream.headers.get("cache-control") || "", /no-store/);
+    const reader = stream.body!.getReader();
+    try {
+      const connectedFrame = new TextDecoder().decode(
+        (await reader.read()).value,
+      );
+      assert.match(connectedFrame, /connected/);
+      // Wait for the subscription-race authorization to finish before counting.
+      let initial = connectedFrame;
+      const initialDeadline = setTimeout(() => controller.abort(), 3000);
+      try {
+        // Connected and initial refresh can be delivered in the same chunk.
+        while (!initial.includes("refresh")) {
+          const frame = await reader.read();
+          if (frame.done) break;
+          initial += new TextDecoder().decode(frame.value);
+        }
+      } finally {
+        clearTimeout(initialDeadline);
+      }
+      const callsBefore = provider.calls.length;
+      await store.pool.query("SELECT pg_notify('ship_live_event_changes',$1)", [
+        JSON.stringify({
+          organization: `health-${workspace.id}`,
+          eventId: "health",
+        }),
+      ]);
+      const invalidationDeadline = setTimeout(() => controller.abort(), 3000);
+      try {
+        const frame = new TextDecoder().decode((await reader.read()).value);
+        assert.match(frame, /refresh/);
+        assert.equal(
+          provider.calls.length,
+          callsBefore,
+          "empty health invalidations must not call GitHub",
+        );
+      } finally {
+        clearTimeout(invalidationDeadline);
+      }
+      await request(base, users[0], { method: "DELETE" });
+      const deadline = setTimeout(() => controller.abort(), 3000);
+      deadline.unref();
+      let text = "";
+      try {
+        while (!text.includes("access-revoked")) {
+          const frame = await reader.read();
+          if (frame.done) break;
+          text += new TextDecoder().decode(frame.value);
+        }
+      } finally {
+        clearTimeout(deadline);
+      }
+      assert.match(text, /access-revoked/);
+    } finally {
+      controller.abort();
+      await reader.cancel().catch(() => {});
+    }
+    const expiring = await create();
+    await store.pool.query(
+      "UPDATE ship_live_health_shares SET expires_at=now()-interval '1 second'",
+    );
+    assert.equal(
+      (
+        await request("/api/shared/health", null, {
+          headers: { "x-health-share": expiring.token },
+        })
+      ).status,
+      410,
+    );
+    const replacement = await create();
+    provider.visible.set("token-a", []);
+    assert.equal(
+      (
+        await request("/api/shared/health", null, {
+          headers: { "x-health-share": replacement.token },
+        })
+      ).status,
+      410,
+    );
+    assert.equal(
+      (
+        await request(`${base.replace("/share", "")}/services`, null, {
+          method: "POST",
+          headers: { "x-health-share": replacement.token },
+          body: JSON.stringify({ name: "Forbidden" }),
+        })
+      ).status,
+      401,
+    );
+  });
+});
+
+test("health share revocation during the snapshot read cannot release data", async (t) => {
+  await withApp(t, async ({ workspaces, store, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const base = `/api/workspaces/${workspace.id}/health`;
+    await request(`${base}/services`, users[0], {
+      method: "POST",
+      body: JSON.stringify({ name: "Never release this service" }),
+    });
+    const link = await (
+      await request(`${base}/share`, users[0], {
+        method: "POST",
+        body: JSON.stringify({ expiresIn: 3600 }),
+      })
+    ).json();
+    const read = HealthStore.prototype.snapshot;
+    HealthStore.prototype.snapshot = async function (id) {
+      const result = await read.call(this, id);
+      await store.pool.query(
+        "DELETE FROM ship_live_health_shares WHERE workspace_id=$1",
+        [id],
+      );
+      return result;
+    };
+    try {
+      const response = await request("/api/shared/health", null, {
+        headers: { "x-health-share": link.token },
+      });
+      assert.equal(response.status, 410);
+      assert.doesNotMatch(await response.text(), /Never release this service/);
+    } finally {
+      HealthStore.prototype.snapshot = read;
+    }
+  });
+});
+
+test("private health reads recheck installation access after fetching the snapshot", async (t) => {
+  await withApp(t, async ({ workspaces, store, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const base = `/api/workspaces/${workspace.id}/health`;
+    await request(`${base}/services`, users[0], {
+      method: "POST",
+      body: JSON.stringify({ name: "Restricted service" }),
+    });
+    const read = HealthStore.prototype.snapshot;
+    HealthStore.prototype.snapshot = async function (id) {
+      const result = await read.call(this, id);
+      await store.pool.query(
+        "UPDATE ship_live_installations SET active=false WHERE id=$1",
+        [workspace.installationId],
+      );
+      return result;
+    };
+    try {
+      const response = await request(base);
+      assert.equal(response.status, 403);
+      assert.doesNotMatch(await response.text(), /Restricted service/);
+    } finally {
+      HealthStore.prototype.snapshot = read;
     }
   });
 });

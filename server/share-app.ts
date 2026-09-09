@@ -1,3 +1,5 @@
+import { HealthStore } from "./health-store.js";
+import type { SharedHealthSnapshot } from "../shared/health.js";
 import { Router } from "express";
 import { SHARE_DURATIONS, type SharedFeedResponse } from "../shared/shares.js";
 import type { Workspace } from "../shared/workspaces.js";
@@ -7,26 +9,39 @@ import type { PostgresEventStore } from "./postgres-store.js";
 import { DashboardShareStore, unavailableShare } from "./share-store.js";
 import type { WorkspaceStore } from "./workspace-store.js";
 
-export function dashboardShareRouter({
-  auth,
-  store,
-  workspaces,
-  github,
-  viewer,
-}: {
-  auth: AuthService;
-  store: PostgresEventStore;
-  workspaces: WorkspaceStore;
-  github?: GitHubApp;
-  viewer: (
-    principal: Principal,
-    id: string,
-  ) => Promise<{ workspace: Workspace; repositories: Repo[] }>;
-}) {
+function workspaceShareRouter(
+  {
+    auth,
+    store,
+    workspaces,
+    github,
+    viewer,
+  }: {
+    auth: AuthService;
+    store: PostgresEventStore;
+    workspaces: WorkspaceStore;
+    github?: GitHubApp;
+    viewer: (
+      principal: Principal,
+      id: string,
+    ) => Promise<{ workspace: Workspace; repositories: Repo[] }>;
+  },
+  kind: "dashboard" | "health",
+) {
   const router = Router();
-  const shares = new DashboardShareStore(workspaces.pool);
+  const shares = new DashboardShareStore(workspaces.pool, kind);
+  const health = new HealthStore(store.pool);
   let connections = 0;
-  const base = "/api/workspaces/:id/share";
+  const base =
+    kind === "health"
+      ? "/api/workspaces/:id/health/share"
+      : "/api/workspaces/:id/share";
+  const publicPath =
+    kind === "health" ? "/api/shared/health" : "/api/shared/feed";
+  const eventsPath =
+    kind === "health" ? "/api/shared/health/events" : "/api/shared/events";
+  const tokenHeader =
+    kind === "health" ? "x-health-share" : "x-dashboard-share";
 
   router.get(base, async (request, response) => {
     const principal = await auth.authenticate(request, response);
@@ -96,19 +111,47 @@ export function dashboardShareRouter({
     }
     const current = await shares.resolve(token);
     const pinned = new Set(current.repository_ids.map(Number));
-    return {
-      share: current,
-      repositories: repositories.filter((repo) => pinned.has(repo.id)),
-    };
+    const visible = repositories.filter((repo) => pinned.has(repo.id));
+    if (kind === "health" && !visible.length) throw unavailableShare();
+    return { share: current, repositories: visible };
   }
 
-  router.get("/api/shared/feed", async (request, response) => {
-    const token = request.get("x-dashboard-share");
+  router.get(publicPath, async (request, response) => {
+    const token = request.get(tokenHeader);
     const initial = await authorize(token);
     const workspace = await workspaces.get(
       initial.share.creator_user_id,
       initial.share.workspace_id,
     );
+    if (kind === "health") {
+      const snapshot = await health.snapshot(workspace.id);
+      const current = await authorize(token);
+      const result: SharedHealthSnapshot = {
+        organization: workspace.name,
+        updatedAt: snapshot.updatedAt,
+        expiresAt: current.share.expires_at.toISOString(),
+        services: snapshot.services.map((service) => ({
+          id: service.id,
+          name: service.name,
+          status: service.status,
+          probes: service.probes.map((probe) => ({
+            id: probe.id,
+            name: probe.name,
+            status: probe.status,
+            enabled: probe.enabled,
+            intervalSeconds: probe.intervalSeconds,
+            timeoutMs: probe.timeoutMs,
+            lastCheck: probe.lastCheck,
+            successRate24h: probe.successRate24h,
+            checks24h: probe.checks24h,
+            history: probe.history,
+            latencyHistory: probe.latencyHistory,
+          })),
+        })),
+      };
+      response.json(result);
+      return;
+    }
     const events = await workspaces.feed(
       initial.share.creator_user_id,
       workspace,
@@ -131,8 +174,8 @@ export function dashboardShareRouter({
     response.json(result);
   });
 
-  router.get("/api/shared/events", async (request, response) => {
-    const token = request.get("x-dashboard-share");
+  router.get(eventsPath, async (request, response) => {
+    const token = request.get(tokenHeader);
     const { share } = await authorize(token);
     if (request.destroyed) return;
     if (connections >= 100)
@@ -204,6 +247,11 @@ export function dashboardShareRouter({
       "X-Accel-Buffering": "no",
     });
     unsubscribe = store.subscribe((scope) => {
+      if (kind === "health" && scope === `health-${share.workspace_id}`) {
+        // Empty invalidation only; the subsequent snapshot authorizes its data.
+        write("event: refresh\ndata: {}\n\n");
+        return;
+      }
       if (
         [
           `workspace-${share.workspace_id}`,
@@ -222,4 +270,16 @@ export function dashboardShareRouter({
     void refresh();
   });
   return router;
+}
+
+/** Independent token namespaces prevent dashboard links from authorizing health data. */
+export function dashboardShareRouter(
+  options: Parameters<typeof workspaceShareRouter>[0],
+) {
+  return workspaceShareRouter(options, "dashboard");
+}
+export function healthShareRouter(
+  options: Parameters<typeof workspaceShareRouter>[0],
+) {
+  return workspaceShareRouter(options, "health");
 }

@@ -388,13 +388,6 @@
   font-size: 12px;
   min-width: 0;
 }
-.share-expiration {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 12px;
-}
 .share-actions {
   display: flex;
   align-items: center;

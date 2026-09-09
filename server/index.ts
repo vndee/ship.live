@@ -10,6 +10,8 @@ import {
   trustProxyHopsFromEnv,
 } from "./runtime-config.js";
 import { createWorkspaceApp } from "./workspace-app.js";
+import { HealthStore } from "./health-store.js";
+import { startHealthWorker } from "./health-worker.js";
 import { WorkspaceStore } from "./workspace-store.js";
 
 async function main(): Promise<void> {
@@ -78,6 +80,7 @@ async function main(): Promise<void> {
         response.sendFile(resolve(dist, "index.html")),
       );
     }
+    const stopHealth = startHealthWorker(new HealthStore(store.pool));
     const server = app.listen(port, () =>
       console.log(`ship.live listening on http://localhost:${port}`),
     );
@@ -92,6 +95,7 @@ async function main(): Promise<void> {
         server.close(() => done());
         server.closeAllConnections();
       });
+      await stopHealth();
       await store.close();
       clearTimeout(timeout);
       process.exitCode = exitCode;
