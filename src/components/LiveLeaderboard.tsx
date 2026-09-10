@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
+  ArrowRight,
   ArrowUp,
   CircleHelp,
   GitMerge,
@@ -95,6 +96,8 @@ export function LiveLeaderboard({
   moving = true,
   onToggleMotion,
   onRules,
+  onSelect,
+  onAllContributors,
   status = "Live",
   loading = false,
 }: {
@@ -104,6 +107,10 @@ export function LiveLeaderboard({
   moving?: boolean;
   onToggleMotion?: () => void;
   onRules?: () => void;
+  /** Opens a contributor's profile; rows become buttons when provided. */
+  onSelect?: (login: string) => void;
+  /** Opens the full contributor table. */
+  onAllContributors?: () => void;
   status?: string;
   loading?: boolean;
 }) {
@@ -169,10 +176,14 @@ export function LiveLeaderboard({
           </div>
           <p>Good work adds up. Every contribution moves the team.</p>
         </div>
-        <span className={`board-status ${status === "Live" ? "is-live" : ""}`}>
-          <span />
-          {status}
-        </span>
+        {status && (
+          <span
+            className={`board-status ${status === "Live" ? "is-live" : ""}`}
+          >
+            <span />
+            {status}
+          </span>
+        )}
       </div>
       <div className="leaderboard-summary">
         <div className="shared-xp">
@@ -275,6 +286,14 @@ export function LiveLeaderboard({
                   <span>{person.contributions} contributions</span>
                 )}
               </div>
+              {onSelect && (
+                <button
+                  type="button"
+                  className="row-select"
+                  aria-label={`Open ${name}'s profile`}
+                  onClick={() => onSelect(person.login)}
+                />
+              )}
             </li>
           );
         })}
@@ -296,6 +315,11 @@ export function LiveLeaderboard({
       <div className="leaderboard-bottom">
         <span>Resets Monday, 00:00 UTC</span>
         <div>
+          {onAllContributors && (
+            <button className="text-button" onClick={onAllContributors}>
+              All contributors <ArrowRight size={13} />
+            </button>
+          )}
           {onRules && (
             <button className="text-button" onClick={onRules}>
               How XP works <CircleHelp size={13} />

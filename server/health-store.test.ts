@@ -385,6 +385,8 @@ test("latency buckets include failures, survive rule edits and retain 30 days", 
       checks: 2,
     },
   ]);
+  // Checks of 42 and 50 ms: mean 46, population deviation 4.
+  assert.deepEqual(state.latencyStats24h, { mean: 46, sd: 4, checks: 2 });
   // Both checks land in aligned 15-minute windows of the 24-hour view.
   assert.equal(
     state.latency24h.reduce((sum, window) => sum + window.checks, 0),
@@ -409,6 +411,10 @@ test("latency buckets include failures, survive rule edits and retain 30 days", 
   assert.deepEqual(
     (await health.snapshot(workspace)).services[0].probes[0].latency24h,
     [],
+  );
+  assert.equal(
+    (await health.snapshot(workspace)).services[0].probes[0].latencyStats24h,
+    null,
   );
   await events.pool.query(
     "INSERT INTO ship_live_health_checks(probe_id,checked_at,result,state) VALUES($1,now()-interval '31 days',$2,'healthy')",

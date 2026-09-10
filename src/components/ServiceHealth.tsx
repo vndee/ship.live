@@ -17,6 +17,8 @@ import { SortableHealthService } from "./SortableHealthService";
 import { moveService } from "../lib/service-order";
 import { LatencyChart } from "./LatencyChart";
 import { ServiceStatusStrip } from "./ServiceStatusStrip";
+import { HealthServiceStats, HealthStatsInfo } from "./HealthServiceStats";
+import { serviceStats } from "../lib/service-stats";
 import { createHealthRefresh } from "../lib/health-refresh";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Activity, ChevronDown, Plus, RefreshCw } from "lucide-react";
@@ -534,6 +536,7 @@ export function ServiceHealth({
         >
           {snapshot?.services.map((service) => {
             const expanded = expandedServiceId === service.id;
+            const stats = serviceStats(service.probes);
             const status = aggregate(
               service.probes.map((probe) => currentStatus(probe, now)),
             );
@@ -570,8 +573,10 @@ export function ServiceHealth({
                             {service.probes.length}{" "}
                             {service.probes.length === 1 ? "probe" : "probes"}
                           </span>
+                          <HealthServiceStats stats={stats} />
                           <ServiceStatusStrip probes={service.probes} />
                         </button>
+                        <HealthStatsInfo stats={stats} />
                       </div>
                       {expanded && (
                         <div className="health-actions health-service-actions">
@@ -855,13 +860,6 @@ export function ServiceHealth({
             </button>
           </div>
         </div>
-      )}
-      {Boolean(snapshot?.services.length) && (
-        <p className="health-footnote">
-          Check success is the percentage of recorded checks that passed in the
-          last 24 hours. Missing checks do not count as successes. Recent checks
-          run from oldest to newest.
-        </p>
       )}
     </section>
   );

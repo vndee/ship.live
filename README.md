@@ -22,7 +22,7 @@ A private shipping journal for individual builders and a live GitHub activity wa
 - **Google or GitHub sign-in.** Supabase Auth handles identity. A separate GitHub App connection grants repository access, including for someone who signed in with Google.
 - **Live team leaderboard.** Follow weekly XP, animated rank changes, contribution bars, and live XP gains beside the activity feed.
 - **Team momentum.** See today’s contributions, a seven-day activity chart, and the nearest weekly milestone at a glance.
-- **Engineering utilities wall.** Rotate through Team Pulse, Review Radar, GitHub deployment status, Service Health, and the XP leaderboard. Current failures interrupt the rotation and recoveries produce a brief team moment.
+- **Pulse.** One view for the team: Overview (today's momentum, the 7-day chart, the next milestone, and the most active repositories), Review Radar, GitHub deployment status, Service Health, and the XP leaderboard, with optional auto-slide. Current failures raise an attention banner and recoveries produce a brief team moment.
 - **Live celebrations.** New contributions briefly highlight in the feed and announce earned XP. Merges and releases launch confetti, with a bigger burst for milestones. Motion and celebration controls keep the dashboard comfortable; try a fictional event with **Try live activity** in demo mode.
 - **Live activity and replay.** Follow merges, reviews, releases, pushes, issues, and journal entries. Filter by repository, type, time, or text; replay the last 24 hours, 7 days, or 30 days.
 - **Shared recognition.** Weekly contributor spotlights and team milestones celebrate outcomes and collaboration. New commits earn a small per-commit credit; personal notes earn no XP.

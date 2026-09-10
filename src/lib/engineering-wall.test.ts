@@ -5,9 +5,15 @@ import {
   getAttention,
   getAvailableScenes,
   getReleasePulse,
+  getRepositoryActivity,
   getReviewRadar,
   getWhatChanged,
+  moveScene,
+  parseWallTabs,
+  shortAge,
+  visibleScenes,
 } from "./engineering-wall.js";
+import { createDemoHealth, createDemoWall } from "./demo-wall.js";
 
 const now = Date.parse("2026-09-10T12:00:00Z");
 const snapshot: EngineeringWallSnapshot = {
@@ -167,4 +173,139 @@ test("service health has priority over GitHub failures", () => {
   });
   assert.equal(attention?.kind, "health");
   assert.equal(attention?.title, "Public API is down");
+});
+
+test("review radar is always offered and service health whenever health data exists", () => {
+  const empty: EngineeringWallSnapshot = { repositories: [], updatedAt: "" };
+  assert.deepEqual(getAvailableScenes(empty, []), [
+    "pulse",
+    "review",
+    "leaderboard",
+  ]);
+  assert.deepEqual(
+    getAvailableScenes(empty, [], { services: [], updatedAt: "" }),
+    ["pulse", "review", "health", "leaderboard"],
+  );
+});
+
+test("demo signals fill every scene without raising attention", () => {
+  const wall = createDemoWall(now);
+  const health = createDemoHealth(now);
+  // Attention would stop the signed-out home page from sliding.
+  assert.equal(getAttention(wall, health), null);
+  assert.deepEqual(getAvailableScenes(wall, [], health), [
+    "pulse",
+    "review",
+    "release",
+    "health",
+    "leaderboard",
+  ]);
+  assert.deepEqual(
+    new Set(getReviewRadar(wall, now).map((item) => item.state)),
+    new Set(["ready", "running", "waiting"]),
+  );
+  assert.ok(health.services.some((service) => service.status === "degraded"));
+});
+
+test("wall ages are compact", () => {
+  assert.deepEqual(
+    [30_000, 5 * 60_000, 3 * 3_600_000, 3 * 86_400_000].map(shortAge),
+    ["now", "5m", "3h", "3d"],
+  );
+});
+
+test("stored tab order and visibility ignore unknown values and never empty the wall", () => {
+  const tabs = parseWallTabs(
+    JSON.stringify({
+      order: ["leaderboard", "bogus", "review", "leaderboard"],
+      hidden: ["health", "bogus"],
+    }),
+  );
+  // Scenes missing from the stored order keep their default place after it.
+  assert.deepEqual(tabs, {
+    order: ["leaderboard", "review", "pulse", "release", "health"],
+    hidden: ["health"],
+  });
+  for (const raw of [null, "", "not json", "[]", '{"order":"review"}'])
+    assert.deepEqual(parseWallTabs(raw), {
+      order: ["pulse", "review", "release", "health", "leaderboard"],
+      hidden: [],
+    });
+  const available = getAvailableScenes(createDemoWall(now), [], {
+    services: [],
+    updatedAt: "",
+  });
+  assert.deepEqual(visibleScenes(available, tabs), [
+    "leaderboard",
+    "review",
+    "pulse",
+    "release",
+  ]);
+  // Hiding everything that has data falls back to the first scene.
+  assert.deepEqual(
+    visibleScenes(["pulse", "review"], {
+      order: tabs.order,
+      hidden: ["pulse", "review"],
+    }),
+    ["pulse"],
+  );
+});
+
+test("moving a tab swaps it with its neighbor among the choices shown", () => {
+  const order = parseWallTabs(null).order;
+  assert.deepEqual(moveScene(order, "review", -1), [
+    "review",
+    "pulse",
+    "release",
+    "health",
+    "leaderboard",
+  ]);
+  // Without health data, release moves past the health slot it cannot see.
+  assert.deepEqual(
+    moveScene(order, "release", 1, [
+      "pulse",
+      "review",
+      "release",
+      "leaderboard",
+    ]),
+    ["pulse", "review", "leaderboard", "health", "release"],
+  );
+  assert.equal(moveScene(order, "pulse", -1), order);
+  assert.equal(moveScene(order, "leaderboard", 1), order);
+});
+
+test("repository activity counts this week's merges and reviews, most active first", () => {
+  const event = (
+    id: string,
+    repo: string,
+    type: "merge" | "review" | "push",
+    occurredAt: string,
+    login = "alex",
+  ) => ({ id, type, actor: { login }, repo, title: id, occurredAt });
+  const activity = getRepositoryActivity(
+    [
+      event("1", "acme/api", "merge", "2026-09-09T10:00:00Z"),
+      event("2", "acme/api", "review", "2026-09-10T09:00:00Z"),
+      // Last week: listed, but with no weekly activity.
+      event("3", "acme/web", "merge", "2026-09-01T10:00:00Z"),
+      // Bots never count.
+      event("4", "acme/web", "push", "2026-09-10T11:00:00Z", "dependabot[bot]"),
+      event("5", "acme/docs", "review", "2026-09-10T11:30:00Z"),
+    ],
+    now,
+  );
+  assert.deepEqual(
+    activity.map((item) => [
+      item.repository,
+      item.weekly,
+      item.merges,
+      item.reviews,
+      item.latestAt,
+    ]),
+    [
+      ["acme/api", 2, 1, 1, "2026-09-10T09:00:00Z"],
+      ["acme/docs", 1, 0, 1, "2026-09-10T11:30:00Z"],
+      ["acme/web", 0, 0, 0, "2026-09-01T10:00:00Z"],
+    ],
+  );
 });

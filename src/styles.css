@@ -1,5 +1,8 @@
 :root {
   font-family: "DM Sans Variable", Arial, sans-serif;
+  /* Taller lowercase and a touch more weight keep 12–13px text readable. */
+  font-size-adjust: 0.52;
+  font-weight: 450;
   color: var(--text);
   background: var(--background);
   font-synthesis: none;
@@ -9,7 +12,7 @@
   --surface: #11171c;
   --text: #edf0e9;
   --muted: #9aa4a4;
-  --subtle: #748080;
+  --subtle: #818c8c;
   --line: #293034;
   --accent: #e3ba8a;
   --focus: #f0cca3;
@@ -45,7 +48,7 @@
   --surface: #ffffff;
   --text: #18211d;
   --muted: #596762;
-  --subtle: #7a8782;
+  --subtle: #5e6c67;
   --line: #d5ddd9;
   --accent: #855f38;
   --focus: #76512e;
@@ -75,6 +78,8 @@
   --shadow: rgb(23 34 29 / 14%);
   --overlay: rgb(24 31 28 / 45%);
   color-scheme: light;
+  /* Grayscale antialiasing thins dark text on light grounds; keep it for dark. */
+  -webkit-font-smoothing: auto;
 }
 * {
   box-sizing: border-box;
@@ -82,6 +87,7 @@
 body {
   margin: 0;
   min-width: 320px;
+  line-height: 1.45;
   background: var(--background);
   color: var(--text);
   transition:
@@ -142,7 +148,7 @@ select {
   background: var(--background);
   border-radius: 6px;
   padding: 9px 28px 9px 12px;
-  font-size: 12px;
+  font-size: 13px;
   max-width: 100%;
 }
 svg {
@@ -192,7 +198,7 @@ p {
   align-items: center;
   gap: 8px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   padding: 8px 0;
   min-width: 0;
 }
@@ -211,7 +217,7 @@ p {
 }
 .app-header nav button {
   position: relative;
-  font-size: 12px;
+  font-size: 13px;
   padding: 0;
   color: var(--muted);
   white-space: nowrap;
@@ -235,7 +241,7 @@ p {
   margin-left: 10px;
 }
 .connection-status {
-  font-size: 11px;
+  font-size: 12px;
   display: flex;
   gap: 7px;
   align-items: center;
@@ -274,8 +280,16 @@ p {
 }
 .date-line {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   margin-bottom: 10px;
+}
+/* Pages opened from Pulse lead back to it where the date usually sits. */
+.page-back {
+  margin-bottom: 10px;
+  color: var(--muted);
+}
+.page-back:hover {
+  color: var(--text);
 }
 h1 {
   font-size: clamp(32px, 3.3vw, 48px);
@@ -303,12 +317,12 @@ h1 {
   border: 0;
   padding: 0;
   outline-offset: 6px;
-  font-size: 12px;
+  font-size: 13px;
   background: transparent;
 }
 .search-box kbd {
   font: inherit;
-  font-size: 10px;
+  font-size: 12px;
   color: var(--subtle);
   white-space: nowrap;
 }
@@ -320,7 +334,7 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 10px 14px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   background: var(--surface-soft);
 }
@@ -347,7 +361,7 @@ h1 {
   align-items: center;
   justify-content: flex-start;
   gap: 7px;
-  font-size: 12px;
+  font-size: 13px;
   padding: 0;
 }
 .notice {
@@ -358,7 +372,7 @@ h1 {
   background: var(--surface-soft);
   border-left: 2px solid var(--neutral-strong);
   padding: 13px 17px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
   margin-bottom: 25px;
 }
@@ -399,7 +413,7 @@ h1 {
 }
 .view-metrics span {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 9px;
 }
@@ -433,7 +447,7 @@ h1 {
 }
 .section-count {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .small-actions {
@@ -452,14 +466,14 @@ h1 {
 .feed-filter-row select {
   padding: 3px 21px 3px 0;
   border: 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   max-width: 210px;
 }
 .clear-filter {
   color: var(--muted);
   margin-left: auto;
-  font-size: 11px;
+  font-size: 12px;
 }
 .event-row {
   border-top: 1px solid var(--line);
@@ -490,7 +504,7 @@ h1 {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .event-icon {
   color: var(--muted);
@@ -512,7 +526,7 @@ h1 {
   margin-left: auto;
   flex-shrink: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 .event-title {
   display: -webkit-box;
@@ -520,7 +534,7 @@ h1 {
   -webkit-box-orient: vertical;
   overflow: hidden;
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
   margin: 7px 0 6px;
 }
@@ -530,7 +544,7 @@ h1 {
   justify-content: space-between;
   gap: 8px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .event-metadata > span:first-child {
   min-width: 0;
@@ -540,7 +554,7 @@ h1 {
 }
 .event-metadata > span:last-child {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: 12px;
 }
 .event-expanded {
   display: flex;
@@ -550,7 +564,7 @@ h1 {
 }
 .event-expanded .text-button {
   color: var(--accent);
-  font-size: 11px;
+  font-size: 12px;
 }
 .feed-more {
   width: 100%;
@@ -560,12 +574,12 @@ h1 {
   gap: 9px;
   padding: 13px 0;
   border-top: 1px solid var(--line);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .feed-pause-note {
   color: var(--accent);
-  font-size: 11px;
+  font-size: 12px;
   margin-bottom: 12px;
 }
 .shared-goal {
@@ -577,7 +591,7 @@ h1 {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--accent);
 }
 .goal-label > span:last-child {
@@ -590,7 +604,7 @@ h1 {
   margin-top: 12px;
 }
 .shared-goal p {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   line-height: 1.6;
   margin-top: 7px;
@@ -607,7 +621,7 @@ h1 {
   background: var(--accent);
 }
 .shared-goal .text-button {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .timeline {
@@ -635,7 +649,7 @@ h1 {
   justify-content: space-between;
   gap: 10px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   margin-top: 9px;
   font-variant-numeric: tabular-nums;
 }
@@ -644,7 +658,7 @@ h1 {
   align-items: center;
   justify-content: flex-end;
   gap: 7px;
-  font-size: 11px;
+  font-size: 12px;
   padding: 0 0 16px;
   color: var(--muted);
 }
@@ -667,7 +681,7 @@ h1 {
   justify-content: space-between;
   gap: 20px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   padding: 23px 0;
 }
 .app-footer > div {
@@ -681,7 +695,7 @@ h1 {
 }
 .period-note {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .feed-page {
   max-width: 1050px;
@@ -691,7 +705,7 @@ h1 {
   padding: 19px 12px;
 }
 .full-feed .event-topline {
-  font-size: 12px;
+  font-size: 13px;
 }
 .full-feed .event-title {
   font-size: 15px;
@@ -721,7 +735,7 @@ h1 {
   line-height: 1.4;
 }
 .empty-state p {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
   line-height: 1.7;
   max-width: 400px;
@@ -767,7 +781,7 @@ h1 {
 .team-table-head {
   padding: 14px 0;
   border-bottom: 1px solid var(--line);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .team-table-head > span:not(:first-child),
@@ -776,10 +790,28 @@ h1 {
   text-align: right;
 }
 .team-row {
+  position: relative;
   border-bottom: 1px solid var(--line);
   padding: 19px 0;
   font-size: 15px;
   font-variant-numeric: tabular-nums;
+}
+/* A full-row button opens the person's profile without nesting controls. */
+.row-select {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: 8px;
+}
+.row-select:focus-visible {
+  outline-offset: -2px;
+}
+.leader-row:has(.row-select:hover) {
+  border-radius: 8px;
+  background: var(--surface-hover);
+}
+.team-row:has(.row-select:hover) .team-person strong {
+  color: var(--accent);
 }
 .team-person {
   display: flex;
@@ -788,7 +820,7 @@ h1 {
   min-width: 0;
 }
 .rank {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--subtle);
   width: 20px;
 }
@@ -802,7 +834,7 @@ h1 {
   align-items: center;
   background: var(--success-surface-strong);
   color: var(--success-strong);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   overflow: hidden;
 }
@@ -823,7 +855,7 @@ h1 {
 .team-person small {
   display: block;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   margin-top: 3px;
 }
 .team-xp {
@@ -833,11 +865,11 @@ h1 {
 }
 .team-xp small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 .recognition-note {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.8;
   max-width: 800px;
   padding: 24px 0;
@@ -855,7 +887,7 @@ h1 {
 }
 .milestone-state {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   margin-bottom: 9px;
 }
@@ -869,7 +901,7 @@ h1 {
 }
 .milestone p {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   margin-top: 9px;
 }
 .milestone .goal-track {
@@ -913,7 +945,7 @@ h1 {
   overflow-wrap: anywhere;
 }
 .repository-identity small {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   display: block;
   margin-top: 5px;
@@ -926,11 +958,11 @@ h1 {
 }
 .repository-row > span > small {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .repository-row > .repository-latest {
-  font-size: 11px !important;
+  font-size: 12px !important;
   color: var(--muted);
 }
 .modal {
@@ -942,7 +974,22 @@ h1 {
   width: min(470px, calc(100% - 32px));
   max-height: calc(100dvh - 40px);
   overflow: auto;
+  overscroll-behavior: contain;
   box-shadow: 0 24px 100px var(--shadow);
+  /* A thin, themed scrollbar instead of the platform's boxed one. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.modal::-webkit-scrollbar {
+  width: 10px;
+}
+.modal::-webkit-scrollbar-track {
+  background: transparent;
+}
+.modal::-webkit-scrollbar-thumb {
+  border: 3px solid var(--surface);
+  border-radius: 999px;
+  background: var(--line-strong);
 }
 .modal::backdrop {
   background: var(--overlay);
@@ -961,7 +1008,7 @@ h1 {
   letter-spacing: -0.7px;
 }
 .modal-description {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.7;
   color: var(--muted);
   margin-bottom: 24px;
@@ -969,12 +1016,12 @@ h1 {
 .field-label {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: 13px;
   margin: 18px 0 9px;
 }
 .field-label span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .input-with-prefix {
   display: flex;
@@ -987,7 +1034,7 @@ h1 {
 }
 .input-with-prefix > span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 .input-with-prefix input {
   border: 0;
@@ -995,25 +1042,25 @@ h1 {
   padding: 12px 0;
   min-width: 0;
   width: 100%;
-  font-size: 13px;
+  font-size: 14px;
 }
 .text-input {
   width: 100%;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   padding: 12px;
-  font-size: 13px;
+  font-size: 14px;
   background: var(--background);
 }
 .field-hint {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.7;
   margin: 11px 0 18px;
 }
 .form-error {
   color: var(--danger);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.7;
   margin-bottom: 15px;
 }
@@ -1044,7 +1091,7 @@ h1 {
   margin-bottom: 10px;
 }
 .settings-section p {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.7;
   color: var(--muted);
   margin-bottom: 16px;
@@ -1057,7 +1104,7 @@ h1 {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
   margin-bottom: 15px;
 }
@@ -1067,7 +1114,7 @@ h1 {
   height: 16px;
 }
 .version {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .scoring-rules > div {
@@ -1076,7 +1123,7 @@ h1 {
   gap: 14px;
   border-top: 1px solid var(--line);
   padding: 15px 0;
-  font-size: 12px;
+  font-size: 13px;
 }
 .scoring-rules svg {
   color: var(--muted);
@@ -1087,7 +1134,7 @@ h1 {
   font-weight: 400;
 }
 .scoring-rules strong small {
-  font-size: 10px;
+  font-size: 12px;
 }
 .detail-person {
   display: flex;
@@ -1095,12 +1142,12 @@ h1 {
   gap: 13px;
 }
 .detail-person strong {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
 }
 .detail-person > div > span {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 4px;
 }
@@ -1115,17 +1162,17 @@ h1 {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
   overflow-wrap: anywhere;
 }
 .detail-date {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   margin: 10px 0 20px;
 }
 .diff-stat {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--success-strong);
 }
 .diff-stat span {
@@ -1145,7 +1192,7 @@ h1 {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 13px;
+  font-size: 14px;
   max-width: calc(100vw - 30px);
   z-index: 10;
 }
@@ -1189,16 +1236,16 @@ h1 {
     font-size: 15px;
   }
   .event-topline {
-    font-size: 12px;
+    font-size: 13px;
   }
   .event-metadata {
-    font-size: 12px;
+    font-size: 13px;
   }
   .view-metrics strong {
     font-size: 44px;
   }
   .view-metrics span {
-    font-size: 12px;
+    font-size: 13px;
   }
 }
 @media (max-width: 1120px) {
@@ -1281,11 +1328,11 @@ h1 {
   }
   .page-tools select {
     max-width: 130px;
-    font-size: 11px;
+    font-size: 12px;
   }
   .search-box input {
     width: 103px;
-    font-size: 11px;
+    font-size: 12px;
   }
   h1 {
     font-size: 33px;
@@ -1301,19 +1348,19 @@ h1 {
     left: -21px;
   }
   .event-topline {
-    font-size: 10px;
-  }
-  .event-title {
     font-size: 12px;
   }
+  .event-title {
+    font-size: 13px;
+  }
   .event-metadata {
-    font-size: 10px;
+    font-size: 12px;
   }
   .view-metrics strong {
     font-size: 29px;
   }
   .view-metrics span {
-    font-size: 10px;
+    font-size: 12px;
   }
   .team-table-head,
   .team-row {
@@ -1361,7 +1408,7 @@ h1 {
     font-size: 27px;
   }
   .organization-switch {
-    font-size: 11px;
+    font-size: 12px;
   }
   .organization-switch > span {
     max-width: 150px;
@@ -1371,13 +1418,13 @@ h1 {
     gap: 12px;
   }
   .app-header nav button {
-    font-size: 11px;
+    font-size: 12px;
   }
   .header-tools {
     gap: 4px;
   }
   .connection-status {
-    font-size: 10px;
+    font-size: 12px;
   }
   .header-tools .icon-button {
     width: 26px;
@@ -1387,7 +1434,7 @@ h1 {
     margin: 25px 0 28px;
   }
   .date-line {
-    font-size: 11px;
+    font-size: 12px;
   }
   .page-tools {
     margin-top: 22px;
@@ -1400,11 +1447,11 @@ h1 {
   .search-box input {
     width: 100%;
     max-width: 220px;
-    font-size: 12px;
+    font-size: 13px;
   }
   .page-tools select {
     max-width: 150px;
-    font-size: 12px;
+    font-size: 13px;
   }
   .dashboard-layout,
   .wall-mode .dashboard-layout {
@@ -1417,7 +1464,7 @@ h1 {
     font-size: 34px;
   }
   .view-metrics span {
-    font-size: 11px;
+    font-size: 12px;
   }
   .dashboard-sidebar {
     padding: 22px 0 0;
@@ -1428,13 +1475,13 @@ h1 {
     left: -11px;
   }
   .event-topline {
-    font-size: 11px;
+    font-size: 12px;
   }
   .event-title {
     font-size: 14px;
   }
   .event-metadata {
-    font-size: 11px;
+    font-size: 12px;
   }
   .shared-goal {
     margin-top: 15px;
@@ -1445,7 +1492,7 @@ h1 {
     margin-top: 27px;
   }
   .timeline-labels {
-    font-size: 9px;
+    font-size: 11px;
   }
   .timeline-labels .minor-tick {
     display: none;
@@ -1474,7 +1521,7 @@ h1 {
     gap: 7px;
   }
   .team-table-head {
-    font-size: 10px;
+    font-size: 12px;
   }
   .team-person .rank {
     display: none;
@@ -1485,23 +1532,23 @@ h1 {
   .avatar {
     width: 30px;
     height: 30px;
-    font-size: 10px;
+    font-size: 12px;
   }
   .team-person strong {
-    font-size: 11px;
+    font-size: 12px;
   }
   .team-person small {
-    font-size: 9px;
+    font-size: 11px;
   }
   .team-row {
-    font-size: 13px;
+    font-size: 14px;
     padding: 17px 0;
   }
   .team-xp {
     font-size: 15px;
   }
   .team-xp small {
-    font-size: 9px;
+    font-size: 11px;
   }
   .milestone {
     grid-template-columns: minmax(0, 1fr) 103px;
@@ -1514,7 +1561,7 @@ h1 {
     font-size: 21px;
   }
   .milestone p {
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.6;
   }
   .milestone-number {
@@ -1582,13 +1629,13 @@ h1 {
     gap: 8px;
   }
   .app-header nav button {
-    font-size: 11px;
+    font-size: 12px;
   }
   .view-metrics strong {
     font-size: 31px;
   }
   .view-metrics span {
-    font-size: 10px;
+    font-size: 12px;
   }
   .team-table-head,
   .team-row {
@@ -1741,7 +1788,7 @@ textarea:focus-visible {
 }
 .demo-notice {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.7;
   margin: -12px 0 24px;
 }
@@ -1759,7 +1806,7 @@ textarea:focus-visible {
   align-items: flex-start;
   gap: 9px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.7;
   margin: 18px 0;
 }
@@ -1787,7 +1834,7 @@ textarea:focus-visible {
 }
 .account-identity small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   margin-top: 4px;
 }
 .workspace-choices {
@@ -1811,12 +1858,12 @@ textarea:focus-visible {
   display: block;
 }
 .workspace-choice strong {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   overflow-wrap: anywhere;
 }
 .workspace-choice small {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 5px;
   line-height: 1.5;
@@ -1846,19 +1893,19 @@ textarea:focus-visible {
   display: block;
 }
 .installation-choice strong {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   overflow-wrap: anywhere;
 }
 .installation-choice small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.6;
   margin-top: 3px;
 }
 .installation-choice details {
   grid-column: 1 / -1;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .installation-choice summary {
@@ -1896,7 +1943,7 @@ textarea:focus-visible {
   gap: 8px;
   align-items: flex-start;
   line-height: 1.6;
-  font-size: 12px;
+  font-size: 13px;
   margin: 16px 0;
 }
 .operation-status > svg {
@@ -1943,6 +1990,6 @@ textarea:focus-visible {
     gap: 7px;
   }
   .demo-notice {
-    font-size: 11px;
+    font-size: 12px;
   }
 }

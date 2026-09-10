@@ -791,10 +791,8 @@ export function createWorkspaceApp({
       organization: current.workspace.name,
       source: "workspace",
       updatedAt: new Date().toISOString(),
-      notice:
-        current.notice ||
-        initial.notice ||
-        "Visible repository activity and private journal notes. Historical synchronization covers a bounded part of the last 30 days; pushes arrive through future webhooks.",
+      // Only actionable notices; the coverage explanation lives in the UI.
+      notice: current.notice || initial.notice,
     };
     response.json(result);
   });

@@ -207,6 +207,15 @@ function withCredit(
   });
 }
 
+/** Human, de-duplicated events up to now, with the board's review credit limit. */
+export function getCreditedEvents(
+  events: ActivityEvent[],
+  now = Date.now(),
+  since = -Infinity,
+): Array<{ event: ActivityEvent; points: number }> {
+  return withCredit(eligibleEvents(events, now, since));
+}
+
 export function getMetrics(
   events: ActivityEvent[],
   now = Date.now(),

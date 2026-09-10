@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Show each service's 24-hour uptime and latency (mean ± standard deviation) in its row, with an info tooltip explaining both; Pulse's Service health cards use the same figures. The signed-out home page gains a read-only Service Health demo, the demo workspace is called Acme Team, and the Service Health footnote is gone.
+
+- Simplify the navigation to **Pulse** (formerly Dashboard) and **Service Health**. The Live feed opens from the activity list, milestones from the milestone card, and the contributor table from the leaderboard's **All contributors**; each leads back to Pulse. Repositories become a section of the Overview scene (formerly Team pulse), most active this week first, and choosing one opens its activity in the Live feed. Personal journals list their sources under the leaderboard.
+
+- Keep the team dashboard on the scene you choose. Scenes are labeled tabs instead of dots, and an **Auto-slide** toggle moves between them. Auto-slide is off by default, on for signed-out visitors and the fullscreen wall display, and pauses while the pointer is over the wall. Only auto-slide jumps to a scene that needs attention, and an attention banner can be dismissed until a different incident appears. **Arrange tabs** hides and reorders scenes; the order and visibility are remembered in the browser for each workspace.
+- Open a contributor's profile from the leaderboard or the Team page: weekly rank and XP, 30-day XP, contributions and active days, a 12-week activity heatmap, daily XP for 30 days, a breakdown by activity type, and recent activity. Both charts can be explored by pointer or keyboard and have a table view.
+- Always offer Review Radar and Service Health tabs, with empty states, and redesign their rows and cards: state chips, status pills, and service cards with recent status, latency, and 24-hour success. The demo shows fictional pull requests, deployments, and services.
+- Make text easier to read: labels and metadata are at least 12px on desktop, DM Sans renders with a taller lowercase and a slightly heavier default weight (light mode also drops grayscale antialiasing, which thinned dark text), body text has more line spacing, and secondary text meets 4.5:1 contrast in both themes. The signed-out home page no longer shows "Demo" status labels.
+- Show only actionable workspace notices under the page heading. The description of what the feed covers moves to the Repositories page.
+
 - Read four repositories at a time during **Sync**, and report the whole sync in one summary (repositories synced, how many resumed, records found, and any failures) instead of repeating a notice for every batch of 20.
 - Draw latency charts at the card's full width and add a **24 hours** view of 15-minute averages between the recent-check and 30-day views.
 
