@@ -58,6 +58,8 @@ import type { CreatedDashboardShare } from "../shared/shares";
 import { DashboardPulse } from "./components/DashboardPulse";
 import { ActivityCelebration } from "./components/ActivityCelebration";
 import { useActivityCelebration } from "./hooks/useActivityCelebration";
+import { useEngineeringWall } from "./hooks/useEngineeringWall";
+import { EngineeringWall } from "./components/EngineeringWall";
 
 type Page =
   "dashboard" | "feed" | "team" | "milestones" | "repositories" | "health";
@@ -176,6 +178,10 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   const canWriteNote =
     personal && feed.workspace?.owner && feed.operation?.status !== "pending";
   const [page, setPage] = useState<Page>("dashboard");
+  const engineering = useEngineeringWall(
+    feed.workspace?.kind === "team" ? feed.workspace.id : undefined,
+    page === "dashboard",
+  );
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<Kind | "">("");
   const [repo, setRepo] = useState("");
@@ -866,37 +872,46 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             <span>{feed.notice}</span>
           </div>
         )}
-        {page === "dashboard" && !personal && (
-          <DashboardPulse
-            events={feed.events}
-            now={now}
-            onMilestones={() => setPage("milestones")}
-          />
-        )}
         {(page === "dashboard" || page === "feed") && (
           <>
             {page === "dashboard" ? (
               <div className="dashboard-layout">
-                <LiveLeaderboard
-                  events={feed.events}
-                  now={now}
-                  demo={feed.demo}
-                  moving={moving}
-                  loading={feed.loading}
-                  onToggleMotion={() => setMoving(!moving)}
-                  onRules={() => setModal("rules")}
-                  status={
-                    feed.demo
-                      ? "Demo"
-                      : feed.paused
-                        ? "Paused"
-                        : feed.streaming
-                          ? "Live"
-                          : feed.loading
-                            ? "Syncing"
-                            : "Polling"
-                  }
-                />
+                {!personal ? (
+                  <EngineeringWall
+                    snapshot={engineering.data}
+                    health={engineering.health}
+                    events={feed.events}
+                    now={now}
+                    demo={feed.demo}
+                    moving={moving}
+                    loading={feed.loading || engineering.loading}
+                    onToggleMotion={() => setMoving(!moving)}
+                    onRules={() => setModal("rules")}
+                    onMilestones={() => setPage("milestones")}
+                    status={
+                      feed.demo
+                        ? "Demo"
+                        : feed.paused
+                          ? "Paused"
+                          : feed.streaming
+                            ? "Live"
+                            : feed.loading
+                              ? "Syncing"
+                              : "Polling"
+                    }
+                  />
+                ) : (
+                  <LiveLeaderboard
+                    events={feed.events}
+                    now={now}
+                    demo={feed.demo}
+                    moving={moving}
+                    loading={feed.loading}
+                    onToggleMotion={() => setMoving(!moving)}
+                    onRules={() => setModal("rules")}
+                    status={status}
+                  />
+                )}
                 <aside className="dashboard-sidebar">{renderFeed()}</aside>
               </div>
             ) : (

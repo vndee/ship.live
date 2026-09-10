@@ -374,6 +374,8 @@ export function useFeed() {
               return;
             }
             if (name === "activity" || name === "refresh") scheduleRefresh();
+            if (name === "wall")
+              window.dispatchEvent(new Event("ship-live-wall"));
           }
         }
       } catch (error) {

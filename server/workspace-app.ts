@@ -10,6 +10,8 @@ import { verifyWebhookSignature } from "./security.js";
 import type { WorkspaceStore } from "./workspace-store.js";
 import { healthRouter } from "./health-app.js";
 import { dashboardShareRouter, healthShareRouter } from "./share-app.js";
+import { normalizeWallWebhook } from "./wall-normalize.js";
+import { WallStore } from "./wall-store.js";
 
 interface WorkspaceAppOptions {
   store: PostgresEventStore;
@@ -53,6 +55,7 @@ export function createWorkspaceApp({
   )
     throw new Error("TRUST_PROXY_HOPS must be an integer from 0 to 5.");
   const app = express();
+  const wall = new WallStore(store.pool);
   app.disable("x-powered-by");
   if (trustProxyHops > 0) app.set("trust proxy", trustProxyHops);
   let connections = 0;
@@ -322,6 +325,11 @@ export function createWorkspaceApp({
         return;
       }
       const normalized = normalizeWebhook(kind, payload, deliveryId);
+      const wallUpdates = normalizeWallWebhook(
+        kind,
+        payload,
+        new Date().toISOString(),
+      );
       const events = normalized
         ? [{ ...normalized, repositoryId: repository.id }]
         : [];
@@ -330,6 +338,17 @@ export function createWorkspaceApp({
         events,
         { restricted: true, deliveryId },
       );
+      // Wall deliveries have their own transaction and deduplication table. Apply
+      // on retries too so a transient wall write failure can repair itself even
+      // when the activity delivery was already committed.
+      if (wallUpdates.length)
+        await wall.apply(
+          installation.id,
+          repository.id,
+          name.join("/"),
+          deliveryId,
+          wallUpdates,
+        );
       response
         .status(202)
         .json({ accepted: true, duplicate: result.duplicate });
@@ -526,6 +545,30 @@ export function createWorkspaceApp({
     };
     response.json(result);
   });
+  app.get("/api/workspaces/:id/wall", async (request, response) => {
+    const principal = await auth.authenticate(request, response);
+    const initial = await viewer(principal, request.params.id, true);
+    const installation = initial.workspace.installationId;
+    if (!installation) {
+      response.json({ repositories: [], updatedAt: new Date().toISOString() });
+      return;
+    }
+    const saved = await wall.snapshot(
+      installation,
+      initial.repositories.map((repository) => repository.id),
+    );
+    const current = await viewer(principal, initial.workspace.id, true);
+    if (current.workspace.installationId !== installation) throw accessDenied();
+    const allowed = new Set(
+      current.repositories.map((repository) => repository.id),
+    );
+    response.json({
+      ...saved,
+      repositories: saved.repositories.filter((repository) =>
+        allowed.has(repository.repositoryId),
+      ),
+    });
+  });
   app.get("/api/workspaces/:id/events", async (request, response) => {
     const principal = await auth.authenticate(request, response);
     let current = await viewer(principal, request.params.id);
@@ -601,7 +644,10 @@ export function createWorkspaceApp({
           `workspace-${current.workspace.id}`,
           `account-${principal.user.id}`,
           ...(current.workspace.installationId
-            ? [`installation-${current.workspace.installationId}`]
+            ? [
+                `installation-${current.workspace.installationId}`,
+                `wall-installation-${current.workspace.installationId}`,
+              ]
             : []),
         ].includes(scope)
       )
@@ -609,7 +655,10 @@ export function createWorkspaceApp({
       enqueue(async () => {
         const changed = await revalidate();
         if (eventId === "refresh") {
-          if (!changed) write("event: refresh\ndata: {}\n\n");
+          if (!changed)
+            write(
+              `${scope.startsWith("wall-installation-") ? "event: wall" : "event: refresh"}\ndata: {}\n\n`,
+            );
           return;
         }
         if (scope !== `installation-${current.workspace.installationId}`)

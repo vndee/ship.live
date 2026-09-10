@@ -8,6 +8,7 @@ import type { GitHubApp, Repo } from "./github-app.js";
 import type { PostgresEventStore } from "./postgres-store.js";
 import { DashboardShareStore, unavailableShare } from "./share-store.js";
 import type { WorkspaceStore } from "./workspace-store.js";
+import { WallStore } from "./wall-store.js";
 
 function workspaceShareRouter(
   {
@@ -31,6 +32,7 @@ function workspaceShareRouter(
   const router = Router();
   const shares = new DashboardShareStore(workspaces.pool, kind);
   const health = new HealthStore(store.pool);
+  const wall = new WallStore(store.pool);
   let connections = 0;
   const base =
     kind === "health"
@@ -157,6 +159,10 @@ function workspaceShareRouter(
       workspace,
       initial.repositories.map((repo) => repo.id),
     );
+    const wallSnapshot = await wall.snapshot(
+      Number(initial.share.installation_id),
+      initial.repositories.map((repo) => repo.id),
+    );
     // Remote checks and storage reads can overlap a revoke on another replica.
     const current = await authorize(token);
     const allowed = new Set(current.repositories.map((repo) => repo.id));
@@ -170,6 +176,12 @@ function workspaceShareRouter(
       source: "workspace",
       updatedAt: new Date().toISOString(),
       expiresAt: current.share.expires_at.toISOString(),
+      wall: {
+        ...wallSnapshot,
+        repositories: wallSnapshot.repositories.filter((repository) =>
+          allowed.has(repository.repositoryId),
+        ),
+      },
     };
     response.json(result);
   });
@@ -257,6 +269,7 @@ function workspaceShareRouter(
           `workspace-${share.workspace_id}`,
           `account-${share.creator_user_id}`,
           `installation-${share.installation_id}`,
+          `wall-installation-${share.installation_id}`,
         ].includes(scope)
       )
         void refresh();

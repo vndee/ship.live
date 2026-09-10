@@ -21,10 +21,11 @@ A private shipping journal for individual builders and a live GitHub activity wa
 - **Google or GitHub sign-in.** Supabase Auth handles identity. A separate GitHub App connection grants repository access, including for someone who signed in with Google.
 - **Live team leaderboard.** Follow weekly XP, animated rank changes, contribution bars, and live XP gains beside the activity feed.
 - **Team momentum.** See today’s contributions, a seven-day activity chart, and the nearest weekly milestone at a glance.
+- **Engineering utilities wall.** Rotate through Team Pulse, Review Radar, GitHub deployment status, Service Health, and the XP leaderboard. Current failures interrupt the rotation and recoveries produce a brief team moment.
 - **Live celebrations.** New contributions briefly highlight in the feed and announce earned XP. Merges and releases launch confetti, with a bigger burst for milestones. Motion and celebration controls keep the dashboard comfortable; try a fictional event with **Try live activity** in demo mode.
 - **Live activity and replay.** Follow merges, reviews, releases, pushes, issues, and journal entries. Filter by repository, type, time, or text; replay the last 24 hours, 7 days, or 30 days.
 - **Shared recognition.** Weekly contributor spotlights and team milestones celebrate outcomes and collaboration. Raw commit counts and personal notes earn no XP.
-- **Expiring dashboard links.** Share a read-only team dashboard without requiring sign-in. Choose 1 hour, 24 hours, 7 days, or 30 days; rotate or revoke your link at any time.
+- **Expiring dashboard links.** Share a read-only team dashboard without requiring sign-in. Choose from one hour through a 100-year no-expiration option; rotate or revoke your link at any time.
 - **Private by default.** Personal notes belong to their owner. GitHub events are filtered to repositories each viewer can currently access through the GitHub App.
 - **Self-hosted.** React, Express, and shared PostgreSQL, with bundled fonts and no analytics. One Node.js service serves the frontend and API.
 
@@ -104,7 +105,7 @@ The database suite creates and removes isolated test databases. Use a dedicated 
 
 Personal journals remain private. Team members can explicitly share a read-only dashboard through an expiring link. Each member manages one link per workspace; rotating it immediately invalidates their previous link. Sharing pins the creator’s current repository IDs and rechecks their live GitHub permissions on reads. Notes are never shared. Newly accessible repositories require a new link. Public profiles and journal publishing are not implemented.
 
-GitHub connection imports a bounded recent history, not a complete activity archive. Subsequent signed webhooks supply live events; push history begins with those webhooks. The UI displays at most 2,000 events per workspace. Stored events and accepted delivery IDs do not expire automatically, so operators must plan retention and backups. Request counters and live-connection limits remain per process.
+GitHub connection imports a bounded recent activity history, not a complete archive. Subsequent signed webhooks supply live activity plus current pull-request, check, workflow, commit-status, and deployment signals; push history begins with those webhooks. CI/CD providers appear through the states they publish back to GitHub, so ship.live requires no provider-specific integration. The UI displays at most 2,000 activity events per workspace and bounds each wall signal category in snapshots. Stored events and accepted delivery IDs do not expire automatically, so operators must plan retention and backups. Request counters and live-connection limits remain per process.
 
 The old organization-name/shared-key routes are not mounted by the current server. Legacy events remain in their original database namespaces and are not automatically assigned to a newly signed-in user. See [upgrade notes](docs/configuration.md#upgrading-an-existing-installation).
 

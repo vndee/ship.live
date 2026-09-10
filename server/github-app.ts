@@ -37,6 +37,10 @@ const READ_PERMISSIONS = {
   contents: "read",
   pull_requests: "read",
   issues: "read",
+  actions: "read",
+  checks: "read",
+  statuses: "read",
+  deployments: "read",
 };
 const DAY = 86_400_000;
 

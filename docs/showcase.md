@@ -6,6 +6,10 @@ Real screenshots of the running application, captured using the built-in fiction
 
 The dashboard pairs animated weekly contributor rankings with live GitHub activity, today’s momentum, a seven-day activity chart, and the nearest weekly milestone. New contributions highlight in the feed and announce earned XP; merges and releases launch confetti, with a larger burst when the team reaches a milestone.
 
+Team dashboards also rotate through Review Radar, GitHub deployment state, Service Health, and the leaderboard without requiring a second workflow from the team.
+
+![Engineering utilities wall showing the Service Health scene](images/engineering-wall.jpg)
+
 ![Live team XP leaderboard with fictional contributors and recent activity](images/leaderboard.jpg)
 
 ![A live release highlights in the feed with earned XP and confetti](images/live-celebration.jpg)
