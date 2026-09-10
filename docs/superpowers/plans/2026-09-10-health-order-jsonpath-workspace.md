@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add safe array-filtered probe conditions, database-backed service ordering with accessible drag and drop, and restoration of each user's last authorized workspace after reload.
+**Goal:** Add safe array-filtered probe conditions, database-backed service ordering with accessible drag and drop, interactive latency tooltips, and restoration of each user's last authorized workspace after reload.
 
-**Architecture:** A purpose-built parser converts the supported JSONPath subset into typed traversal steps consumed by the health probe runner. PostgreSQL owns service order and exposes one atomic full-order mutation; the React client uses dnd-kit for optimistic sorting and rollback. A small browser-storage module keeps workspace preference account-scoped and lets `useFeed` restore it only after server authorization.
+**Architecture:** A purpose-built parser converts the supported JSONPath subset into typed traversal steps consumed by the health probe runner. PostgreSQL owns service order and exposes one atomic full-order mutation; the React client uses dnd-kit for optimistic sorting and rollback. Pure latency interaction helpers drive a single accessible SVG/HTML tooltip, and a small browser-storage module keeps workspace preference account-scoped and lets `useFeed` restore it only after server authorization.
 
 **Tech Stack:** TypeScript, Node.js test runner, Express, PostgreSQL migrations and transactions, React 19, `@dnd-kit/core`, `@dnd-kit/sortable`, CSS.
 
@@ -19,6 +19,7 @@
 - Service order is shared by authenticated and public health snapshots; URLs, headers, paths, and expected values remain private.
 - Workspace preference is scoped by authenticated user ID and is applied only after the returned workspace list authorizes the saved ID.
 - Storage failures must never block app startup, logout, or workspace switching.
+- The latency chart remains one keyboard stop and missing daily buckets are never interactive points.
 
 ---
 
@@ -535,7 +536,150 @@ git add package.json package-lock.json src/lib/service-order.ts src/lib/service-
 git commit -m "Add draggable service health ordering"
 ```
 
-### Task 6: Restore the last authorized workspace per user
+### Task 6: Add an interactive accessible latency tooltip
+
+**Files:**
+
+- Modify: `src/lib/latency-chart.ts`
+- Modify: `src/lib/latency-chart.test.ts`
+- Modify: `src/components/LatencyChart.tsx`
+- Modify: `src/components/service-health.css`
+
+**Interfaces:**
+
+- Extends: `LatencyPoint` with `ok?: boolean` and `statusCode?: number | null`
+- Produces: `nearestLatencyPoint(points: (LatencyPoint | null)[], targetTime: number): number | null`
+- Produces: `moveLatencyPoint(points: (LatencyPoint | null)[], active: number | null, key: "previous" | "next" | "first" | "last"): number | null`
+- Produces: `clampTooltipLeft(anchor: number, tooltipWidth: number, containerWidth: number, padding?: number): number`
+
+- [ ] **Step 1: Write failing interaction helper tests**
+
+```ts
+const point = (time: number): LatencyPoint => ({
+  time,
+  latencyMs: 100,
+  minLatencyMs: 100,
+  maxLatencyMs: 100,
+  checks: 1,
+});
+
+test("selects the nearest recorded point and skips missing days", () => {
+  const points = [point(100), null, point(300), point(500)];
+  assert.equal(nearestLatencyPoint(points, 360), 2);
+  assert.equal(nearestLatencyPoint(points, 490), 3);
+  assert.equal(nearestLatencyPoint([null, null], 200), null);
+});
+
+test("keyboard movement stays on recorded points and clamps at both ends", () => {
+  const points = [point(100), null, point(300)];
+  assert.equal(moveLatencyPoint(points, null, "next"), 0);
+  assert.equal(moveLatencyPoint(points, 0, "next"), 2);
+  assert.equal(moveLatencyPoint(points, 2, "next"), 2);
+  assert.equal(moveLatencyPoint(points, 2, "previous"), 0);
+  assert.equal(moveLatencyPoint(points, 0, "last"), 2);
+});
+
+test("tooltip position stays inside the chart container", () => {
+  assert.equal(clampTooltipLeft(5, 120, 640), 8);
+  assert.equal(clampTooltipLeft(320, 120, 640), 260);
+  assert.equal(clampTooltipLeft(635, 120, 640), 512);
+});
+```
+
+- [ ] **Step 2: Run the latency test and verify RED**
+
+Run: `node --import tsx --test src/lib/latency-chart.test.ts`
+
+Expected: FAIL because the interaction helpers do not exist.
+
+- [ ] **Step 3: Implement the pure selection, navigation, and clamp helpers**
+
+```ts
+export function nearestLatencyPoint(
+  points: (LatencyPoint | null)[],
+  targetTime: number,
+): number | null {
+  let selected: number | null = null;
+  let distance = Infinity;
+  points.forEach((point, index) => {
+    if (!point) return;
+    const nextDistance = Math.abs(point.time - targetTime);
+    if (nextDistance < distance) {
+      selected = index;
+      distance = nextDistance;
+    }
+  });
+  return selected;
+}
+
+export function clampTooltipLeft(
+  anchor: number,
+  width: number,
+  container: number,
+  padding = 8,
+): number {
+  return Math.min(
+    Math.max(padding, anchor - width / 2),
+    Math.max(padding, container - width - padding),
+  );
+}
+```
+
+Implement `moveLatencyPoint` by deriving the non-null indexes, selecting the first point when no point is active, and clamping previous/next movement to the first and last recorded index.
+
+- [ ] **Step 4: Preserve recent check status metadata**
+
+When `buildLatencySeries` maps recent checks, include:
+
+```ts
+ok: check.ok,
+statusCode: check.statusCode,
+```
+
+Daily points leave both fields undefined because their aggregate contains successful and failed checks.
+
+- [ ] **Step 5: Integrate pointer, touch, and keyboard selection in `LatencyChart`**
+
+Keep `activeIndex` in component state and clear it when mode or series changes. Make the SVG focusable with `tabIndex={0}`. Convert pointer X from its client rectangle into the chart's time domain, call `nearestLatencyPoint`, and use pointer leave to dismiss mouse hover. Handle ArrowLeft, ArrowRight, Home, End, and Escape with `moveLatencyPoint`.
+
+Render the active point after the regular series so it stays visible:
+
+```tsx
+<line
+  className="latency-crosshair"
+  x1={activeX}
+  x2={activeX}
+  y1={26}
+  y2={138}
+/>
+<circle
+  className="latency-point is-active"
+  cx={activeX}
+  cy={activeY}
+  r={5}
+/>
+```
+
+Render one `.latency-tooltip` HTML element inside a positioned chart wrapper. Measure the wrapper and tooltip refs in a layout effect, then use `clampTooltipLeft`. Recent content includes local timestamp, rounded latency, Passed/Failed, and `HTTP ${statusCode}` when non-null. Daily content includes UTC date, average, min, max, and check count. Associate its ID with the focused SVG using `aria-describedby` while active.
+
+- [ ] **Step 6: Style and manually verify the interaction**
+
+Add a faint crosshair, active-point ring, compact surface tooltip, tabular numbers, and focus-visible outline. Verify hover between small points chooses the nearest point, daily gaps are skipped, tooltip stays inside both card edges, touch selection persists, pointer leave dismisses hover, and keyboard navigation works without creating per-point tab stops.
+
+- [ ] **Step 7: Run latency tests and build**
+
+Run: `node --import tsx --test src/lib/latency-chart.test.ts && npm run build`
+
+Expected: PASS.
+
+- [ ] **Step 8: Commit the chart interaction**
+
+```bash
+git add src/lib/latency-chart.ts src/lib/latency-chart.test.ts src/components/LatencyChart.tsx src/components/service-health.css
+git commit -m "Add interactive latency chart tooltips"
+```
+
+### Task 7: Restore the last authorized workspace per user
 
 **Files:**
 
@@ -606,7 +750,7 @@ git add src/lib/workspace-preference.ts src/lib/workspace-preference.test.ts src
 git commit -m "Restore the last selected workspace"
 ```
 
-### Task 7: Complete documentation and release verification
+### Task 8: Complete documentation and release verification
 
 **Files:**
 
@@ -615,11 +759,11 @@ git commit -m "Restore the last selected workspace"
 
 **Interfaces:**
 
-- Verifies all interfaces from Tasks 1–6 without adding new production behavior.
+- Verifies all interfaces from Tasks 1–7 without adding new production behavior.
 
 - [ ] **Step 1: Update user documentation**
 
-Document filtered path syntax, first-match behavior, exact primitive comparison, reorder persistence, shared-view ordering, and last-workspace restoration. Include the OpenAI Embeddings and Chat Completions examples.
+Document filtered path syntax, first-match behavior, exact primitive comparison, reorder persistence, shared-view ordering, interactive latency controls, and last-workspace restoration. Include the OpenAI Embeddings and Chat Completions examples.
 
 - [ ] **Step 2: Run the full verification suite**
 
@@ -634,7 +778,7 @@ Expected: zero failures. PostgreSQL tests may skip only when `TEST_DATABASE_URL`
 
 - [ ] **Step 3: Browser QA the complete flow**
 
-Create three demo services, reorder them by pointer and keyboard, reload and confirm order, open a public health share and confirm the same order, configure the OpenAI-style filtered component payload, switch to `kamilabs-ai`, reload, and confirm the workspace is restored. Revoke access or use a nonexistent saved ID and confirm the authorized fallback.
+Create three demo services, reorder them by pointer and keyboard, reload and confirm order, open a public health share and confirm the same order, configure the OpenAI-style filtered component payload, exercise recent and 30-day latency tooltips with pointer/touch/keyboard, switch to `kamilabs-ai`, reload, and confirm the workspace is restored. Revoke access or use a nonexistent saved ID and confirm the authorized fallback.
 
 - [ ] **Step 4: Mark completed plan checkboxes and commit final documentation**
 

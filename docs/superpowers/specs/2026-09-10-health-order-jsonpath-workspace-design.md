@@ -49,6 +49,16 @@ The UI updates the local snapshot immediately when a drop completes, then sends 
 
 The drag handle has an explicit accessible label containing the service name. Keyboard users can pick up a row, move it with arrow keys, and drop or cancel it. The visual treatment remains compact so collapsed rows still maximize the number of visible services.
 
+## Interactive latency tooltip
+
+The existing SVG latency chart gains one active-point interaction shared by recent checks and the 30-day view. Pointer movement and touch select the nearest recorded point by horizontal position rather than requiring the user to hit a small circle. The chart shows a restrained vertical crosshair, enlarges the active point, and positions an HTML tooltip within the chart container so it cannot overflow the card.
+
+Recent-check tooltips show local date and time, latency, pass or fail state, and HTTP status when available. Daily tooltips show the UTC date, average, minimum, maximum, and check count. Missing daily buckets are never selectable. Pointer leave and Escape dismiss the tooltip; a touch selection remains until another point is selected or dismissed.
+
+The chart itself is one keyboard stop. Left and Right Arrow move across recorded points, Home and End jump to the first and last point, and Escape dismisses the tooltip. The active description is associated with the chart for assistive technology. Individual points do not add up to 120 tab stops. The existing latency table remains the complete non-visual representation.
+
+Hit testing, index movement, and tooltip clamping live in pure helpers with unit tests. The interaction adds no chart dependency.
+
 ## Workspace restoration
 
 The browser stores the last manually selected workspace ID under a key scoped to the authenticated user ID. Selection is written only after the user chooses a workspace or successfully connects a new installation. Reads and writes are wrapped so blocked browser storage never prevents the app from loading or switching workspaces.
@@ -69,5 +79,6 @@ The reorder route uses the existing authenticated team workspace middleware, sam
 - Probe execution tests confirm a filtered OpenAI-style component condition passes and a missing or unhealthy component fails without storing the response body.
 - Migration and store tests cover deterministic backfill, append order, atomic swaps, duplicate/missing/foreign IDs, concurrent reorder/create behavior, and identical private/shared ordering.
 - UI behavior tests cover pointer and keyboard reorder, optimistic state, pending-state exclusion, rollback, and queued live refresh handling.
+- Latency interaction tests cover nearest-point selection, missing daily buckets, keyboard boundaries, tooltip contents, and horizontal clamping; browser QA covers hover, touch, focus, and both chart ranges.
 - Workspace selection tests cover per-user restoration, inaccessible saved IDs, logout/account changes, successful installation selection, and blocked storage.
 - Run the full unit and PostgreSQL integration suite, TypeScript build, formatting checks, and browser QA at desktop and narrow viewport sizes.
