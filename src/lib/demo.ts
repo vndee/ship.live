@@ -240,6 +240,12 @@ export function createDemoEvents(now = Date.now()): ActivityEvent[] {
       item.additions = 24 + ((index * 37) % 380);
       item.deletions = 6 + ((index * 13) % 90);
     }
+    if (type === "merge") {
+      const release = index % 7 === 3;
+      item.branch = release ? "release/next" : "main";
+      item.defaultBranch = !release;
+    }
+    if (type === "push") item.commits = 1 + ((index * 5) % 4);
     events.push(item);
   }
   return events.sort(

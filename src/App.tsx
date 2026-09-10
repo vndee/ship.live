@@ -33,10 +33,12 @@ import {
 } from "lucide-react";
 import type { ActivityEvent } from "../shared/types";
 import {
+  basePoints,
   EVENT_META,
   getAchievements,
   getLeaderboard,
   getMetrics,
+  SCORING_RULES,
 } from "./lib/activity";
 import {
   filterEvents,
@@ -1032,9 +1034,8 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
               </div>
             )}
             <p className="recognition-note">
-              Reviews, releases, and shipping all count. Commit volume earns no
-              XP. Weekly recognition excludes bot accounts and resets Monday at
-              00:00 UTC.
+              Reviews, releases, merges, and new commits all count. Weekly
+              recognition excludes bot accounts and resets Monday at 00:00 UTC.
             </p>
           </section>
         )}
@@ -1237,16 +1238,14 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             starter, never a performance score.
           </p>
           <div className="scoring-rules">
-            {(
-              ["release", "merge", "review", "issue", "pr", "push"] as Kind[]
-            ).map((type) => {
-              const Icon = icons[type];
+            {SCORING_RULES.map((rule) => {
+              const Icon = icons[rule.type];
               return (
-                <div key={type}>
+                <div key={rule.verb}>
                   <Icon size={17} />
-                  <span>{EVENT_META[type].verb}</span>
+                  <span>{rule.verb}</span>
                   <strong>
-                    {EVENT_META[type].points} <small>XP</small>
+                    {rule.points} <small>XP{rule.each ? " each" : ""}</small>
                   </strong>
                 </div>
               );
@@ -1254,9 +1253,10 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
           </div>
           <p className="field-hint">
             Bot accounts and duplicate events are excluded. Review XP counts
-            once per reviewer, pull request, and UTC day. Weeks start Monday at
-            00:00 UTC. Public history can be incomplete; totals reflect received
-            activity.
+            once per reviewer, pull request, and UTC day. Commit XP counts only
+            commits new to the repository, so each commit is credited once.
+            Weeks start Monday at 00:00 UTC. Public history can be incomplete;
+            totals reflect received activity.
           </p>
         </Modal>
       )}
@@ -1355,6 +1355,9 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             <FolderGit2 size={15} />
             {detail.type === "note" ? "Private journal" : detail.repo}
             {detail.number ? ` #${detail.number}` : ""}
+            {detail.type === "merge" && detail.branch
+              ? ` into ${detail.branch}`
+              : ""}
           </p>
           <p className="detail-date">
             {new Date(detail.occurredAt).toLocaleString()}
@@ -1368,8 +1371,11 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
           {detail.body && <p className="note-body">{detail.body}</p>}
           {!personal && detail.type !== "note" && (
             <p className="field-hint">
-              Base recognition: {EVENT_META[detail.type].points} XP. The weekly
-              board applies duplicate and review limits.
+              Base recognition: {basePoints(detail)} XP
+              {detail.type === "push" && detail.commits !== undefined
+                ? ` for ${detail.commits} new commit${detail.commits === 1 ? "" : "s"}`
+                : ""}
+              . The weekly board applies duplicate and review limits.
             </p>
           )}
           {detail.type === "note" && (

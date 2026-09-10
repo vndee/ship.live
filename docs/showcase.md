@@ -16,7 +16,7 @@ Team dashboards also rotate through Review Radar, GitHub deployment state, Servi
 
 ## The people behind it
 
-The contributor view makes merges, thoughtful reviews, and weekly recognition visible. Commit volume earns no XP.
+The contributor view makes merges, thoughtful reviews, and weekly recognition visible. Each new commit earns a small 2 XP.
 
 ![Team spotlight showing six fictional contributors and weekly recognition](images/team.jpg)
 

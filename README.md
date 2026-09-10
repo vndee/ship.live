@@ -25,7 +25,7 @@ A private shipping journal for individual builders and a live GitHub activity wa
 - **Engineering utilities wall.** Rotate through Team Pulse, Review Radar, GitHub deployment status, Service Health, and the XP leaderboard. Current failures interrupt the rotation and recoveries produce a brief team moment.
 - **Live celebrations.** New contributions briefly highlight in the feed and announce earned XP. Merges and releases launch confetti, with a bigger burst for milestones. Motion and celebration controls keep the dashboard comfortable; try a fictional event with **Try live activity** in demo mode.
 - **Live activity and replay.** Follow merges, reviews, releases, pushes, issues, and journal entries. Filter by repository, type, time, or text; replay the last 24 hours, 7 days, or 30 days.
-- **Shared recognition.** Weekly contributor spotlights and team milestones celebrate outcomes and collaboration. Raw commit counts and personal notes earn no XP.
+- **Shared recognition.** Weekly contributor spotlights and team milestones celebrate outcomes and collaboration. New commits earn a small per-commit credit; personal notes earn no XP.
 - **Expiring dashboard links.** Share a read-only team dashboard without requiring sign-in. Choose from one hour through a 100-year no-expiration option; rotate or revoke your link at any time.
 - **Private by default.** Personal notes belong to their owner. GitHub events are filtered to repositories each viewer can currently access through the GitHub App.
 - **Self-hosted.** React, Express, and shared PostgreSQL, with bundled fonts and no analytics. One Node.js service serves the frontend and API.
@@ -59,17 +59,18 @@ For frontend-only demo work without a database, use `npm run dev:web`.
 
 ## Recognition
 
-| Contribution           |  XP |
-| ---------------------- | --: |
-| Release published      |  50 |
-| Pull request merged    |  30 |
-| Review submitted       |  15 |
-| Issue completed        |  10 |
-| Pull request opened    |   5 |
-| Commits pushed         |   0 |
-| Personal journal entry |   0 |
+| Contribution                            |           XP |
+| --------------------------------------- | -----------: |
+| Release published                       |           50 |
+| Pull request merged into default branch |           30 |
+| Pull request merged into another branch |           15 |
+| Review submitted                        |           15 |
+| Issue completed                         |           10 |
+| Pull request opened                     |            5 |
+| Commit pushed                           | 2 per commit |
+| Personal journal entry                  |            0 |
 
-Recognition resets on Monday at 00:00 UTC. Bots and duplicate events do not earn credit. Review credit is capped at one award per reviewer, pull request, and UTC day; merge credit belongs to the pull request author. Team milestones celebrate 30 merges, 40 reviews, and 5 releases per week.
+Recognition resets on Monday at 00:00 UTC. Bots and duplicate events do not earn credit. Review credit is capped at one award per reviewer, pull request, and UTC day; merge credit belongs to the pull request author. Commit credit belongs to the pusher and counts only commits new to the repository, so creating a branch or merging with a merge commit does not credit the same commits again. Merges whose target branch GitHub did not report keep default-branch credit. Team milestones celebrate 30 merges, 40 reviews, and 5 releases per week.
 
 These are shared celebrations, not performance evaluations. Metrics describe the events visible to the current viewer, so teammates with different repository permissions can see different totals. Replay changes the view, not the recognition rules. See [`src/lib/activity.ts`](src/lib/activity.ts).
 

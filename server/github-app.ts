@@ -1,4 +1,9 @@
-import { createPrivateKey, sign, type KeyObject } from "node:crypto";
+import {
+  createHash,
+  createPrivateKey,
+  sign,
+  type KeyObject,
+} from "node:crypto";
 import type { ActivityEvent } from "../shared/types.js";
 import { FeedError } from "./github.js";
 import { normalizeWebhook, object, validOrganization } from "./normalize.js";
@@ -151,6 +156,7 @@ export class GitHubApp {
   private async request(
     url: string,
     init: RequestInit,
+    revalidating = false,
   ): Promise<{ data: unknown; response: Response }> {
     let response: Response;
     try {
@@ -165,16 +171,33 @@ export class GitHubApp {
         "GitHub could not be reached. Please try again.",
       );
     }
+    if (response.status === 304) {
+      if (!revalidating) malformed();
+      return { data: undefined, response };
+    }
     if (!response.ok) {
+      const retryHeader = response.headers.get("retry-after");
+      // Secondary limits can arrive as a 403 with Retry-After and quota remaining.
       if (
         response.status === 429 ||
-        response.headers.get("x-ratelimit-remaining") === "0"
-      )
+        response.headers.get("x-ratelimit-remaining") === "0" ||
+        (response.status === 403 && retryHeader !== null)
+      ) {
+        const reset = Number(response.headers.get("x-ratelimit-reset")) * 1000;
+        const retryAfter = Math.min(
+          3600,
+          Math.max(
+            60,
+            Number(retryHeader) || Math.ceil((reset - Date.now()) / 1000) || 60,
+          ),
+        );
+        const minutes = Math.ceil(retryAfter / 60);
         throw new FeedError(
           429,
-          "GitHub rate limit reached. Retry synchronization later.",
-          60,
+          `GitHub rate limit reached. Try again in about ${minutes} minute${minutes === 1 ? "" : "s"}.`,
+          retryAfter,
         );
+      }
       if ([401, 403, 404].includes(response.status))
         throw new FeedError(
           response.status,
@@ -192,20 +215,25 @@ export class GitHubApp {
     }
   }
 
-  private api(path: string, token: string, body?: unknown) {
+  private api(path: string, token: string, body?: unknown, etag?: string) {
     if (!credential(token))
       throw new FeedError(401, "A valid GitHub access token is required.");
-    return this.request(new URL(path, API).href, {
-      method: body === undefined ? "GET" : "POST",
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
-        "X-GitHub-Api-Version": "2026-03-10",
-        "User-Agent": "ship.live",
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    return this.request(
+      new URL(path, API).href,
+      {
+        method: body === undefined ? "GET" : "POST",
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${token}`,
+          "X-GitHub-Api-Version": "2026-03-10",
+          "User-Agent": "ship.live",
+          ...(etag ? { "If-None-Match": etag } : {}),
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+      Boolean(etag),
+    );
   }
 
   private async grant(
@@ -352,6 +380,19 @@ export class GitHubApp {
     return url;
   }
 
+  // Access listings are re-checked with GitHub on every read. Unchanged pages
+  // return 304s, which do not spend the user's shared hourly rate limit. Keys
+  // hold token hashes, never tokens.
+  private readonly pages = new Map<
+    string,
+    {
+      etag: string;
+      total: number;
+      items: { id: number }[];
+      link: string | null;
+    }
+  >();
+
   private async viewerPages<T extends { id: number }>(
     path: string,
     userToken: string,
@@ -361,23 +402,46 @@ export class GitHubApp {
     let url = new URL(`${path}?per_page=100&page=1`, API);
     let total: number | undefined;
     const items = new Map<number, T>();
+    const owner = createHash("sha256").update(userToken).digest("hex");
     for (let page = 1; page <= 100; page += 1) {
-      const { data, response } = await this.api(url.href, userToken);
-      const result = object(data);
-      if (
-        !count(result.total_count) ||
-        !Array.isArray(result[field]) ||
-        result[field].length > 100 ||
-        (total !== undefined && result.total_count !== total)
-      )
-        malformed();
-      total = result.total_count;
-      for (const value of result[field]) {
-        const item = parse(value);
+      const key = `${owner} ${url.href}`;
+      const cached = this.pages.get(key);
+      const { data, response } = await this.api(
+        url.href,
+        userToken,
+        undefined,
+        cached?.etag,
+      );
+      // request() only accepts a 304 when this read sent a cached ETag.
+      let current = cached!;
+      if (response.status !== 304) {
+        const result = object(data);
+        if (
+          !count(result.total_count) ||
+          !Array.isArray(result[field]) ||
+          result[field].length > 100
+        )
+          malformed();
+        current = {
+          etag: response.headers.get("etag") ?? "",
+          total: result.total_count,
+          items: result[field].map(parse),
+          link: response.headers.get("link"),
+        };
+      }
+      this.pages.delete(key);
+      if (current.etag) {
+        this.pages.set(key, current);
+        if (this.pages.size > 1_000)
+          this.pages.delete(this.pages.keys().next().value!);
+      }
+      if (total !== undefined && current.total !== total) malformed();
+      total = current.total;
+      for (const item of current.items as T[]) {
         if (items.has(item.id)) malformed();
         items.set(item.id, item);
       }
-      const next = this.nextPage(response.headers.get("link"), url);
+      const next = this.nextPage(current.link, url);
       if (!next) {
         if (items.size !== total) malformed();
         return [...items.values()];

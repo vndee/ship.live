@@ -3,6 +3,12 @@ import type { ActivityEvent, ActivityType } from "../../shared/types";
 const DAY = 24 * 60 * 60 * 1000;
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+/** XP for each commit a push adds to the repository. */
+export const COMMIT_POINTS = 2;
+/** Merges into other branches count, but below merges into the default branch. */
+export const BRANCH_MERGE_POINTS = 15;
+
+/** Push points are per new commit; see basePoints. */
 export const EVENT_META: Record<
   ActivityType,
   {
@@ -30,7 +36,12 @@ export const EVENT_META: Record<
     points: 0,
     color: "slate",
   },
-  push: { label: "Push", verb: "pushed commits", points: 0, color: "slate" },
+  push: {
+    label: "Push",
+    verb: "pushed commits",
+    points: COMMIT_POINTS,
+    color: "slate",
+  },
   issue: {
     label: "Issue",
     verb: "closed an issue",
@@ -130,13 +141,62 @@ function weeklyEvents(events: ActivityEvent[], now: number): ActivityEvent[] {
   return eligibleEvents(events, now, getWeekStart(now).getTime());
 }
 
+/** Base XP before weekly limits: pushes earn per new commit, merges by target branch. */
+export function basePoints(event: ActivityEvent): number {
+  if (event.type === "push") return (event.commits ?? 0) * COMMIT_POINTS;
+  // Unknown targets keep full credit, like events stored before branches were recorded.
+  if (event.type === "merge" && event.defaultBranch === false)
+    return BRANCH_MERGE_POINTS;
+  return EVENT_META[event.type].points;
+}
+
+export const SCORING_RULES: Array<{
+  type: ActivityType;
+  verb: string;
+  points: number;
+  each?: boolean;
+}> = [
+  {
+    type: "release",
+    verb: EVENT_META.release.verb,
+    points: EVENT_META.release.points,
+  },
+  {
+    type: "merge",
+    verb: "merged into the default branch",
+    points: EVENT_META.merge.points,
+  },
+  {
+    type: "merge",
+    verb: "merged into another branch",
+    points: BRANCH_MERGE_POINTS,
+  },
+  {
+    type: "review",
+    verb: EVENT_META.review.verb,
+    points: EVENT_META.review.points,
+  },
+  {
+    type: "issue",
+    verb: EVENT_META.issue.verb,
+    points: EVENT_META.issue.points,
+  },
+  { type: "pr", verb: EVENT_META.pr.verb, points: EVENT_META.pr.points },
+  {
+    type: "push",
+    verb: "pushed a new commit",
+    points: COMMIT_POINTS,
+    each: true,
+  },
+];
+
 /** Keep distinct review activity visible, but only credit one review per PR/day/person. */
 function withCredit(
   events: ActivityEvent[],
 ): Array<{ event: ActivityEvent; points: number }> {
   const reviews = new Set<string>();
   return events.map((event) => {
-    let points = EVENT_META[event.type].points;
+    let points = basePoints(event);
     if (event.type === "review" && event.number !== undefined) {
       const day = new Date(event.occurredAt).toISOString().slice(0, 10);
       const key = `${event.actor.login.toLowerCase()}|${event.repo.toLowerCase()}|${event.number}|${day}`;

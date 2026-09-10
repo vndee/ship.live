@@ -3,6 +3,7 @@ import { createHash, generateKeyPairSync, verify } from "node:crypto";
 import test from "node:test";
 import type { ActivityEvent } from "../shared/types.js";
 import { GitHubApp, type GitHubAppConfig } from "./github-app.js";
+import { FeedError } from "./github.js";
 
 const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const config: GitHubAppConfig = {
@@ -505,4 +506,107 @@ test("backfill bounds repository and review work and propagates persistence fail
     }),
     /Database unavailable/,
   );
+});
+
+test("access listings revalidate every read with ETags, reusing unchanged pages without spending rate limit", async () => {
+  const sent: Array<{ page: string; etag: string | null }> = [];
+  let version = "v1";
+  const repositoriesPath = "/user/installations/7/repositories";
+  const app = new GitHubApp(
+    config,
+    mockApi((url, init) => {
+      const headers = new Headers(init.headers);
+      const page = `${url.pathname}?${url.searchParams.get("page")}`;
+      const etag = `W/"${headers.get("authorization")}:${page}:${version}"`;
+      sent.push({ page, etag: headers.get("if-none-match") });
+      if (headers.get("if-none-match") === etag)
+        return new Response(null, { status: 304, headers: { etag } });
+      if (url.pathname === "/user/installations")
+        return json(
+          { total_count: 1, installations: [installation()] },
+          { etag },
+        );
+      const first = url.searchParams.get("page") === "1";
+      return json(
+        {
+          total_count: 2,
+          repositories: [
+            {
+              id: first ? 1 : 2,
+              full_name: `our-team/${version}-${first ? "a" : "b"}`,
+              private: true,
+            },
+          ],
+        },
+        {
+          etag,
+          ...(first
+            ? {
+                link: `<https://api.github.com${repositoriesPath}?per_page=100&page=2>; rel="next"`,
+              }
+            : {}),
+        },
+      );
+    }),
+  );
+  const expected = (tag: string) => [
+    { id: 1, name: `our-team/${tag}-a`, private: true },
+    { id: 2, name: `our-team/${tag}-b`, private: true },
+  ];
+  assert.deepEqual(await app.repositories("ghu_one", 7), expected("v1"));
+  assert.ok(sent.every((request) => request.etag === null));
+  sent.length = 0;
+  // Unchanged pages come back as free 304s, including the cached next-page link.
+  assert.deepEqual(await app.repositories("ghu_one", 7), expected("v1"));
+  assert.equal(sent.length, 3);
+  assert.ok(sent.every((request) => request.etag?.includes("Bearer ghu_one")));
+  sent.length = 0;
+  // Validators are never shared between users' tokens.
+  await app.repositories("ghu_two", 7);
+  assert.ok(sent.every((request) => request.etag === null));
+  // GitHub is still asked on every read, so access changes apply immediately.
+  version = "v2";
+  assert.deepEqual(await app.repositories("ghu_one", 7), expected("v2"));
+
+  const unexpected = new GitHubApp(
+    config,
+    mockApi(() => new Response(null, { status: 304 })),
+  );
+  await assert.rejects(unexpected.installations("ghu_one"), /unexpected/);
+});
+
+test("GitHub App rate limits report when to retry, including secondary limits", async () => {
+  const reset = Math.floor(Date.now() / 1000) + 600;
+  const cases: Array<[number, Record<string, string>, number]> = [
+    [
+      403,
+      { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) },
+      600,
+    ],
+    [429, { "retry-after": "120" }, 120],
+    // Secondary limits can arrive as 403s with remaining quota; this is not revoked access.
+    [403, { "retry-after": "90", "x-ratelimit-remaining": "4000" }, 90],
+  ];
+  for (const [status, headers, retryAfter] of cases) {
+    const app = new GitHubApp(
+      config,
+      mockApi(
+        () =>
+          new Response(JSON.stringify({ message: "limited" }), {
+            status,
+            headers: { "content-type": "application/json", ...headers },
+          }),
+      ),
+    );
+    await assert.rejects(
+      app.installations("ghu_one"),
+      (error: unknown) =>
+        error instanceof FeedError &&
+        error.status === 429 &&
+        Math.abs((error.retryAfter ?? 0) - retryAfter) <= 2 &&
+        new RegExp(`about ${Math.ceil(retryAfter / 60)} minutes`).test(
+          error.message,
+        ),
+    );
+  }
 });
