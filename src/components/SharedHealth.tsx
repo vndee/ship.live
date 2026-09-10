@@ -273,6 +273,7 @@ function SharedHealthView({ token }: { token: string }) {
                             name={probe.name}
                             history={probe.history}
                             daily={probe.latencyHistory}
+                            windows={probe.latency24h}
                             now={now}
                           />
                           <div

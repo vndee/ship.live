@@ -681,6 +681,7 @@ export function ServiceHealth({
                               name={probe.name}
                               history={probe.history}
                               daily={probe.latencyHistory}
+                              windows={probe.latency24h}
                               now={now}
                             />
                             <div

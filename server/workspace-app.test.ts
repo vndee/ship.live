@@ -1070,7 +1070,13 @@ test("installation connection proves user access and sync processes every select
     const batches: number[][] = [];
     provider.github.backfill = async (_installation, repositories) => {
       batches.push(repositories.map((repo) => repo.id));
-      return { synced: 0, notice: "Partial historical coverage." };
+      return {
+        synced: 0,
+        scanned: repositories.length,
+        resumed: 0,
+        failed: 0,
+        skipped: 0,
+      };
     };
     provider.visible.set(
       "token-a",
@@ -1408,7 +1414,13 @@ test("repeat syncs resume from each repository's last import and never move it b
       // Alpha imports; beta fails and keeps no watermark.
       if (repositories.some((repo) => repo.id === repoA.id))
         await options?.onSynced?.(repoA.id, imported);
-      return { synced: 0, notice: "Partial historical coverage." };
+      return {
+        synced: 0,
+        scanned: repositories.length,
+        resumed: 0,
+        failed: 0,
+        skipped: 0,
+      };
     };
     const sync = () =>
       request(`/api/workspaces/${workspace.id}/sync`, users[0], {
@@ -1519,7 +1531,7 @@ test("sync returns at once, runs once per workspace in the background, and recor
     provider.github.backfill = async () => {
       imports += 1;
       await gate;
-      return { synced: 3, notice: "Imported recent history." };
+      return { synced: 3, scanned: 1, resumed: 0, failed: 0, skipped: 0 };
     };
     const start = () =>
       request(`/api/workspaces/${workspace.id}/sync`, users[0], {
@@ -1543,7 +1555,11 @@ test("sync returns at once, runs once per workspace in the background, and recor
     const settled = await settledSync(request, workspace.id, users[0]);
     assert.deepEqual(
       [settled?.status, settled?.message, settled?.synced],
-      ["succeeded", "Imported recent history.", 3],
+      [
+        "succeeded",
+        "Synced 1 repository and found 3 recent records. History covers the last 30 days; pushes arrive through webhooks.",
+        3,
+      ],
     );
     assert.equal(imports, 1);
     // Failures are recorded for the client instead of timing out a request.

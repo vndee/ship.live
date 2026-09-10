@@ -2,7 +2,12 @@ import express, { type ErrorRequestHandler, type Express } from "express";
 import type { ActivityEvent, FeedResponse } from "../shared/types.js";
 import type { Workspace } from "../shared/workspaces.js";
 import { AuthError, type AuthService, type Principal } from "./auth.js";
-import type { GitHubApp, Repo } from "./github-app.js";
+import {
+  backfillNotice,
+  type BackfillResult,
+  type GitHubApp,
+  type Repo,
+} from "./github-app.js";
 import { FeedError } from "./github.js";
 import {
   normalizeAccessWebhook,
@@ -350,8 +355,13 @@ export function createWorkspaceApp({
     const initial = await viewer(principal, workspaceId);
     if (!initial.workspace.installationId)
       throw new AuthError(400, "Connect a GitHub installation before syncing.");
-    const notices = new Set<string>();
-    let synced = 0;
+    const totals: BackfillResult = {
+      synced: 0,
+      scanned: 0,
+      resumed: 0,
+      failed: 0,
+      skipped: 0,
+    };
     // The GitHub client bounds each batch to 20; all selected repositories get a turn.
     for (let offset = 0; offset < initial.repositories.length; offset += 20) {
       const current = await viewer(principal, workspaceId);
@@ -388,16 +398,11 @@ export function createWorkspaceApp({
             workspaces.markSynced(installation, repositoryId, syncedAt),
         },
       );
-      synced += result.synced;
-      notices.add(result.notice);
+      for (const key of Object.keys(totals) as (keyof BackfillResult)[])
+        totals[key] += result[key];
     }
     await viewer(principal, workspaceId);
-    return {
-      synced,
-      notice:
-        [...notices].join(" ") ||
-        "No repositories are currently visible to your GitHub account.",
-    };
+    return { synced: totals.synced, notice: backfillNotice(totals) };
   }
 
   app.use("/api", (request, response, next) => {

@@ -1,4 +1,4 @@
-import type { HealthCheck } from "../../shared/health";
+import type { HealthCheck, LatencyWindow } from "../../shared/health";
 export interface DailyLatency {
   date: string;
   avgLatencyMs: number;
@@ -16,11 +16,31 @@ export interface LatencyPoint {
   checks: number;
 }
 export const UTC_DAY_MS = 86400000;
+/** The 24-hour view shows 96 windows of 15 minutes. */
+export const LATENCY_WINDOW_MS = 15 * 60_000;
+export const LATENCY_WINDOWS = 96;
+export type LatencyMode = "recent" | "day" | "daily";
+export const PLOT_LEFT = 60;
+export const PLOT_RIGHT_MARGIN = 40;
+
+/** Horizontal position in a plot drawn at its measured pixel width. */
+export function plotX(
+  time: number,
+  start: number,
+  end: number,
+  width: number,
+): number {
+  const right = width - PLOT_RIGHT_MARGIN;
+  if (start === end) return (PLOT_LEFT + right) / 2;
+  return PLOT_LEFT + ((time - start) / (end - start)) * (right - PLOT_LEFT);
+}
+
 export function buildLatencySeries(
   history: HealthCheck[],
   daily: DailyLatency[],
-  mode: "recent" | "daily",
+  mode: LatencyMode,
   now: number,
+  windows: LatencyWindow[] = [],
 ): (LatencyPoint | null)[] {
   if (mode === "recent")
     return history
@@ -41,6 +61,31 @@ export function buildLatencySeries(
       }))
       .sort((a, b) => a.time - b.time)
       .slice(-120);
+  if (mode === "day") {
+    // Windows without checks stay missing, like days in the 30-day view.
+    const end = Math.floor(now / LATENCY_WINDOW_MS) * LATENCY_WINDOW_MS;
+    const byStart = new Map(
+      windows.map((bucket) => [Date.parse(bucket.start), bucket]),
+    );
+    return Array.from({ length: LATENCY_WINDOWS }, (_, index) => {
+      const time = end - (LATENCY_WINDOWS - 1 - index) * LATENCY_WINDOW_MS;
+      const bucket = byStart.get(time);
+      if (
+        !bucket ||
+        bucket.checks <= 0 ||
+        !Number.isFinite(bucket.avgLatencyMs) ||
+        bucket.avgLatencyMs < 0
+      )
+        return null;
+      return {
+        time,
+        latencyMs: bucket.avgLatencyMs,
+        minLatencyMs: bucket.minLatencyMs,
+        maxLatencyMs: bucket.maxLatencyMs,
+        checks: bucket.checks,
+      };
+    });
+  }
   const today = Math.floor(now / UTC_DAY_MS) * UTC_DAY_MS;
   const byDay = new Map(daily.map((day) => [day.date, day]));
   return Array.from({ length: 30 }, (_, index) => {

@@ -385,9 +385,30 @@ test("latency buckets include failures, survive rule edits and retain 30 days", 
       checks: 2,
     },
   ]);
+  // Both checks land in aligned 15-minute windows of the 24-hour view.
+  assert.equal(
+    state.latency24h.reduce((sum, window) => sum + window.checks, 0),
+    2,
+  );
+  assert.deepEqual(
+    [
+      Math.min(...state.latency24h.map((window) => window.minLatencyMs)),
+      Math.max(...state.latency24h.map((window) => window.maxLatencyMs)),
+    ],
+    [42, 50],
+  );
+  assert.ok(
+    state.latency24h.every(
+      (window) => Date.parse(window.start) % (15 * 60_000) === 0,
+    ),
+  );
   await events.pool.query(
     "UPDATE ship_live_health_checks SET checked_at=now()-interval '29 days' WHERE probe_id=$1",
     [probe.id],
+  );
+  assert.deepEqual(
+    (await health.snapshot(workspace)).services[0].probes[0].latency24h,
+    [],
   );
   await events.pool.query(
     "INSERT INTO ship_live_health_checks(probe_id,checked_at,result,state) VALUES($1,now()-interval '31 days',$2,'healthy')",
