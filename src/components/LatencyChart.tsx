@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useId,
   useLayoutEffect,
   useMemo,
@@ -78,6 +79,20 @@ export function LatencyChart({
   const activePoint =
     activeIndex === null ? null : (series[activeIndex] ?? null);
   const activeX = activePoint ? x(activePoint.time) : null;
+  const tooltipActive = activePoint !== null;
+
+  useEffect(() => {
+    if (!tooltipActive) return;
+    const ownerDocument = svgRef.current?.ownerDocument;
+    if (!ownerDocument) return;
+    const dismissOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setActiveIndex(null);
+      selectionSource.current = null;
+    };
+    ownerDocument.addEventListener("keydown", dismissOnEscape);
+    return () => ownerDocument.removeEventListener("keydown", dismissOnEscape);
+  }, [tooltipActive]);
 
   useLayoutEffect(() => {
     setActiveIndex(null);
