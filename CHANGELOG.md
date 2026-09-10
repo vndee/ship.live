@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Read four repositories at a time during **Sync**, and report the whole sync in one summary (repositories synced, how many resumed, records found, and any failures) instead of repeating a notice for every batch of 20.
+- Draw latency charts at the card's full width and add a **24 hours** view of 15-minute averages between the recent-check and 30-day views.
+
 - Recover the private feed automatically after a transient failure (network, timeout, or server error). Cached private data stays hidden until a verified snapshot arrives, but polling and the live stream keep retrying instead of waiting for a manual retry. A timed-out request now explains itself instead of showing "signal timed out".
 - Run **Sync** and the import after connecting an installation in the background. The request returns at once, the outcome is stored per workspace, and the dashboard reports success or failure when the import finishes instead of timing out after three minutes.
 - Award 2 XP for each commit a branch push adds to the repository, using GitHub's distinct-commit marker so a commit is credited once. Merges into branches other than the repository default now earn 15 XP; default-branch merges keep 30 XP.

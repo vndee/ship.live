@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, verify } from "node:crypto";
 import test from "node:test";
 import type { ActivityEvent } from "../shared/types.js";
-import { GitHubApp, type GitHubAppConfig } from "./github-app.js";
+import {
+  backfillNotice,
+  GitHubApp,
+  type GitHubAppConfig,
+} from "./github-app.js";
 import { FeedError } from "./github.js";
 
 const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -458,8 +462,8 @@ test("recent backfill keeps webhook identities, real contributors and repository
     events.find((item) => item.type === "review")?.actor.login,
     "reviewer",
   );
-  assert.match(result.notice, /partial/i);
-  assert.match(result.notice, /30 days/i);
+  assert.deepEqual([result.scanned, result.failed, result.skipped], [1, 0, 0]);
+  assert.match(backfillNotice(result), /last 30 days/);
   assert.ok(
     requested.every((path) => !/(contents|commits|git\/|events)/.test(path)),
   );
@@ -499,7 +503,7 @@ test("backfill bounds repository and review work and propagates persistence fail
   const result = await app.backfill(7, repos, async () => {});
   assert.equal(repositoryPaths.size, 20);
   assert.equal(reviews, 600);
-  assert.match(result.notice, /20 of 21/);
+  assert.deepEqual([result.scanned, result.skipped], [20, 1]);
   await assert.rejects(
     app.backfill(7, [repos[0]], async () => {
       throw new Error("Database unavailable");
@@ -647,9 +651,8 @@ test("backfill resumes each repository after its last import and reports stored 
   assert.ok(stored.some((id) => id.startsWith("our-team/known:pr:2:")));
   assert.ok(!stored.some((id) => id.startsWith("our-team/known:pr:1:")));
   // A failed repository keeps its previous watermark.
-  assert.deepEqual(synced, [1, 2]);
-  assert.match(result.notice, /1 resumed from their previous sync/);
-  assert.match(result.notice, /1 repositories could not be imported/);
+  assert.deepEqual(synced.sort(), [1, 2]);
+  assert.deepEqual([result.scanned, result.resumed, result.failed], [2, 1, 1]);
 });
 
 test("backfill watermarks use the caller's start time", async () => {
@@ -675,4 +678,67 @@ test("backfill watermarks use the caller's start time", async () => {
     },
   );
   assert.deepEqual(synced, [startedAt]);
+});
+
+test("backfill reads four repositories at a time and a whole sync gets one summary", async () => {
+  let active = 0;
+  let peak = 0;
+  const app = new GitHubApp(
+    config,
+    mockApi(async (url) => {
+      if (url.pathname === "/app/installations/7") return json(installation());
+      if (url.pathname.endsWith("/access_tokens")) return installationToken();
+      if (url.pathname.endsWith("/pulls")) {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active -= 1;
+      }
+      return json([]);
+    }),
+  );
+  const repos = Array.from({ length: 8 }, (_, index) => ({
+    id: index + 1,
+    name: `our-team/repo${index}`,
+    private: false,
+  }));
+  const result = await app.backfill(7, repos, async () => {});
+  assert.equal(peak, 4);
+  assert.deepEqual(result, {
+    synced: 0,
+    scanned: 8,
+    resumed: 0,
+    failed: 0,
+    skipped: 0,
+  });
+  assert.equal(
+    backfillNotice({
+      synced: 5,
+      scanned: 169,
+      resumed: 169,
+      failed: 0,
+      skipped: 0,
+    }),
+    "Synced 169 repositories (169 resumed from their last sync) and found 5 recent records. History covers the last 30 days; pushes arrive through webhooks.",
+  );
+  assert.match(
+    backfillNotice({
+      synced: 1,
+      scanned: 1,
+      resumed: 0,
+      failed: 2,
+      skipped: 0,
+    }),
+    /^Synced 1 repository and found 1 recent record\. 2 repositories could not be imported/,
+  );
+  assert.equal(
+    backfillNotice({
+      synced: 0,
+      scanned: 0,
+      resumed: 0,
+      failed: 0,
+      skipped: 0,
+    }),
+    "No repositories are currently visible to your GitHub account.",
+  );
 });

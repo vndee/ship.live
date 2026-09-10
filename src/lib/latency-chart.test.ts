@@ -6,10 +6,12 @@ import {
   nearestLatencyPoint,
   moveLatencyPoint,
   clampTooltipLeft,
+  plotX,
+  LATENCY_WINDOW_MS,
   type LatencyPoint,
   type DailyLatency,
 } from "./latency-chart.ts";
-import type { HealthCheck } from "../../shared/health";
+import type { HealthCheck, LatencyWindow } from "../../shared/health";
 const day = (date: string, latency = 100): DailyLatency => ({
   date,
   avgLatencyMs: latency,
@@ -178,4 +180,46 @@ test("recent tooltip points preserve success, HTTP failures, and timeout metadat
       [false, null],
     ],
   );
+});
+
+test("24-hour latency uses aligned 15-minute windows and keeps windows without checks as gaps", () => {
+  const now = Date.parse("2026-09-10T12:07:00Z");
+  const end = Math.floor(now / LATENCY_WINDOW_MS) * LATENCY_WINDOW_MS;
+  const bucket = (start: string, latency: number): LatencyWindow => ({
+    start,
+    avgLatencyMs: latency,
+    minLatencyMs: latency - 10,
+    maxLatencyMs: latency + 10,
+    checks: 15,
+  });
+  const series = buildLatencySeries([], [], "day", now, [
+    bucket("2026-09-10T12:00:00.000Z", 300),
+    // PostgreSQL serializes timestamptz with an explicit offset.
+    bucket("2026-09-10T11:30:00+00:00", 200),
+    // Older than the 24-hour range.
+    bucket("2026-09-09T11:45:00Z", 999),
+  ]);
+  assert.equal(series.length, 96);
+  assert.equal(series[0], null);
+  assert.deepEqual(series[95], {
+    time: end,
+    latencyMs: 300,
+    minLatencyMs: 290,
+    maxLatencyMs: 310,
+    checks: 15,
+  });
+  assert.equal(series[93]?.latencyMs, 200);
+  assert.equal(series[94], null);
+  assert.deepEqual(
+    latencySegments(series).map((segment) => segment.length),
+    [1, 1],
+  );
+});
+
+test("the plot spans its measured width between fixed axis margins", () => {
+  assert.equal(plotX(0, 0, 100, 1200), 60);
+  assert.equal(plotX(100, 0, 100, 1200), 1160);
+  assert.equal(plotX(50, 0, 100, 640), 330);
+  // A lone observation sits in the middle of the plot.
+  assert.equal(plotX(5, 5, 5, 1000), 510);
 });

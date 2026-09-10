@@ -45,6 +45,9 @@ const READ_PERMISSIONS = {
 const DAY = 86_400_000;
 // Resumed syncs re-read this much before the last import, for late GitHub writes.
 const SYNC_OVERLAP = 15 * 60_000;
+// Repositories read at once per sync: faster without extra requests, and well
+// under GitHub's secondary limits on concurrent calls.
+const BACKFILL_CONCURRENCY = 4;
 
 function positiveId(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
@@ -84,6 +87,38 @@ function repository(value: unknown): Repo {
   )
     malformed();
   return { id: repo.id, name: fullName, private: repo.private };
+}
+
+export interface BackfillResult {
+  /** Activity records read in the sync window; storage deduplicates them. */
+  synced: number;
+  /** Repositories whose history was read and stored. */
+  scanned: number;
+  /** Scanned repositories that resumed from their previous sync. */
+  resumed: number;
+  failed: number;
+  /** Repositories beyond the per-call limit. */
+  skipped: number;
+}
+
+/** One summary for a whole sync, however many batches it took. */
+export function backfillNotice(totals: BackfillResult): string {
+  const repositories = (count: number) =>
+    `${count} ${count === 1 ? "repository" : "repositories"}`;
+  if (!totals.scanned && !totals.failed && !totals.skipped)
+    return "No repositories are currently visible to your GitHub account.";
+  return [
+    `Synced ${repositories(totals.scanned)}${totals.resumed ? ` (${totals.resumed} resumed from their last sync)` : ""} and found ${totals.synced} recent ${totals.synced === 1 ? "record" : "records"}.`,
+    totals.failed
+      ? `${repositories(totals.failed)} could not be imported; check access and sync again.`
+      : "",
+    totals.skipped
+      ? `${repositories(totals.skipped)} were not scanned; sync again to import them.`
+      : "",
+    "History covers the last 30 days; pushes arrive through webhooks.",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 export class GitHubApp {
@@ -597,7 +632,7 @@ export class GitHubApp {
       /** Sync start in epoch milliseconds; pass the database clock so replicas agree. */
       startedAt?: number;
     } = {},
-  ): Promise<{ synced: number; notice: string }> {
+  ): Promise<BackfillResult> {
     const unique = new Map<number, Repo>();
     for (const input of repositories) {
       const repo = repository(input);
@@ -606,9 +641,13 @@ export class GitHubApp {
       unique.set(repo.id, repo);
     }
     const selected = [...unique.values()].slice(0, 20);
-    let synced = 0;
-    let failed = 0;
-    let resumed = 0;
+    const result: BackfillResult = {
+      synced: 0,
+      scanned: 0,
+      resumed: 0,
+      failed: 0,
+      skipped: unique.size - selected.length,
+    };
     if (selected.length) {
       const token = await this.installationToken(
         installationId,
@@ -616,32 +655,50 @@ export class GitHubApp {
       );
       const now = options.startedAt ?? Date.now();
       const window = now - 30 * DAY;
-      for (const repo of selected) {
-        const last = options.since?.get(repo.id);
-        // A previously imported repository only needs what changed since then.
-        const cutoff =
-          last === undefined
-            ? window
-            : Math.max(window, Math.min(last, now) - SYNC_OVERLAP);
-        if (cutoff > window) resumed += 1;
-        let events: ActivityEvent[];
-        try {
-          events = await this.recentRepository(repo, token, cutoff, now);
-        } catch (error) {
-          if (!(error instanceof FeedError)) throw error;
-          failed += 1;
-          continue;
+      const queue = [...selected];
+      const fatal: unknown[] = [];
+      const worker = async () => {
+        for (
+          let repo = queue.shift();
+          repo && !fatal.length;
+          repo = queue.shift()
+        ) {
+          const last = options.since?.get(repo.id);
+          // A previously imported repository only needs what changed since then.
+          const cutoff =
+            last === undefined
+              ? window
+              : Math.max(window, Math.min(last, now) - SYNC_OVERLAP);
+          let events: ActivityEvent[];
+          try {
+            events = await this.recentRepository(repo, token, cutoff, now);
+          } catch (error) {
+            if (error instanceof FeedError) result.failed += 1;
+            else fatal.push(error);
+            continue;
+          }
+          try {
+            // Persistence failures stop the sync and reach the caller.
+            if (events.length) await onEvents(events);
+            // Only a stored import advances the watermark; failures retry the same range.
+            await options.onSynced?.(repo.id, now);
+          } catch (error) {
+            fatal.push(error);
+            continue;
+          }
+          result.synced += events.length;
+          result.scanned += 1;
+          if (cutoff > window) result.resumed += 1;
         }
-        // Persistence failures must reach the caller, rather than looking like successful sync.
-        if (events.length) await onEvents(events);
-        // Only a stored import advances the watermark; failures retry the same range.
-        await options.onSynced?.(repo.id, now);
-        synced += events.length;
-      }
+      };
+      await Promise.all(
+        Array.from(
+          { length: Math.min(BACKFILL_CONCURRENCY, selected.length) },
+          worker,
+        ),
+      );
+      if (fatal.length) throw fatal[0];
     }
-    return {
-      synced,
-      notice: `Partial history for the last 30 days: scanned ${selected.length} of ${unique.size} repositories, up to 100 pull requests, 100 issues and 100 releases per repository, plus the first 100 reviews for up to 30 recently updated pull requests. Records without known actors or timestamps are omitted. Push activity starts with future webhooks.${resumed ? ` ${resumed} resumed from their previous sync, importing only newer changes.` : ""}${failed ? ` ${failed} repositories could not be imported; check access and re-sync.` : ""}${selected.length < unique.size ? " Select the remaining repositories and re-sync to import them." : ""}`,
-    };
+    return result;
   }
 }

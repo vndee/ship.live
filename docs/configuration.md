@@ -103,7 +103,7 @@ Disconnecting GitHub removes your stored user grant and workspace associations; 
 
 ## History and live updates
 
-Synchronization imports a bounded part of the last 30 days: up to 100 PRs, 100 closed issues, and 100 releases per repository, plus the first 100 reviews for up to 30 recently updated PRs. The server processes selected repositories in batches of at most 20. The UI reports partial history and failures. Push activity begins with received webhooks; synchronization is not a complete archive.
+Synchronization imports a bounded part of the last 30 days: up to 100 PRs, 100 closed issues, and 100 releases per repository, plus the first 100 reviews for up to 30 recently updated PRs. The server processes selected repositories in batches of at most 20 and reads four repositories at a time within a batch. When the sync finishes, the UI shows one summary for all batches: repositories synced, how many resumed from their last sync, records found, and any repositories that failed or were not scanned. Push activity begins with received webhooks; synchronization is not a complete archive.
 
 Signatures are checked against the raw webhook body before parsing. Supported events are normalized and reconciled by event identity, with delivery deduplication in PostgreSQL. Stored history does not expire automatically; the API/UI expose up to 2,000 latest events per workspace. Upstream limits and permission changes can affect metrics.
 
