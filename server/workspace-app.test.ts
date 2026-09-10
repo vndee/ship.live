@@ -95,7 +95,7 @@ function upstream() {
   ]);
   const accessible = new Map<string, InstallationInfo[]>([
     ["token-a", [team]],
-    ["token-b", [team]],
+    ["token-b", [team, otherTeam]],
   ]);
   const calls: string[] = [];
   const codes = new Map<string, string>();
