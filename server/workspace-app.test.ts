@@ -1332,6 +1332,75 @@ test("team health UI routes enforce access and CSRF, validate public probes and 
     const created = await mutate("/services", "POST", { name: "Platform API" });
     assert.equal(created.status, 201);
     const service = (await created.json()) as { id: string };
+    const another = await (
+      await mutate("/services", "POST", { name: "Worker" })
+    ).json();
+    assert.equal(
+      (
+        await mutate("/services/order", "PUT", {
+          serviceIds: [another.id, service.id],
+        })
+      ).status,
+      204,
+    );
+    assert.deepEqual(
+      (await (await request(base)).json()).services.map(
+        (item: { id: string }) => item.id,
+      ),
+      [another.id, service.id],
+    );
+    assert.equal(
+      (
+        await mutate("/services/order", "PUT", {
+          serviceIds: [service.id, service.id],
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await request(`${base}/services/order`, users[0], {
+          method: "PUT",
+          headers: { "x-csrf-token": "invalid" },
+          body: JSON.stringify({ serviceIds: [service.id, another.id] }),
+        })
+      ).status,
+      403,
+    );
+    const otherWorkspace = await connect(workspaces, users[0], 2);
+    const otherBase = `/api/workspaces/${otherWorkspace.id}/health`;
+    const foreign = await (
+      await request(`${otherBase}/services`, users[0], {
+        method: "POST",
+        body: JSON.stringify({ name: "Foreign worker" }),
+      })
+    ).json();
+    const firstOrder = (await (await request(base)).json()).services.map(
+      (item: { id: string }) => item.id,
+    );
+    const secondOrder = (await (await request(otherBase)).json()).services.map(
+      (item: { id: string }) => item.id,
+    );
+    assert.equal(
+      (
+        await mutate("/services/order", "PUT", {
+          serviceIds: [another.id, foreign.id],
+        })
+      ).status,
+      400,
+    );
+    assert.deepEqual(
+      (await (await request(base)).json()).services.map(
+        (item: { id: string }) => item.id,
+      ),
+      firstOrder,
+    );
+    assert.deepEqual(
+      (await (await request(otherBase)).json()).services.map(
+        (item: { id: string }) => item.id,
+      ),
+      secondOrder,
+    );
     const invalid = await mutate(`/services/${service.id}/probes`, "POST", {
       name: "Private",
       url: "http://127.0.0.1/health",
