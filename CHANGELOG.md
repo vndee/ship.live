@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Show the Orbit Pulse mark beside the ship.live wordmark in the app and on shared pages, with ".live" muted as in the brand wordmark. Light mode uses the app icon, since the mark's paths are never recolored.
+
 - Show each service's 24-hour uptime and latency (mean ± standard deviation) in its row, with an info tooltip explaining both; Pulse's Service health cards use the same figures. The signed-out home page gains a read-only Service Health demo, the demo workspace is called Acme Team, and the Service Health footnote is gone.
 
 - Simplify the navigation to **Pulse** (formerly Dashboard) and **Service Health**. The Live feed opens from the activity list, milestones from the milestone card, and the contributor table from the leaderboard's **All contributors**; each leads back to Pulse. Repositories become a section of the Overview scene (formerly Team pulse), most active this week first, and choosing one opens its activity in the Live feed. Personal journals list their sources under the leaderboard.

@@ -16,6 +16,7 @@ import { ActivityCelebration } from "./ActivityCelebration";
 import { useActivityCelebration } from "../hooks/useActivityCelebration";
 import type { ActivityEvent } from "../../shared/types";
 import { ThemeToggle } from "./ThemeToggle";
+import { BrandMark } from "./BrandMark";
 import { EngineeringWall } from "./EngineeringWall";
 import { ContributorProfile } from "./ContributorProfile";
 import { Modal } from "./Modal";
@@ -64,7 +65,10 @@ export function SharedDashboard() {
     <div className={`app-shell shared-dashboard ${wall ? "wall-mode" : ""}`}>
       <header className="app-header">
         <a className="brand" href="/">
-          ship<span>.</span>live
+          <BrandMark />
+          <span className="brand-name">
+            ship<span>.live</span>
+          </span>
         </a>
         <span className="shared-workspace">
           {feed.data?.organization || "Shared Pulse"}

@@ -184,14 +184,31 @@ p {
   border-bottom: 1px solid var(--line);
 }
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   font-size: 29px;
   font-weight: 500;
   letter-spacing: -1.9px;
   line-height: 1;
   white-space: nowrap;
 }
-.brand span {
+/* Like the Orbit Pulse wordmark, ".live" is muted. */
+.brand-name span {
   color: var(--muted);
+}
+.brand-mark {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+}
+/* The mark's light path needs the app icon's dark tile on light grounds. */
+.brand-mark-light,
+[data-theme="light"] .brand-mark-dark {
+  display: none;
+}
+[data-theme="light"] .brand-mark-light {
+  display: block;
 }
 .organization-switch {
   display: flex;

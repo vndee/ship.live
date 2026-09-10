@@ -69,6 +69,7 @@ import { PublicHealthList } from "./components/PublicHealthList";
 import { ContributorProfile } from "./components/ContributorProfile";
 import { RepositoryList } from "./components/RepositoryList";
 import { ThemeToggle } from "./components/ThemeToggle";
+import { BrandMark } from "./components/BrandMark";
 
 type Page = "dashboard" | "feed" | "team" | "milestones" | "health";
 type Kind = ActivityEvent["type"];
@@ -678,7 +679,10 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             setPage("dashboard");
           }}
         >
-          ship<span>.</span>live
+          <BrandMark />
+          <span className="brand-name">
+            ship<span>.live</span>
+          </span>
         </a>
         <button className="organization-switch" onClick={openConnect}>
           {!feed.demo && <LockKeyhole size={12} />}

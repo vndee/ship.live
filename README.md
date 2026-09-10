@@ -1,10 +1,12 @@
 # ship.live
 
-**Great work. Shared momentum.**
+<p align="center">
+  <img src="public/branding/orbit-pulse-cover.png" alt="ship.live — Great work. Shared momentum." width="800">
+</p>
 
-A private shipping journal for individual builders and a live GitHub activity wall for engineering teams. Connect the repositories you choose, capture the story behind your work, and see what you have shipped.
+A private shipping journal for individual builders and a live **Pulse** for engineering teams. Connect the repositories you choose, capture the story behind your work, watch what the team ships as it happens, and keep an eye on the services you run.
 
-![ship.live live team XP leaderboard and activity feed](docs/images/leaderboard.jpg)
+![Pulse Overview with today's momentum, the seven-day chart, the next team milestone, the most active repositories, and live activity](docs/images/pulse-overview.jpg)
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
@@ -16,21 +18,35 @@ A private shipping journal for individual builders and a live GitHub activity wa
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
-## For your work, and your team's
+## Pulse
+
+The team's live view of what is shipping, beside a feed of every visible contribution.
+
+- **Overview.** Today’s momentum, a seven-day activity chart, the next team milestone, and the repositories that moved most this week. Choose a repository to open its activity.
+- **Review Radar and Release Pulse.** Open pull requests ranked by what needs attention — failing CI, ready to merge, checks running, awaiting review — and the latest GitHub deployment for each environment.
+- **Leaderboard and profiles.** Weekly XP with animated rank changes. Open anyone’s profile for their rank, 30-day totals, a 12-week activity heatmap, daily XP, and recent activity.
+- **Arranged your way.** Tabs stay where you put them. Turn on **Auto-slide** for a wall display, and hide or reorder tabs for each workspace. Failures raise an attention banner you can dismiss, and recoveries produce a brief team moment.
+- **Live celebrations.** New contributions highlight in the feed and announce earned XP; merges and releases launch confetti, with a bigger burst for milestones. Try a fictional event with **Try live activity** in the demo.
+
+## Service Health
+
+Checks for the public HTTP APIs your team depends on, run from the server even when nobody has the page open.
+
+- **Precise probes.** Accepted status ranges, latency limits, and exact JSON conditions, with encrypted secret headers.
+- **Uptime and latency at a glance.** Each service shows its 24-hour uptime and latency mean ± standard deviation, with recent, 24-hour, and 30-day latency charts for every probe.
+- **Shareable status.** Arrange services for the team and share a read-only status page through an expiring link.
+
+## Also included
 
 - **Personal journal.** Keep private notes about launches, experiments, decisions, and progress. Add GitHub activity from selected repositories when you are ready.
 - **Google or GitHub sign-in.** Supabase Auth handles identity. A separate GitHub App connection grants repository access, including for someone who signed in with Google.
-- **Live team leaderboard.** Follow weekly XP, animated rank changes, contribution bars, and live XP gains beside the activity feed.
-- **Team momentum.** See today’s contributions, a seven-day activity chart, and the nearest weekly milestone at a glance.
-- **Pulse.** One view for the team: Overview (today's momentum, the 7-day chart, the next milestone, and the most active repositories), Review Radar, GitHub deployment status, Service Health, and the XP leaderboard, with optional auto-slide. Current failures raise an attention banner and recoveries produce a brief team moment.
-- **Live celebrations.** New contributions briefly highlight in the feed and announce earned XP. Merges and releases launch confetti, with a bigger burst for milestones. Motion and celebration controls keep the dashboard comfortable; try a fictional event with **Try live activity** in demo mode.
 - **Live activity and replay.** Follow merges, reviews, releases, pushes, issues, and journal entries. Filter by repository, type, time, or text; replay the last 24 hours, 7 days, or 30 days.
 - **Shared recognition.** Weekly contributor spotlights and team milestones celebrate outcomes and collaboration. New commits earn a small per-commit credit; personal notes earn no XP.
-- **Expiring dashboard links.** Share a read-only team dashboard without requiring sign-in. Choose from one hour through a 100-year no-expiration option; rotate or revoke your link at any time.
+- **Expiring share links.** Share a read-only Pulse or Service Health page without requiring sign-in. Choose from one hour through a 100-year no-expiration option; rotate or revoke your link at any time.
 - **Private by default.** Personal notes belong to their owner. GitHub events are filtered to repositories each viewer could access through the GitHub App at their last sync.
 - **Self-hosted.** React, Express, and shared PostgreSQL, with bundled fonts and no analytics. One Node.js service serves the frontend and API.
 
-Keyboard navigation, reduced-motion preferences, small screens, and fullscreen displays are supported. Screenshots use fictional demo data. Demo activity is never copied into a real workspace.
+Keyboard navigation, reduced-motion preferences, small screens, and fullscreen displays are supported. Screenshots use fictional demo data from the signed-out demo, which also includes a read-only Service Health page. Demo activity is never copied into a real workspace.
 
 ## Quick start
 
@@ -101,13 +117,15 @@ The database suite creates and removes isolated test databases. Use a dedicated 
 
 - [Architecture](docs/architecture.md) — identity, repository permissions, storage, and realtime.
 - [Configuration](docs/configuration.md) — OAuth setup, GitHub App setup, migration, and hosting.
+- [Service Health](docs/service-health.md) — probes, JSON conditions, figures, and sharing.
+- [Branding](public/branding/README.md) — the Orbit Pulse mark, palette, and usage.
 - [Contributing](CONTRIBUTING.md) — development conventions and checks.
 - [Security](SECURITY.md) — protection boundaries and private vulnerability reporting.
 - [Changelog](CHANGELOG.md) — changes and upgrade notes.
 
 ## Current scope
 
-Personal journals remain private. Team members can explicitly share a read-only dashboard through an expiring link. Each member manages one link per workspace; rotating it immediately invalidates their previous link. Sharing pins the creator’s current repository IDs and rechecks their live GitHub permissions on reads. Notes are never shared. Newly accessible repositories require a new link. Public profiles and journal publishing are not implemented.
+Personal journals remain private. Team members can explicitly share a read-only Pulse or Service Health page through an expiring link. Each member manages one link of each kind per workspace; rotating it immediately invalidates their previous link. Sharing pins the creator’s current repository IDs and rechecks their live GitHub permissions on reads. Notes are never shared. Newly accessible repositories require a new link. Public profiles and journal publishing are not implemented.
 
 GitHub connection imports a bounded recent activity history, not a complete archive. Subsequent signed webhooks supply live activity plus current pull-request, check, workflow, commit-status, and deployment signals; push history begins with those webhooks. CI/CD providers appear through the states they publish back to GitHub, so ship.live requires no provider-specific integration. The UI displays at most 2,000 activity events per workspace and bounds each wall signal category in snapshots. Stored events and accepted delivery IDs do not expire automatically, so operators must plan retention and backups. Request counters and live-connection limits remain per process.
 

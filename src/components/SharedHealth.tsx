@@ -13,6 +13,7 @@ import { useSharedHealth } from "../hooks/useSharedHealth";
 import { PublicHealthList, publicProbeStatus } from "./PublicHealthList";
 import "./service-health.css";
 import { ThemeToggle } from "./ThemeToggle";
+import { BrandMark } from "./BrandMark";
 
 function SharedHealthView({ token }: { token: string }) {
   const feed = useSharedHealth(token);
@@ -75,7 +76,10 @@ function SharedHealthView({ token }: { token: string }) {
     >
       <header className="app-header">
         <a className="brand" href="/">
-          ship<span>.</span>live
+          <BrandMark />
+          <span className="brand-name">
+            ship<span>.live</span>
+          </span>
         </a>
         <span className="shared-workspace">
           {feed.data?.organization || "Shared service health"}
