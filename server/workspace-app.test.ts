@@ -31,6 +31,13 @@ const team: InstallationInfo = {
   kind: "Organization",
   suspended: false,
 };
+const otherTeam: InstallationInfo = {
+  id: 71,
+  accountId: 701,
+  account: "other-team",
+  kind: "Organization",
+  suspended: false,
+};
 const repoA: Repo = { id: 101, name: "team/alpha", private: true };
 const repoB: Repo = { id: 102, name: "team/beta", private: true };
 
@@ -289,6 +296,7 @@ async function connect(
   workspaces: WorkspaceStore,
   user: AuthUser,
   index: number,
+  installation: InstallationInfo = team,
 ) {
   await workspaces.saveGrant(
     user.id,
@@ -300,7 +308,7 @@ async function connect(
   );
   return workspaces.connectInstallation(
     user,
-    team,
+    installation,
     index,
     (await workspaces.connection(user.id))!.generation,
   );
@@ -1367,7 +1375,8 @@ test("team health UI routes enforce access and CSRF, validate public probes and 
       ).status,
       403,
     );
-    const otherWorkspace = await connect(workspaces, users[0], 2);
+    const otherWorkspace = await connect(workspaces, users[0], 2, otherTeam);
+    assert.notEqual(otherWorkspace.id, workspace.id);
     const otherBase = `/api/workspaces/${otherWorkspace.id}/health`;
     const foreign = await (
       await request(`${otherBase}/services`, users[0], {
