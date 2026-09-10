@@ -1,3 +1,20 @@
+import {
+  DndContext,
+  PointerSensor,
+  TouchSensor,
+  KeyboardSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { SortableHealthService } from "./SortableHealthService";
+import { moveService } from "../lib/service-order";
 import { LatencyChart } from "./LatencyChart";
 import { ServiceStatusStrip } from "./ServiceStatusStrip";
 import { createHealthRefresh } from "../lib/health-refresh";
@@ -76,6 +93,20 @@ export function ServiceHealth({
   const [notice, setNotice] = useState("");
   const [changes, setChanges] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const mutationPending = useRef(false);
+  const [dragging, setDragging] = useState(false);
+  const beforeDrag = useRef<HealthSnapshot["services"] | null>(null);
+  const queuedSnapshot = useRef<HealthSnapshot | null>(null);
+  const snapshotVersion = useRef(0);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 200, tolerance: 8 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
   const [now, setNow] = useState(Date.now());
   const [editor, setEditor] = useState<Editor | null>(null);
   const [expandedServiceId, setExpandedServiceId] = useState<string | null>(
@@ -96,6 +127,11 @@ export function ServiceHealth({
   useEffect(() => {
     const scope = new AbortController();
     lifecycle.current = scope;
+    mutationPending.current = false;
+    beforeDrag.current = null;
+    queuedSnapshot.current = null;
+    setBusy(false);
+    setDragging(false);
     let previous: Map<string, HealthStatus> | null = null;
     let stream: EventSource | null = null;
     setAccessRevoked(false);
@@ -114,11 +150,16 @@ export function ServiceHealth({
       setActionError("");
       setLoadError("");
       setBusy(false);
+      mutationPending.current = false;
+      beforeDrag.current = null;
+      queuedSnapshot.current = null;
+      setDragging(false);
       setAccessRevoked(true);
     };
     revokeAccess.current = revoke;
     const load = async (refreshSignal: AbortSignal) => {
       if (scope.signal.aborted) return;
+      const version = snapshotVersion.current;
       const request = new AbortController();
       const abort = () => request.abort();
       scope.signal.addEventListener("abort", abort, { once: true });
@@ -139,6 +180,11 @@ export function ServiceHealth({
           );
         const next: HealthSnapshot = await response.json();
         if (scope.signal.aborted) return;
+        // A GET begun before a successful reorder must not undo its new order.
+        if (version !== snapshotVersion.current) {
+          refresh.current();
+          return;
+        }
         const nextStates = new Map<string, HealthStatus>();
         const announcements: string[] = [];
         for (const service of next.services)
@@ -159,7 +205,8 @@ export function ServiceHealth({
           }
         previous = nextStates;
         if (announcements.length) setChanges(announcements);
-        setSnapshot(next);
+        if (beforeDrag.current) queuedSnapshot.current = next;
+        else setSnapshot(next);
         setLoadError("");
       } catch {
         if (!scope.signal.aborted)
@@ -209,7 +256,14 @@ export function ServiceHealth({
     message = "Saved",
   ) {
     const scope = lifecycle.current;
-    if (!scope || scope.signal.aborted || busy) return false;
+    if (
+      !scope ||
+      scope.signal.aborted ||
+      mutationPending.current ||
+      (beforeDrag.current && path !== "/services/order")
+    )
+      return false;
+    mutationPending.current = true;
     setBusy(true);
     setActionError("");
     setNotice("");
@@ -254,8 +308,59 @@ export function ServiceHealth({
     } finally {
       clearTimeout(timer);
       scope.signal.removeEventListener("abort", abort);
-      if (!scope.signal.aborted) setBusy(false);
+      if (!scope.signal.aborted) {
+        mutationPending.current = false;
+        setBusy(false);
+      }
     }
+  }
+  function finishDrag(order?: HealthSnapshot["services"]) {
+    const queued = queuedSnapshot.current;
+    beforeDrag.current = null;
+    queuedSnapshot.current = null;
+    setDragging(false);
+    if (!queued) return;
+    if (!order) {
+      setSnapshot(queued);
+      return;
+    }
+    // Keep fresh probe data and membership without replaying a pre-save order.
+    const services = new Map(
+      queued.services.map((service) => [service.id, service]),
+    );
+    const ordered = order.flatMap((service) => {
+      const fresh = services.get(service.id);
+      services.delete(service.id);
+      return fresh ? [fresh] : [];
+    });
+    setSnapshot({ ...queued, services: [...ordered, ...services.values()] });
+  }
+  async function endDrag({ active, over }: DragEndEvent) {
+    const before = beforeDrag.current;
+    const scope = lifecycle.current;
+    if (!before || !scope || scope.signal.aborted) return;
+    const reordered = moveService(
+      before,
+      String(active.id),
+      String(over?.id ?? active.id),
+    );
+    if (reordered === before) {
+      finishDrag();
+      return;
+    }
+    setSnapshot((current) => current && { ...current, services: reordered });
+    const saved = await mutate(
+      "/services/order",
+      "PUT",
+      { serviceIds: reordered.map((service) => service.id) },
+      "Service order saved",
+    );
+    if (scope.signal.aborted) return;
+    if (saved) snapshotVersion.current++;
+    else setSnapshot((current) => current && { ...current, services: before });
+    finishDrag(saved ? reordered : undefined);
+    // Also reconcile failures: a timeout may have committed, or membership changed.
+    refresh.current();
   }
   if (accessRevoked)
     return (
@@ -364,7 +469,7 @@ export function ServiceHealth({
             />
           </label>
           <div className="health-actions health-service-form-actions">
-            <button className="button secondary" disabled={busy}>
+            <button className="button secondary" disabled={busy || dragging}>
               Save service
             </button>
             <button
@@ -391,274 +496,340 @@ export function ServiceHealth({
           </p>
         </div>
       )}
-      {snapshot?.services.map((service) => {
-        const expanded = expandedServiceId === service.id;
-        const status = aggregate(
-          service.probes.map((probe) => currentStatus(probe, now)),
-        );
-        return (
-          <article
-            className={`health-service ${expanded ? "is-expanded" : ""}`}
-            key={service.id}
-          >
-            <div className="health-service-heading">
-              <button
-                className="health-service-toggle"
-                type="button"
-                aria-expanded={expanded}
-                onClick={() =>
-                  setExpandedServiceId((current) =>
-                    current === service.id ? null : service.id,
-                  )
-                }
+      <DndContext
+        sensors={busy ? [] : sensors}
+        collisionDetection={closestCenter}
+        onDragStart={() => {
+          if (mutationPending.current || !snapshot || beforeDrag.current)
+            return;
+          beforeDrag.current = snapshot.services;
+          setDragging(true);
+        }}
+        onDragEnd={(event) => void endDrag(event)}
+        onDragCancel={() => finishDrag()}
+        accessibility={{
+          screenReaderInstructions: {
+            draggable:
+              "To reorder a service, press Space, use the arrow keys to move, then press Space to save. Press Escape to cancel.",
+          },
+          announcements: {
+            onDragStart: ({ active }) =>
+              `Picked up ${active.data.current?.name ?? "service"}.`,
+            onDragOver: ({ active, over }) =>
+              over
+                ? `${active.data.current?.name ?? "Service"} is over ${over.data.current?.name ?? "another service"}.`
+                : undefined,
+            onDragEnd: ({ active, over }) =>
+              over && active.id !== over.id
+                ? `Dropped ${active.data.current?.name ?? "service"}. Saving service order.`
+                : "Service order unchanged.",
+            onDragCancel: () =>
+              "Reordering cancelled. Service order unchanged.",
+          },
+        }}
+      >
+        <SortableContext
+          items={snapshot?.services.map((service) => service.id) ?? []}
+          strategy={verticalListSortingStrategy}
+        >
+          {snapshot?.services.map((service) => {
+            const expanded = expandedServiceId === service.id;
+            const status = aggregate(
+              service.probes.map((probe) => currentStatus(probe, now)),
+            );
+            return (
+              <SortableHealthService
+                key={service.id}
+                id={service.id}
+                name={service.name}
+                expanded={expanded}
+                disabled={busy || (snapshot?.services.length ?? 0) < 2}
               >
-                <ChevronDown aria-hidden="true" size={16} />
-                <span className="health-service-name">{service.name}</span>
-                <Badge status={status} />
-                <span className="health-probe-count">
-                  {service.probes.length}{" "}
-                  {service.probes.length === 1 ? "probe" : "probes"}
-                </span>
-                <ServiceStatusStrip probes={service.probes} />
-              </button>
-              {expanded && (
-                <div className="health-actions health-service-actions">
-                  <button
-                    className="text-button"
-                    onClick={() => {
-                      setEditor({ serviceId: service.id });
-                      setServiceEditor(null);
-                    }}
-                  >
-                    Add probe
-                  </button>
-                  <button
-                    className="text-button"
-                    onClick={() => {
-                      setServiceEditor({ id: service.id, name: service.name });
-                      setEditor(null);
-                    }}
-                  >
-                    Rename
-                  </button>
-                  <button
-                    className="text-button"
-                    onClick={() =>
-                      setDeleting({
-                        path: `/services/${service.id}`,
-                        label: `${service.name} and all its probes`,
-                      })
-                    }
-                  >
-                    Delete service
-                  </button>
-                </div>
-              )}
-            </div>
-            {expanded && (
-              <div className="health-service-details">
-                {!service.probes.length && (
-                  <p className="health-empty">
-                    No probes yet. Add a public endpoint to check this service.
-                  </p>
-                )}
-                {service.probes.map((probe) => (
-                  <div className="health-probe" key={probe.id}>
-                    <div className="health-probe-top">
-                      <strong>{probe.name}</strong>
-                      <Badge status={currentStatus(probe, now)} />
+                {(handle) => (
+                  <>
+                    <div className="health-service-heading">
+                      <div className="health-service-summary">
+                        {handle}
+                        <button
+                          className="health-service-toggle"
+                          type="button"
+                          aria-expanded={expanded}
+                          onClick={() =>
+                            setExpandedServiceId((current) =>
+                              current === service.id ? null : service.id,
+                            )
+                          }
+                        >
+                          <ChevronDown aria-hidden="true" size={16} />
+                          <span className="health-service-name">
+                            {service.name}
+                          </span>
+                          <Badge status={status} />
+                          <span className="health-probe-count">
+                            {service.probes.length}{" "}
+                            {service.probes.length === 1 ? "probe" : "probes"}
+                          </span>
+                          <ServiceStatusStrip probes={service.probes} />
+                        </button>
+                      </div>
+                      {expanded && (
+                        <div className="health-actions health-service-actions">
+                          <button
+                            className="text-button"
+                            onClick={() => {
+                              setEditor({ serviceId: service.id });
+                              setServiceEditor(null);
+                            }}
+                          >
+                            Add probe
+                          </button>
+                          <button
+                            className="text-button"
+                            onClick={() => {
+                              setServiceEditor({
+                                id: service.id,
+                                name: service.name,
+                              });
+                              setEditor(null);
+                            }}
+                          >
+                            Rename
+                          </button>
+                          <button
+                            className="text-button"
+                            onClick={() =>
+                              setDeleting({
+                                path: `/services/${service.id}`,
+                                label: `${service.name} and all its probes`,
+                              })
+                            }
+                          >
+                            Delete service
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <div className="health-metrics">
-                      <span>
-                        Latency{" "}
-                        <strong>
-                          {probe.lastCheck
-                            ? `${Math.round(probe.lastCheck.latencyMs)} ms`
-                            : "—"}
-                        </strong>
-                      </span>
-                      <span>
-                        Last check{" "}
-                        <strong>
-                          {probe.lastCheck ? (
-                            <time
-                              dateTime={probe.lastCheck.checkedAt}
-                              title={new Date(
-                                probe.lastCheck.checkedAt,
-                              ).toLocaleString()}
+                    {expanded && (
+                      <div className="health-service-details">
+                        {!service.probes.length && (
+                          <p className="health-empty">
+                            No probes yet. Add a public endpoint to check this
+                            service.
+                          </p>
+                        )}
+                        {service.probes.map((probe) => (
+                          <div className="health-probe" key={probe.id}>
+                            <div className="health-probe-top">
+                              <strong>{probe.name}</strong>
+                              <Badge status={currentStatus(probe, now)} />
+                            </div>
+                            <div className="health-metrics">
+                              <span>
+                                Latency{" "}
+                                <strong>
+                                  {probe.lastCheck
+                                    ? `${Math.round(probe.lastCheck.latencyMs)} ms`
+                                    : "—"}
+                                </strong>
+                              </span>
+                              <span>
+                                Last check{" "}
+                                <strong>
+                                  {probe.lastCheck ? (
+                                    <time
+                                      dateTime={probe.lastCheck.checkedAt}
+                                      title={new Date(
+                                        probe.lastCheck.checkedAt,
+                                      ).toLocaleString()}
+                                    >
+                                      {relative(probe.lastCheck.checkedAt, now)}
+                                    </time>
+                                  ) : (
+                                    "Never"
+                                  )}
+                                </strong>
+                              </span>
+                              <span>
+                                Check success · 24h{" "}
+                                <strong>
+                                  {probe.successRate24h === null
+                                    ? "—"
+                                    : `${probe.successRate24h.toFixed(1)}%`}{" "}
+                                  <small>({probe.checks24h} checks)</small>
+                                </strong>
+                              </span>
+                            </div>
+                            {probe.lastCheck && (
+                              <p className="health-result">
+                                {probe.lastCheck.statusCode === null
+                                  ? "No HTTP response"
+                                  : `HTTP ${probe.lastCheck.statusCode}`}
+                                {probe.lastCheck.reason
+                                  ? ` · ${probe.lastCheck.reason}`
+                                  : ""}
+                              </p>
+                            )}
+                            {currentStatus(probe, now) === "unknown" && (
+                              <p className="health-result">
+                                {probe.lastCheck
+                                  ? "Check overdue. Waiting for a fresh result."
+                                  : "Waiting for the first check."}
+                              </p>
+                            )}
+                            <LatencyChart
+                              name={probe.name}
+                              history={probe.history}
+                              daily={probe.latencyHistory}
+                              now={now}
+                            />
+                            <div
+                              className="health-history"
+                              role="img"
+                              aria-label={`Recent checks for ${probe.name}, oldest to newest: ${
+                                probe.history
+                                  .slice(0, 40)
+                                  .reverse()
+                                  .map((check) =>
+                                    check.ok ? "passed" : "failed",
+                                  )
+                                  .join(", ") || "no checks"
+                              }`}
                             >
-                              {relative(probe.lastCheck.checkedAt, now)}
-                            </time>
-                          ) : (
-                            "Never"
-                          )}
-                        </strong>
-                      </span>
-                      <span>
-                        Check success · 24h{" "}
-                        <strong>
-                          {probe.successRate24h === null
-                            ? "—"
-                            : `${probe.successRate24h.toFixed(1)}%`}{" "}
-                          <small>({probe.checks24h} checks)</small>
-                        </strong>
-                      </span>
-                    </div>
-                    {probe.lastCheck && (
-                      <p className="health-result">
-                        {probe.lastCheck.statusCode === null
-                          ? "No HTTP response"
-                          : `HTTP ${probe.lastCheck.statusCode}`}
-                        {probe.lastCheck.reason
-                          ? ` · ${probe.lastCheck.reason}`
-                          : ""}
-                      </p>
-                    )}
-                    {currentStatus(probe, now) === "unknown" && (
-                      <p className="health-result">
-                        {probe.lastCheck
-                          ? "Check overdue. Waiting for a fresh result."
-                          : "Waiting for the first check."}
-                      </p>
-                    )}
-                    <LatencyChart
-                      name={probe.name}
-                      history={probe.history}
-                      daily={probe.latencyHistory}
-                      now={now}
-                    />
-                    <div
-                      className="health-history"
-                      role="img"
-                      aria-label={`Recent checks for ${probe.name}, oldest to newest: ${
-                        probe.history
-                          .slice(0, 40)
-                          .reverse()
-                          .map((check) => (check.ok ? "passed" : "failed"))
-                          .join(", ") || "no checks"
-                      }`}
-                    >
-                      {probe.history
-                        .slice(0, 40)
-                        .reverse()
-                        .map((check, index) => (
-                          <span
-                            key={`${check.checkedAt}-${index}`}
-                            className={check.ok ? "health-pass" : "health-fail"}
-                            title={`${new Date(check.checkedAt).toLocaleString()} · ${check.ok ? "Passed" : "Failed"} · ${Math.round(check.latencyMs)} ms`}
-                          />
+                              {probe.history
+                                .slice(0, 40)
+                                .reverse()
+                                .map((check, index) => (
+                                  <span
+                                    key={`${check.checkedAt}-${index}`}
+                                    className={
+                                      check.ok ? "health-pass" : "health-fail"
+                                    }
+                                    title={`${new Date(check.checkedAt).toLocaleString()} · ${check.ok ? "Passed" : "Failed"} · ${Math.round(check.latencyMs)} ms`}
+                                  />
+                                ))}
+                              {!probe.history.length && (
+                                <span className="health-no-history">
+                                  No recorded checks
+                                </span>
+                              )}
+                            </div>
+                            <details className="health-timeline">
+                              <summary>State-change timeline</summary>
+                              <ul>
+                                {probe.history
+                                  .slice()
+                                  .reverse()
+                                  .filter(
+                                    (check, index, history) =>
+                                      index === 0 ||
+                                      check.status !==
+                                        history[index - 1].status,
+                                  )
+                                  .slice(-8)
+                                  .reverse()
+                                  .map((check, index) => (
+                                    <li key={`${check.checkedAt}-${index}`}>
+                                      <Badge status={check.status} />
+                                      <time dateTime={check.checkedAt}>
+                                        {new Date(
+                                          check.checkedAt,
+                                        ).toLocaleString()}
+                                      </time>
+                                    </li>
+                                  ))}
+                              </ul>
+                              {!probe.history.length && (
+                                <p>No state changes recorded.</p>
+                              )}
+                            </details>
+                            <div className="health-actions health-probe-actions">
+                              <button
+                                className="text-button"
+                                disabled={busy || dragging || !probe.enabled}
+                                onClick={() =>
+                                  void mutate(
+                                    `/probes/${probe.id}/check`,
+                                    "POST",
+                                    undefined,
+                                    "Check queued. The result will appear when it finishes.",
+                                  )
+                                }
+                              >
+                                Check now
+                              </button>
+                              <button
+                                className="text-button"
+                                disabled={busy || dragging}
+                                onClick={() =>
+                                  void mutate(
+                                    `/probes/${probe.id}`,
+                                    "PUT",
+                                    {
+                                      ...definition(probe),
+                                      enabled: !probe.enabled,
+                                    },
+                                    probe.enabled
+                                      ? "Probe paused"
+                                      : "Probe resumed",
+                                  )
+                                }
+                              >
+                                {probe.enabled ? "Pause" : "Resume"}
+                              </button>
+                              <button
+                                className="text-button"
+                                onClick={() => {
+                                  setEditor({ serviceId: service.id, probe });
+                                  setServiceEditor(null);
+                                }}
+                              >
+                                Edit probe
+                              </button>
+                              <button
+                                className="text-button"
+                                onClick={() =>
+                                  setDeleting({
+                                    path: `/probes/${probe.id}`,
+                                    label: probe.name,
+                                  })
+                                }
+                              >
+                                Delete probe
+                              </button>
+                            </div>
+                          </div>
                         ))}
-                      {!probe.history.length && (
-                        <span className="health-no-history">
-                          No recorded checks
-                        </span>
-                      )}
-                    </div>
-                    <details className="health-timeline">
-                      <summary>State-change timeline</summary>
-                      <ul>
-                        {probe.history
-                          .slice()
-                          .reverse()
-                          .filter(
-                            (check, index, history) =>
-                              index === 0 ||
-                              check.status !== history[index - 1].status,
-                          )
-                          .slice(-8)
-                          .reverse()
-                          .map((check, index) => (
-                            <li key={`${check.checkedAt}-${index}`}>
-                              <Badge status={check.status} />
-                              <time dateTime={check.checkedAt}>
-                                {new Date(check.checkedAt).toLocaleString()}
-                              </time>
-                            </li>
-                          ))}
-                      </ul>
-                      {!probe.history.length && (
-                        <p>No state changes recorded.</p>
-                      )}
-                    </details>
-                    <div className="health-actions health-probe-actions">
-                      <button
-                        className="text-button"
-                        disabled={busy || !probe.enabled}
-                        onClick={() =>
-                          void mutate(
-                            `/probes/${probe.id}/check`,
-                            "POST",
-                            undefined,
-                            "Check queued. The result will appear when it finishes.",
-                          )
-                        }
-                      >
-                        Check now
-                      </button>
-                      <button
-                        className="text-button"
-                        disabled={busy}
-                        onClick={() =>
-                          void mutate(
-                            `/probes/${probe.id}`,
-                            "PUT",
-                            { ...definition(probe), enabled: !probe.enabled },
-                            probe.enabled ? "Probe paused" : "Probe resumed",
-                          )
-                        }
-                      >
-                        {probe.enabled ? "Pause" : "Resume"}
-                      </button>
-                      <button
-                        className="text-button"
-                        onClick={() => {
-                          setEditor({ serviceId: service.id, probe });
-                          setServiceEditor(null);
-                        }}
-                      >
-                        Edit probe
-                      </button>
-                      <button
-                        className="text-button"
-                        onClick={() =>
-                          setDeleting({
-                            path: `/probes/${probe.id}`,
-                            label: probe.name,
-                          })
-                        }
-                      >
-                        Delete probe
-                      </button>
-                    </div>
-                  </div>
-                ))}
-                {editor?.serviceId === service.id && (
-                  <ProbeEditor
-                    key={editor.probe?.id || "new"}
-                    probe={editor.probe}
-                    busy={busy}
-                    onCancel={() => setEditor(null)}
-                    onSave={async (input) => {
-                      const ok = await mutate(
-                        editor.probe
-                          ? `/probes/${editor.probe.id}`
-                          : `/services/${service.id}/probes`,
-                        editor.probe ? "PUT" : "POST",
-                        input,
-                        "Probe saved",
-                      );
-                      if (ok)
-                        setEditor((current) =>
-                          current === editor ? null : current,
-                        );
-                    }}
-                  />
+                        {editor?.serviceId === service.id && (
+                          <ProbeEditor
+                            key={editor.probe?.id || "new"}
+                            probe={editor.probe}
+                            busy={busy || dragging}
+                            onCancel={() => setEditor(null)}
+                            onSave={async (input) => {
+                              const ok = await mutate(
+                                editor.probe
+                                  ? `/probes/${editor.probe.id}`
+                                  : `/services/${service.id}/probes`,
+                                editor.probe ? "PUT" : "POST",
+                                input,
+                                "Probe saved",
+                              );
+                              if (ok)
+                                setEditor((current) =>
+                                  current === editor ? null : current,
+                                );
+                            }}
+                          />
+                        )}
+                      </div>
+                    )}
+                  </>
                 )}
-              </div>
-            )}
-          </article>
-        );
-      })}
+              </SortableHealthService>
+            );
+          })}
+        </SortableContext>
+      </DndContext>
       {deleting && (
         <div className="health-confirm" role="alert">
           <p>
@@ -667,7 +838,7 @@ export function ServiceHealth({
           <div className="health-actions">
             <button
               className="button secondary"
-              disabled={busy}
+              disabled={busy || dragging}
               onClick={async () => {
                 if (await mutate(deleting.path, "DELETE", undefined, "Deleted"))
                   setDeleting((current) =>
