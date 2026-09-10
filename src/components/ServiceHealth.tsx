@@ -899,8 +899,12 @@ function ProbeEditor({
             <input
               value={input.jsonPath}
               onChange={(e) => update("jsonPath", e.target.value)}
-              placeholder="status.ready"
+              placeholder="health.ready"
             />
+            <small>
+              Examples: health.ready, items.0.status,
+              {' components[?(@.name=="Embeddings")].status'}
+            </small>
           </label>
           <label>
             Expected JSON value

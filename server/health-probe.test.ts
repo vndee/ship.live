@@ -246,3 +246,55 @@ test("HTTPS retains the hostname and default certificate verification with a pin
     transport.mock.restore();
   }
 });
+
+test("filters status components by a stable primitive property", async () => {
+  const resolver = mock.method(dns, "lookup", async () => [
+    { address: "93.184.216.34", family: 4 },
+  ]);
+  let payload = JSON.stringify({
+    components: [
+      { name: "Chat Completions", status: "degraded" },
+      { name: "Embeddings", status: "operational" },
+    ],
+  });
+  const transport = mock.method(
+    http,
+    "request",
+    (_url: URL, _options: any, callback: any) => {
+      const request = new EventEmitter() as any;
+      request.destroy = () => request;
+      request.end = () => {
+        const response = new PassThrough() as any;
+        response.statusCode = 200;
+        callback(response);
+        response.end(payload);
+      };
+      return request;
+    },
+  );
+  try {
+    const probe = validateProbe(
+      definition({
+        url: "http://example.com",
+        jsonPath: 'components[?(@.name=="Embeddings")].status',
+        jsonExpected: "operational",
+      }),
+    );
+    assert.equal((await runProbe(probe, {})).ok, true);
+    for (const jsonPath of [
+      'components[?(@.name!="Embeddings")].status',
+      "components[?(@.name==process.exit())].status",
+      "components[?(@.__proto__==null)].status",
+    ])
+      assert.throws(() =>
+        validateProbe(definition({ jsonPath, jsonExpected: "operational" })),
+      );
+    payload = '{"components":[]}';
+    const result = await runProbe(probe, {});
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "JSON condition did not match.");
+  } finally {
+    resolver.mock.restore();
+    transport.mock.restore();
+  }
+});
