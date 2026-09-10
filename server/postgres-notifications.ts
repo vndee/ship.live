@@ -1,4 +1,5 @@
 import { Client, type Notification } from "pg";
+import { log } from "./logger.js";
 import type { ActivityListener } from "./store.js";
 
 export const ACTIVITY_CHANNEL = "ship_live_event_changes";
@@ -101,11 +102,9 @@ export class PostgresNotifications {
       try {
         void Promise.resolve(
           listener(reference.organization, reference.eventId),
-        ).catch(() =>
-          console.error("An activity notification subscriber failed."),
-        );
+        ).catch(() => log.error("An activity notification subscriber failed."));
       } catch {
-        console.error("An activity notification subscriber failed.");
+        log.error("An activity notification subscriber failed.");
       }
     }
   }

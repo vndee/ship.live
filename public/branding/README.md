@@ -9,6 +9,8 @@ the moment work ships and becomes visible.
 - `orbit-pulse-mark.svg` / `.png` — transparent standalone brand mark
 - `orbit-pulse-wordmark.svg` / `.png` — horizontal logo for dark surfaces
 - `orbit-pulse-app-icon.svg` / `.png` — 1024 px rounded app icon
+- `orbit-pulse-app-icon-192.png` / `-512.png` — the app icon at the sizes the
+  web app manifest requires
 - `orbit-pulse-cover.svg` / `.png` — 1600 × 900 social and repository cover
 
 Use SVG whenever the target supports it. Use the PNG exports for social cards,
@@ -16,15 +18,15 @@ app stores, and tools that do not accept SVG.
 
 ## Palette
 
-| Role | Color |
-| --- | --- |
+| Role             | Color     |
+| ---------------- | --------- |
 | Night background | `#090c10` |
-| Primary surface | `#11171c` |
-| Primary text | `#edf0e9` |
-| Orbit | `#a0aeab` |
-| Inner orbit | `#52625f` |
-| Release pulse | `#e3ba8a` |
-| Live success | `#95d8bd` |
+| Primary surface  | `#11171c` |
+| Primary text     | `#edf0e9` |
+| Orbit            | `#a0aeab` |
+| Inner orbit      | `#52625f` |
+| Release pulse    | `#e3ba8a` |
+| Live success     | `#95d8bd` |
 
 ## Usage
 

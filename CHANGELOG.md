@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Give every page its own URL: `/` for Pulse, `/health`, `/feed`, `/team`, and `/milestones`. The Live feed keeps its repository, activity type, search, and period in the URL, and `?person=<login>` opens a contributor profile, so any view can be bookmarked, opened in a new tab, or sent to a teammate with access. Back closes a profile and returns to the previous page. The main navigation and back links are real links.
+- Share request limits across replicas. Each client's per-minute count lives in PostgreSQL, and responses carry `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset`. If the database is unreachable, each process falls back to its own counts.
+- Add a retention job. Accepted webhook delivery IDs expire after 30 days (`DELIVERY_RETENTION_DAYS`); GitHub activity and wall signals expire only once `EVENT_RETENTION_DAYS` is set, to 31 days or more. Open pull requests and journal notes are never removed. It runs hourly on one replica at a time, in batches.
+- Write structured logs, JSON lines in production (`LOG_FORMAT`, `LOG_LEVEL`), with an `X-Request-Id` on every response and a log line for each failed request. Set `METRICS_TOKEN` to serve Prometheus metrics at `/metrics`.
+- Send the production security headers with API responses too, and add `Permissions-Policy`, `Cross-Origin-Opener-Policy`, and `manifest-src`.
+- Make ship.live installable as a web app, with a manifest, 192 and 512 px icons, and shortcuts to Service Health and the Live feed. No service worker caches private data.
+- Run the browser tests in CI, and split `App.tsx` into page components.
+- Upgrade note: migration 014 adds the request-limit table and age indexes on events, deliveries, and wall signals. On a large event table, building the index delays startup and briefly blocks webhook writes.
+
 - Show the Orbit Pulse mark beside the ship.live wordmark in the app and on shared pages, with ".live" muted as in the brand wordmark. Light mode uses the app icon, since the mark's paths are never recolored.
 
 - Show each service's 24-hour uptime and latency (mean ± standard deviation) in its row, with an info tooltip explaining both; Pulse's Service health cards use the same figures. The signed-out home page gains a read-only Service Health demo, the demo workspace is called Acme Team, and the Service Health footnote is gone.

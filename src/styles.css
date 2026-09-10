@@ -232,17 +232,19 @@ p {
   gap: 25px;
   margin-left: auto;
 }
-.app-header nav button {
+.app-header nav a {
+  display: flex;
+  align-items: center;
   position: relative;
   font-size: 13px;
   padding: 0;
   color: var(--muted);
   white-space: nowrap;
 }
-.app-header nav button[aria-current="page"] {
+.app-header nav a[aria-current="page"] {
   color: var(--text);
 }
-.app-header nav button[aria-current="page"]::after {
+.app-header nav a[aria-current="page"]::after {
   content: "";
   position: absolute;
   bottom: -1px;
@@ -1434,7 +1436,7 @@ h1 {
     justify-content: space-between;
     gap: 12px;
   }
-  .app-header nav button {
+  .app-header nav a {
     font-size: 12px;
   }
   .header-tools {
@@ -1645,7 +1647,7 @@ h1 {
   .app-header nav {
     gap: 8px;
   }
-  .app-header nav button {
+  .app-header nav a {
     font-size: 12px;
   }
   .view-metrics strong {

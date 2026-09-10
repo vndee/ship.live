@@ -1,5 +1,7 @@
 import { HealthStore } from "./health-store.js";
 import { runProbe } from "./health-probe.js";
+import { log } from "./logger.js";
+import { healthChecks } from "./metrics.js";
 
 /** Durable leases coordinate replicas; HTTP work never holds a database lock. */
 export function startHealthWorker(health: HealthStore): () => Promise<void> {
@@ -19,11 +21,13 @@ export function startHealthWorker(health: HealthStore): () => Promise<void> {
       const claims = await health.claim(4 - active.size);
       for (const claim of claims) {
         const task = runProbe(claim.config, claim.headers)
-          .then((result) => health.complete(claim, result))
-          .then(() => {})
+          .then(async (result) => {
+            await health.complete(claim, result);
+            healthChecks.inc({ status: result.ok ? "ok" : "failed" });
+          })
           .catch(() => {
             // Lease expiry retries failed database writes without logging probe secrets.
-            console.error(
+            log.error(
               "A health check could not be recorded; it will be retried.",
             );
           })
@@ -31,7 +35,7 @@ export function startHealthWorker(health: HealthStore): () => Promise<void> {
         active.add(task);
       }
     } catch {
-      console.error("Health scheduler unavailable; retrying shortly.");
+      log.error("Health scheduler unavailable; retrying shortly.");
     } finally {
       busy = false;
     }

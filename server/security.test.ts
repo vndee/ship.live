@@ -1,7 +1,30 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import test from "node:test";
-import { verifyAccessKey, verifyWebhookSignature } from "./security.js";
+import {
+  SECURITY_HEADERS,
+  verifyAccessKey,
+  verifyWebhookSignature,
+} from "./security.js";
+
+test("production headers forbid inline scripts, framing, and unused browser features", () => {
+  const policy = Object.fromEntries(
+    SECURITY_HEADERS["Content-Security-Policy"]
+      .split("; ")
+      .map((directive) => [
+        directive.split(" ")[0],
+        directive.split(" ").slice(1),
+      ]),
+  );
+  assert.deepEqual(policy["script-src"], ["'self'"]);
+  assert.deepEqual(policy["frame-ancestors"], ["'none'"]);
+  assert.deepEqual(policy["manifest-src"], ["'self'"]);
+  assert.deepEqual(policy["object-src"], ["'none'"]);
+  assert.equal(SECURITY_HEADERS["X-Frame-Options"], "DENY");
+  assert.match(SECURITY_HEADERS["Permissions-Policy"], /camera=\(\)/);
+  assert.match(SECURITY_HEADERS["Permissions-Policy"], /fullscreen=\(self\)/);
+  assert.equal(SECURITY_HEADERS["Cross-Origin-Opener-Policy"], "same-origin");
+});
 
 test("HMAC verification matches the GitHub documented test vector", () => {
   const signature =
