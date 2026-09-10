@@ -543,7 +543,8 @@ export function ServiceHealth({
                 id={service.id}
                 name={service.name}
                 expanded={expanded}
-                disabled={busy || (snapshot?.services.length ?? 0) < 2}
+                disabled={busy}
+                unavailable={(snapshot?.services.length ?? 0) < 2}
               >
                 {(handle) => (
                   <>

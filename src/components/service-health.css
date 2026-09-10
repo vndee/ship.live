@@ -554,7 +554,11 @@
   cursor: grab;
   touch-action: none;
 }
-.health-drag-handle:hover {
+.health-drag-handle[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.health-drag-handle:hover:not([aria-disabled="true"]) {
   background: var(--background);
   color: var(--text);
 }

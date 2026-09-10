@@ -8,12 +8,14 @@ export function SortableHealthService({
   name,
   expanded,
   disabled,
+  unavailable,
   children,
 }: {
   id: string;
   name: string;
   expanded: boolean;
   disabled: boolean;
+  unavailable: boolean;
   children: (handle: ReactNode) => ReactNode;
 }) {
   const {
@@ -25,7 +27,7 @@ export function SortableHealthService({
     transition,
     isDragging,
     isOver,
-  } = useSortable({ id, disabled, data: { name } });
+  } = useSortable({ id, disabled: disabled || unavailable, data: { name } });
   return (
     <article
       ref={setNodeRef}
@@ -39,7 +41,10 @@ export function SortableHealthService({
           className="health-drag-handle"
           {...attributes}
           {...listeners}
-          disabled={disabled}
+          // A pending save disables sorting but must retain keyboard focus.
+          // Native disabling is reserved for a list with no reorder target.
+          disabled={unavailable}
+          aria-disabled={disabled || unavailable}
           aria-label={`Reorder ${name}`}
         >
           <GripVertical aria-hidden="true" size={16} />
