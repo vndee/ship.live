@@ -24,6 +24,7 @@ The team's live view of what is shipping, beside a feed of every visible contrib
 
 - **Overview.** Today’s momentum, a seven-day activity chart, the next team milestone, and the repositories that moved most this week. Choose a repository to open its activity.
 - **Review Radar and Release Pulse.** Open pull requests ranked by what needs attention — failing CI, ready to merge, checks running, awaiting review — and the latest GitHub deployment for each environment.
+- **Delivery.** Deployments per week, change failure rate, time to restore, and time to merge for one environment over 30 days, each compared with the 30 days before, with eight weeks of deployments by week. The figures describe the team, never a person.
 - **Leaderboard and profiles.** Weekly XP with animated rank changes. Open anyone’s profile for their rank, 30-day totals, a 12-week activity heatmap, daily XP, and recent activity.
 - **Arranged your way.** Tabs stay where you put them. Turn on **Auto-slide** for a wall display, and hide or reorder tabs for each workspace. Failures raise an attention banner you can dismiss, and recoveries produce a brief team moment.
 - **Live celebrations.** New contributions highlight in the feed and announce earned XP; merges and releases launch confetti, with a bigger burst for milestones. Try a fictional event with **Try live activity** in the demo.
@@ -34,8 +35,9 @@ Checks for the public HTTP APIs your team depends on, run from the server even w
 
 - **Precise probes.** Accepted status ranges, latency limits, and exact JSON conditions, with encrypted secret headers.
 - **Uptime and latency at a glance.** Each service shows its 24-hour uptime and latency mean ± standard deviation, with recent, 24-hour, and 30-day latency charts for every probe.
+- **90-day uptime and maintenance.** A status-page strip of daily uptime for each service, on the dashboard and the share page. Schedule maintenance for one service or the whole workspace; failing checks inside a window change no status, open no incident, and are left out of uptime.
 - **Shareable status.** Arrange services for the team and share a read-only status page through an expiring link.
-- **Incident history.** Each time a probe goes down, an incident opens and later resolves. Services list their incidents from the last 30 days, and webhooks announce them.
+- **Incident history.** Each time a probe goes down, an incident opens and later resolves. Services list open incidents and those from the last 30 days, and webhooks announce them.
 
 ## Webhooks
 
@@ -50,7 +52,7 @@ See the [webhook guide](docs/webhooks.md).
 
 ## Also included
 
-- **Personal journal.** Keep private notes about launches, experiments, decisions, and progress. Add GitHub activity from selected repositories when you are ready.
+- **Personal journal.** Keep private notes about launches, experiments, decisions, and progress. Add GitHub activity from selected repositories when you are ready. Group notes with #tags, filter the feed by tag, and export any view as Markdown.
 - **Google or GitHub sign-in.** Supabase Auth handles identity. A separate GitHub App connection grants repository access, including for someone who signed in with Google.
 - **Live activity and replay.** Follow merges, reviews, releases, pushes, issues, and journal entries. Filter by repository, type, time, or text; replay the last 24 hours, 7 days, or 30 days.
 - **Shared recognition.** Weekly contributor spotlights and team milestones celebrate outcomes and collaboration. New commits earn a small per-commit credit; personal notes earn no XP.

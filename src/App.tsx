@@ -18,6 +18,7 @@ import {
   getWindowEvents,
 } from "./lib/feedView";
 import { ago, PERIOD_NAMES, personName } from "./lib/format";
+import { journalMarkdown, journalTags } from "./lib/journal";
 import { PAGE_TITLES, type Period, type Route } from "./lib/routes";
 import { createDemoHealth, demoSignals } from "./lib/demo-wall";
 import { useFeed, type FeedController } from "./hooks/useFeed";
@@ -92,6 +93,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   const repo = onFeed ? (route.repo ?? "") : "";
   const query = onFeed ? (route.query ?? "") : "";
   const period: Period = onFeed ? (route.period ?? "24h") : "24h";
+  const tag = onFeed ? (route.tag ?? "") : "";
   const [replay, setReplay] = useState<{ end: number; percent: number } | null>(
     null,
   );
@@ -173,12 +175,12 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   );
   const visible = useMemo(
     () =>
-      filterEvents(windowEvents, { repo, kind, query }).filter(
+      filterEvents(windowEvents, { repo, kind, query, tag }).filter(
         (e) => Date.parse(e.occurredAt) <= cutoff,
       ),
-    [windowEvents, repo, kind, query, cutoff],
+    [windowEvents, repo, kind, query, tag, cutoff],
   );
-  const activeFilters = Boolean(query || kind || repo);
+  const activeFilters = Boolean(query || kind || repo || tag);
   const selected = visible.find((e) => e.id === selectedId);
   const shownEvents =
     page === "pulse" && selected
@@ -207,10 +209,34 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   }
   function clearFilters() {
     if (onFeed)
-      updateFeed({ kind: undefined, repo: undefined, query: undefined });
+      updateFeed({
+        kind: undefined,
+        repo: undefined,
+        query: undefined,
+        tag: undefined,
+      });
     else setPulseKind("");
     setSelectedId(null);
   }
+  /** Downloads the Live feed's current view as Markdown. */
+  function exportMarkdown() {
+    const markdown = journalMarkdown(visible, {
+      title: personal ? "Ship journal" : `${feed.organization} activity`,
+      generatedAt: new Date().toISOString(),
+    });
+    const url = URL.createObjectURL(
+      new Blob([markdown], { type: "text/markdown;charset=utf-8" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${personal ? "ship-journal" : "activity"}-${new Date().toISOString().slice(0, 10)}.md`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  const tags = useMemo(
+    () => (personal ? journalTags(feed.events) : []),
+    [personal, feed.events],
+  );
   // A repository chosen in Pulse opens its activity in the Live feed.
   function focusRepository(repository: string) {
     setReplay(null);
@@ -366,6 +392,10 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     repo,
     onRepo: (next) => updateFeed({ repo: next || undefined }),
     repositories: allRepositories,
+    tag,
+    tags,
+    onTag: (next) => updateFeed({ tag: next || undefined }),
+    onExport: exportMarkdown,
     activeFilters,
     onClearFilters: clearFilters,
     onReturnToNow: () => setReplay(null),
@@ -779,6 +809,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
       {modal === "note" && canWriteNote && (
         <Modal title="Add a ship note" onClose={() => setModal(null)}>
           <ShipNoteComposer
+            tags={tags.slice(0, 8).map((item) => item.tag)}
             onSave={async (input) => {
               await feed.addNote(input);
               setModal(null);

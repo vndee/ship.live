@@ -197,6 +197,7 @@ test("demo signals fill every scene without raising attention", () => {
     "pulse",
     "review",
     "release",
+    "delivery",
     "health",
     "leaderboard",
   ]);
@@ -205,6 +206,23 @@ test("demo signals fill every scene without raising attention", () => {
     new Set(["ready", "running", "waiting"]),
   );
   assert.ok(health.services.some((service) => service.status === "degraded"));
+});
+
+test("delivery is offered once a deployment finishes or a pull request merges", () => {
+  const empty: EngineeringWallSnapshot = { repositories: [], updatedAt: "" };
+  assert.ok(!getAvailableScenes(empty, []).includes("delivery"));
+  const merged: EngineeringWallSnapshot = structuredClone(snapshot);
+  merged.repositories[0].pullRequests[0].state = "merged";
+  assert.ok(getAvailableScenes(merged, []).includes("delivery"));
+  const deployed: EngineeringWallSnapshot = structuredClone(snapshot);
+  deployed.repositories[0].deployments.push({
+    id: "d-1",
+    environment: "production",
+    headSha: "c".repeat(40),
+    status: "failing",
+    updatedAt: "2026-09-10T11:00:00Z",
+  });
+  assert.ok(getAvailableScenes(deployed, []).includes("delivery"));
 });
 
 test("wall ages are compact", () => {
@@ -223,12 +241,19 @@ test("stored tab order and visibility ignore unknown values and never empty the 
   );
   // Scenes missing from the stored order keep their default place after it.
   assert.deepEqual(tabs, {
-    order: ["leaderboard", "review", "pulse", "release", "health"],
+    order: ["leaderboard", "review", "pulse", "release", "delivery", "health"],
     hidden: ["health"],
   });
   for (const raw of [null, "", "not json", "[]", '{"order":"review"}'])
     assert.deepEqual(parseWallTabs(raw), {
-      order: ["pulse", "review", "release", "health", "leaderboard"],
+      order: [
+        "pulse",
+        "review",
+        "release",
+        "delivery",
+        "health",
+        "leaderboard",
+      ],
       hidden: [],
     });
   const available = getAvailableScenes(createDemoWall(now), [], {
@@ -240,6 +265,7 @@ test("stored tab order and visibility ignore unknown values and never empty the 
     "review",
     "pulse",
     "release",
+    "delivery",
   ]);
   // Hiding everything that has data falls back to the first scene.
   assert.deepEqual(
@@ -257,10 +283,11 @@ test("moving a tab swaps it with its neighbor among the choices shown", () => {
     "review",
     "pulse",
     "release",
+    "delivery",
     "health",
     "leaderboard",
   ]);
-  // Without health data, release moves past the health slot it cannot see.
+  // Without delivery or health data, release moves past the slots it cannot see.
   assert.deepEqual(
     moveScene(order, "release", 1, [
       "pulse",
@@ -268,7 +295,7 @@ test("moving a tab swaps it with its neighbor among the choices shown", () => {
       "release",
       "leaderboard",
     ]),
-    ["pulse", "review", "leaderboard", "health", "release"],
+    ["pulse", "review", "leaderboard", "delivery", "health", "release"],
   );
   assert.equal(moveScene(order, "pulse", -1), order);
   assert.equal(moveScene(order, "leaderboard", 1), order);

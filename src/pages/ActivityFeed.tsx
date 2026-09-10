@@ -1,6 +1,7 @@
 import {
   ArrowDown,
   ArrowUpRight,
+  Download,
   ExternalLink,
   LockKeyhole,
   Pause,
@@ -12,6 +13,7 @@ import type { ActivityEvent } from "../../shared/types";
 import type { FeedController } from "../hooks/useFeed";
 import { EVENT_META } from "../lib/activity";
 import { ago, safeUrl, shortRepo } from "../lib/format";
+import { noteTags } from "../lib/journal";
 import { EVENT_ICONS, EVENT_VERBS, type Kind } from "../components/event-kinds";
 
 export interface ActivityFeedProps {
@@ -30,6 +32,12 @@ export interface ActivityFeedProps {
   repo: string;
   onRepo: (repo: string) => void;
   repositories: string[];
+  /** The journal tag filter, and the journal's tags with their counts. */
+  tag: string;
+  tags: { tag: string; count: number }[];
+  onTag: (tag: string) => void;
+  /** Downloads the current view as Markdown. */
+  onExport: () => void;
   activeFilters: boolean;
   onClearFilters: () => void;
   onReturnToNow: () => void;
@@ -59,6 +67,10 @@ export function ActivityFeed({
   repo,
   onRepo,
   repositories,
+  tag,
+  tags,
+  onTag,
+  onExport,
   activeFilters,
   onClearFilters,
   onReturnToNow,
@@ -92,6 +104,16 @@ export function ActivityFeed({
           >
             {feed.paused ? <Play size={15} /> : <Pause size={15} />}
           </button>
+          {full && (
+            <button
+              className="icon-button"
+              onClick={onExport}
+              aria-label="Export Markdown"
+              title="Export this view as Markdown"
+            >
+              <Download size={15} />
+            </button>
+          )}
           {!full && (
             <button
               className="icon-button"
@@ -139,6 +161,26 @@ export function ActivityFeed({
                   </option>
                 ),
               )}
+            </select>
+          </label>
+        )}
+        {full && (tags.length > 0 || tag) && (
+          <label>
+            <span className="sr-only">Filter by tag</span>
+            <select
+              aria-label="Filter by tag"
+              value={tag}
+              onChange={(e) => onTag(e.target.value)}
+            >
+              <option value="">All tags</option>
+              {tag && !tags.some((item) => item.tag === tag) && (
+                <option value={tag}>#{tag}</option>
+              )}
+              {tags.map((item) => (
+                <option key={item.tag} value={item.tag}>
+                  #{item.tag} ({item.count})
+                </option>
+              ))}
             </select>
           </label>
         )}
@@ -197,6 +239,13 @@ export function ActivityFeed({
                     {event.number ? ` / #${event.number}` : ""}
                   </span>
                   <span>
+                    {noteTags(event)
+                      .slice(0, 3)
+                      .map((item) => (
+                        <span key={item} className="note-tag">
+                          #{item}
+                        </span>
+                      ))}
                     {isNew && <span className="new-activity-badge">New</span>}
                     {EVENT_META[event.type].label}
                   </span>

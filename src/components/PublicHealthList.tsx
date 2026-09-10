@@ -6,6 +6,8 @@ import { serviceStats } from "../lib/service-stats";
 import { HealthServiceStats, HealthStatsInfo } from "./HealthServiceStats";
 import { LatencyChart } from "./LatencyChart";
 import { ServiceStatusStrip } from "./ServiceStatusStrip";
+import { UptimeStrip } from "./UptimeStrip";
+import { uptimeDays } from "../lib/uptime";
 import "./service-health.css";
 
 export function publicProbeStatus(
@@ -86,6 +88,7 @@ export function PublicHealthList({
             </div>
             {expanded && (
               <div className="health-service-details">
+                <UptimeStrip days={uptimeDays(service.probes, now)} />
                 {!service.probes.length && (
                   <p className="health-empty">No probes configured.</p>
                 )}

@@ -143,6 +143,7 @@ function workspaceShareRouter(
             checks24h: probe.checks24h,
             history: probe.history,
             latencyHistory: probe.latencyHistory,
+            uptime90d: probe.uptime90d,
             latency24h: probe.latency24h,
             latencyStats24h: probe.latencyStats24h,
           })),

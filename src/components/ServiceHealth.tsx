@@ -18,6 +18,8 @@ import { moveService } from "../lib/service-order";
 import { LatencyChart } from "./LatencyChart";
 import { ServiceStatusStrip } from "./ServiceStatusStrip";
 import { HealthServiceStats, HealthStatsInfo } from "./HealthServiceStats";
+import { UptimeStrip } from "./UptimeStrip";
+import { uptimeDays } from "../lib/uptime";
 
 /** Paused probes are not checked, so their open incidents wait for them. */
 function incidentState(
@@ -140,6 +142,7 @@ export function ServiceHealth({
     }),
   );
   const [now, setNow] = useState(Date.now());
+  const [maintenanceFor, setMaintenanceFor] = useState<string | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [expandedServiceId, setExpandedServiceId] = useState<string | null>(
     null,
@@ -599,6 +602,15 @@ export function ServiceHealth({
                             {service.name}
                           </span>
                           <Badge status={status} />
+                          {service.maintenance?.some(
+                            (window) =>
+                              Date.parse(window.startsAt) <= now &&
+                              now < Date.parse(window.endsAt),
+                          ) && (
+                            <span className="maintenance-badge">
+                              Maintenance
+                            </span>
+                          )}
                           <span className="health-probe-count">
                             {service.probes.length}{" "}
                             {service.probes.length === 1 ? "probe" : "probes"}
@@ -642,6 +654,16 @@ export function ServiceHealth({
                           >
                             Delete service
                           </button>
+                          <button
+                            className="text-button"
+                            onClick={() =>
+                              setMaintenanceFor((current) =>
+                                current === service.id ? null : service.id,
+                              )
+                            }
+                          >
+                            Schedule maintenance
+                          </button>
                         </div>
                       )}
                     </div>
@@ -673,6 +695,67 @@ export function ServiceHealth({
                             </ul>
                           </div>
                         )}
+                        {Boolean(service.maintenance?.length) && (
+                          <div className="health-maintenance">
+                            <h4>Maintenance</h4>
+                            <ul>
+                              {service.maintenance!.map((window) => (
+                                <li key={window.id}>
+                                  <span>
+                                    {Date.parse(window.startsAt) <= now
+                                      ? "Now until "
+                                      : `${new Date(window.startsAt).toLocaleString()} – `}
+                                    {new Date(window.endsAt).toLocaleString()}
+                                    {window.serviceId ? "" : " · every service"}
+                                    {window.note ? ` · ${window.note}` : ""}
+                                  </span>
+                                  <button
+                                    className="text-button"
+                                    onClick={() =>
+                                      void mutate(
+                                        `/maintenance/${window.id}`,
+                                        "DELETE",
+                                        undefined,
+                                        "Maintenance cancelled",
+                                      )
+                                    }
+                                  >
+                                    Cancel
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                            <p className="field-hint">
+                              Checks keep running. During maintenance, failures
+                              change no status, open no incident, send no alert,
+                              and don't count against uptime.
+                            </p>
+                          </div>
+                        )}
+                        {maintenanceFor === service.id && (
+                          <MaintenanceForm
+                            onCancel={() => setMaintenanceFor(null)}
+                            onSubmit={async (values) => {
+                              if (
+                                await mutate(
+                                  "/maintenance",
+                                  "POST",
+                                  {
+                                    startsAt: values.startsAt,
+                                    endsAt: values.endsAt,
+                                    note: values.note,
+                                    serviceId: values.everyService
+                                      ? null
+                                      : service.id,
+                                  },
+                                  "Maintenance scheduled",
+                                )
+                              )
+                                setMaintenanceFor(null);
+                            }}
+                          />
+                        )}
+                        <UptimeStrip days={uptimeDays(service.probes, now)} />
                         {!service.probes.length && (
                           <p className="health-empty">
                             No probes yet. Add a public endpoint to check this
@@ -1183,6 +1266,94 @@ function ProbeEditor({
           {busy ? "Saving…" : "Save probe"}
         </button>
         <button type="button" className="text-button" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** A datetime-local value in the viewer's time zone. */
+function localInput(time: number) {
+  return new Date(time - new Date(time).getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 16);
+}
+
+function MaintenanceForm({
+  onSubmit,
+  onCancel,
+}: {
+  onSubmit: (values: {
+    startsAt: string;
+    endsAt: string;
+    note: string;
+    everyService: boolean;
+  }) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [start, setStart] = useState(() => localInput(Date.now()));
+  const [end, setEnd] = useState(() => localInput(Date.now() + 3_600_000));
+  const [note, setNote] = useState("");
+  const [everyService, setEveryService] = useState(false);
+  return (
+    <form
+      className="health-maintenance"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void onSubmit({
+          startsAt: new Date(start).toISOString(),
+          endsAt: new Date(end).toISOString(),
+          note,
+          everyService,
+        });
+      }}
+    >
+      <h4>Schedule maintenance</h4>
+      <div className="maintenance-form">
+        <label>
+          Starts
+          <input
+            type="datetime-local"
+            required
+            value={start}
+            onChange={(event) => setStart(event.target.value)}
+          />
+        </label>
+        <label>
+          Ends
+          <input
+            type="datetime-local"
+            required
+            value={end}
+            onChange={(event) => setEnd(event.target.value)}
+          />
+        </label>
+        <label className="maintenance-wide">
+          Note
+          <input
+            maxLength={200}
+            value={note}
+            placeholder="Database upgrade"
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </label>
+        <label className="maintenance-wide">
+          Covers
+          <select
+            value={everyService ? "all" : "service"}
+            onChange={(event) => setEveryService(event.target.value === "all")}
+          >
+            <option value="service">This service</option>
+            <option value="all">Every service in this workspace</option>
+          </select>
+        </label>
+      </div>
+      <div className="health-actions">
+        <button className="button primary" type="submit">
+          Schedule
+        </button>
+        <button className="button secondary" type="button" onClick={onCancel}>
           Cancel
         </button>
       </div>

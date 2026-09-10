@@ -1,11 +1,15 @@
 import { useState } from "react";
 import { LoaderCircle, LockKeyhole } from "lucide-react";
 import type { ShipNoteInput } from "../../shared/workspaces";
+import { withTag } from "../lib/journal";
 
 export function ShipNoteComposer({
   onSave,
+  tags = [],
 }: {
   onSave: (input: ShipNoteInput) => Promise<void>;
+  /** Tags already in the journal, offered as one-click additions. */
+  tags?: string[];
 }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -59,6 +63,23 @@ export function ShipNoteComposer({
         maxLength={10000}
         rows={7}
       />
+      <p className="field-hint">
+        Add #tags to group notes, then filter by tag in the Live feed.
+      </p>
+      {tags.length > 0 && (
+        <div className="note-tag-suggestions">
+          {tags.map((tag) => (
+            <button
+              type="button"
+              className="note-tag"
+              key={tag}
+              onClick={() => setBody((current) => withTag(title, current, tag))}
+            >
+              #{tag}
+            </button>
+          ))}
+        </div>
+      )}
       <p className="privacy-note">
         <LockKeyhole size={14} /> Saved privately in your journal.
       </p>

@@ -63,6 +63,19 @@ export class WallStore {
               )
             ).rows[0]?.value
           : undefined;
+        // GitHub marks earlier successful deployments inactive; keep when
+        // each one succeeded, for delivery figures.
+        const earlier = previous as DeploymentState | undefined;
+        const value =
+          update.kind === "deployment" && update.value.status === "inactive"
+            ? {
+                ...update.value,
+                succeededAt:
+                  earlier?.status === "successful"
+                    ? earlier.updatedAt
+                    : earlier?.succeededAt,
+              }
+            : update.value;
         const written = await client.query(
           `INSERT INTO ship_live_wall_signals
              (installation_id,repository_id,repository,kind,signal_key,observed_at,value)
@@ -80,7 +93,7 @@ export class WallStore {
             update.kind,
             signalKey(update),
             update.observedAt,
-            update.value,
+            value,
           ],
         );
         // A stale update changes nothing and announces nothing.

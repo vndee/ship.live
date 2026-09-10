@@ -12,6 +12,7 @@ import type {
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
 // Stable, commit-like hex: 40 characters from a multiplicative hash of the seed.
 const sha = (seed: number) =>
   Array.from({ length: 5 }, (_, index) =>
@@ -111,6 +112,44 @@ const DEPLOYMENTS = [
   },
 ] as const;
 
+// Eight weeks of production history for the Delivery scene: a steady
+// cadence with two failed deployments, each fixed by the next one. All of it
+// is older than the current deployments, so the release pulse is unchanged.
+const HISTORY: {
+  repo: string;
+  ageMs: number;
+  status: "successful" | "failing";
+}[] = [
+  ...Array.from({ length: 30 }, (_, index) => ({
+    repo: index % 3 ? "platform" : "api-gateway",
+    ageMs: DAY + index * 1.8 * DAY + ((index * 7) % 5) * HOUR,
+    status: "successful" as const,
+  })),
+  { repo: "platform", ageMs: 9 * DAY + 2 * HOUR, status: "failing" },
+  { repo: "platform", ageMs: 9 * DAY + 70 * MINUTE, status: "successful" },
+  { repo: "api-gateway", ageMs: 38 * DAY, status: "failing" },
+  { repo: "api-gateway", ageMs: 38 * DAY - 3 * HOUR, status: "successful" },
+];
+
+// Merged pull requests over the same weeks, for time to merge.
+const MERGED_TITLES = [
+  "Cache tenant settings at the edge",
+  "Retry flaky webhook deliveries",
+  "Tighten focus styles in menus",
+  "Split the billing worker queue",
+  "Trim cold-start dependencies",
+  "Add audit events for key rotation",
+];
+const MERGED = Array.from({ length: 24 }, (_, index) => ({
+  repo: ["platform", "web-app", "api-gateway", "design-system"][index % 4],
+  title: MERGED_TITLES[index % MERGED_TITLES.length],
+  author: ["alexchen", "sarahpark", "leowang", "emmarivera", "minhnguyen"][
+    index % 5
+  ],
+  mergedAgoMs: 5 * HOUR + index * 2.3 * DAY,
+  openMs: [3, 7, 20, 26, 5, 44][index % 6] * HOUR,
+}));
+
 const SERVICES: {
   name: string;
   probes: [name: string, latencyMs: number][];
@@ -180,6 +219,29 @@ export function createDemoWall(now = Date.now()): EngineeringWallSnapshot {
         submittedAt: at(Math.min(pull.ageMs, 30 * MINUTE)),
       });
   });
+  MERGED.forEach((pull, index) =>
+    repository(pull.repo).pullRequests.push({
+      number: 300 - index,
+      title: pull.title,
+      url: "",
+      author: pull.author,
+      headSha: sha(index + 60),
+      state: "merged",
+      draft: false,
+      mergeable: true,
+      createdAt: at(pull.mergedAgoMs + pull.openMs),
+      updatedAt: at(pull.mergedAgoMs),
+    }),
+  );
+  HISTORY.forEach((deployment, index) =>
+    repository(deployment.repo).deployments.push({
+      id: `demo-history-${index}`,
+      environment: "production",
+      headSha: sha(index + 90),
+      status: deployment.status,
+      updatedAt: at(deployment.ageMs),
+    }),
+  );
   DEPLOYMENTS.forEach((deployment, index) =>
     repository(deployment.repo).deployments.push({
       id: `demo-deployment-${index}`,
@@ -196,6 +258,31 @@ export function createDemoWall(now = Date.now()): EngineeringWallSnapshot {
 }
 
 /** Population mean and deviation of the demo checks, like the server's figures. */
+/** Fictional daily uptime: a quiet 90 days with a few short dips. */
+function demoUptime(now: number, seed: string, degraded: boolean) {
+  const date = new Date(now);
+  const today = Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+  );
+  let hash = 0;
+  for (const char of seed) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return Array.from({ length: 90 }, (_, index) => {
+    const roll = (hash + index * 2654435761) % 97;
+    const failed = roll === 0 ? 30 : roll < (degraded ? 6 : 2) ? 3 : 0;
+    const checks =
+      index === 89 ? Math.max(1, Math.floor((now - today) / 60_000)) : 1440;
+    return {
+      date: new Date(today - (89 - index) * 86_400_000)
+        .toISOString()
+        .slice(0, 10),
+      checks,
+      passed: checks - Math.min(failed, checks),
+    };
+  });
+}
+
 function latencyStats(history: HealthCheck[]): LatencyStats {
   const values = history.map((check) => check.latencyMs);
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -265,16 +352,21 @@ export function createDemoHealth(now = Date.now()): HealthSnapshot {
     updatedAt: new Date(now).toISOString(),
     services: SERVICES.map((service, serviceIndex) => {
       const id = `demo-service-${serviceIndex}`;
-      const probes = service.probes.map(([name, latencyMs], probeIndex) =>
-        demoProbe(
-          now,
-          id,
-          `demo-probe-${serviceIndex}-${probeIndex}`,
-          name,
-          latencyMs,
-          Boolean(service.degraded),
-        ),
-      );
+      const probes = service.probes
+        .map(([name, latencyMs], probeIndex) =>
+          demoProbe(
+            now,
+            id,
+            `demo-probe-${serviceIndex}-${probeIndex}`,
+            name,
+            latencyMs,
+            Boolean(service.degraded),
+          ),
+        )
+        .map((probe) => ({
+          ...probe,
+          uptime90d: demoUptime(now, probe.id, Boolean(service.degraded)),
+        }));
       const status: HealthStatus = probes.some(
         (probe) => probe.status === "degraded",
       )

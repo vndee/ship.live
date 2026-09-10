@@ -69,3 +69,13 @@ test("malformed parameters are ignored", () => {
   });
   assert.equal(parseRoute("/", "?person=-leading").person, undefined);
 });
+
+test("a journal tag filters the Live feed and survives the URL", () => {
+  assert.equal(routeHref({ page: "feed", tag: "launch" }), "/feed?tag=launch");
+  assert.deepEqual(parseRoute("/feed", "?tag=Tiếng-Việt"), {
+    page: "feed",
+    tag: "tiếng-việt",
+  });
+  assert.deepEqual(parseRoute("/feed", "?tag=%23bad%20tag"), { page: "feed" });
+  assert.deepEqual(parseRoute("/team", "?tag=launch"), { page: "team" });
+});

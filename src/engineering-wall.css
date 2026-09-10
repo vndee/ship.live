@@ -672,3 +672,133 @@ button.scene-row:hover {
     display: none;
   }
 }
+.delivery-figures {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.delivery-figure {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+.delivery-figure span {
+  font-size: 13px;
+  color: var(--muted);
+}
+.delivery-figure strong {
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 1.15;
+}
+.delivery-figure small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.delivery-figure .delivery-before {
+  color: var(--subtle);
+}
+.delivery-weeks {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+.delivery-weeks-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.delivery-weeks-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+.delivery-weeks-scope {
+  margin-left: auto;
+}
+.delivery-weeks-bars {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 10px;
+  height: 140px;
+}
+.delivery-week {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 6px;
+  min-width: 0;
+}
+.delivery-week-stack {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+}
+.delivery-week-stack span {
+  min-height: 3px;
+  border-radius: 4px 4px 0 0;
+}
+.delivery-successful {
+  background: var(--success);
+}
+.delivery-failing {
+  background: var(--danger-strong);
+}
+.delivery-week small {
+  overflow: hidden;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.delivery-note {
+  margin: 14px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.delivery-environment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.delivery-environment select {
+  color: var(--text);
+  background: var(--background);
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  padding: 6px 10px;
+}
+@media (max-width: 900px) {
+  .delivery-figures {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 520px) {
+  .delivery-figures {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .delivery-weeks-bars {
+    gap: 6px;
+  }
+  /* Every other date, ending with this week; each bar's title keeps its date. */
+  .delivery-week:nth-child(odd) small {
+    visibility: hidden;
+  }
+  /* Shown dates may spill into the hidden neighbors' space, centered. */
+  .delivery-week small {
+    display: flex;
+    justify-content: center;
+    overflow: visible;
+  }
+}

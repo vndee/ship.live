@@ -769,3 +769,115 @@
     grid-column: 2;
   }
 }
+.uptime-strip {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.uptime-strip-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.uptime-strip-heading strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.uptime-bars {
+  display: grid;
+  grid-template-columns: repeat(90, minmax(0, 1fr));
+  gap: 2px;
+  height: 28px;
+}
+.uptime-bar {
+  border-radius: 2px;
+  background: var(--neutral-track);
+}
+.uptime-bar.good {
+  background: var(--success);
+}
+.uptime-bar.warning {
+  background: var(--warning);
+}
+.uptime-bar.bad {
+  background: var(--danger-strong);
+}
+.uptime-strip-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--subtle);
+}
+@media (max-width: 640px) {
+  .uptime-bars {
+    gap: 1px;
+    height: 24px;
+  }
+}
+.health-maintenance {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--info);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.health-maintenance h4 {
+  margin: 0;
+  font-size: 14px;
+}
+.health-maintenance ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.health-maintenance li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+}
+.maintenance-badge {
+  padding: 2px 8px;
+  border: 1px solid var(--info);
+  border-radius: 999px;
+  color: var(--info);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.maintenance-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+.maintenance-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.maintenance-form input,
+.maintenance-form select {
+  color: var(--text);
+  background: var(--background);
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  padding: 9px 11px;
+  font: inherit;
+}
+.maintenance-form .maintenance-wide {
+  grid-column: 1 / -1;
+}
+@media (max-width: 640px) {
+  .maintenance-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
