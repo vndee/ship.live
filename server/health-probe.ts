@@ -4,6 +4,7 @@ import https from "node:https";
 import { isIP } from "node:net";
 import ipaddr from "ipaddr.js";
 import { AuthError } from "./auth.js";
+import { parseJsonPath, readJsonPath } from "./json-path.js";
 import type { ProbeInput, ProbeResult } from "../shared/health.js";
 
 const invalid = (message: string): never => {
@@ -94,18 +95,15 @@ export function validateProbe(input: unknown): ProbeInput {
   const jsonPath = data.jsonPath ?? "";
   const jsonExpected =
     data.jsonExpected === undefined ? null : data.jsonExpected;
-  if (
-    typeof jsonPath !== "string" ||
-    jsonPath.length > 256 ||
-    (jsonPath &&
-      (!/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(jsonPath) ||
-        jsonPath
-          .split(".")
-          .some((part) =>
-            ["__proto__", "constructor", "prototype"].includes(part),
-          )))
-  )
-    return invalid("Use a simple dot-separated JSON path.");
+  if (typeof jsonPath !== "string")
+    return invalid("Use a supported JSON path.");
+  if (jsonPath) {
+    try {
+      parseJsonPath(jsonPath);
+    } catch {
+      return invalid("Use a supported JSON path.");
+    }
+  }
   if (
     jsonExpected !== null &&
     !(typeof jsonExpected === "string" && jsonExpected.length <= 1024) &&
@@ -181,6 +179,7 @@ export async function runProbe(
   input: ProbeInput,
   headers: Record<string, string>,
 ): Promise<ProbeResult> {
+  const jsonPathSteps = input.jsonPath ? parseJsonPath(input.jsonPath) : [];
   const started = performance.now();
   return new Promise((resolve) => {
     let request: http.ClientRequest | undefined;
@@ -285,13 +284,7 @@ export async function runProbe(
               } catch {
                 return finish(false, "Response is not valid JSON.");
               }
-              for (const part of input.jsonPath.split("."))
-                value =
-                  value !== null &&
-                  typeof value === "object" &&
-                  Object.hasOwn(value, part)
-                    ? (value as Record<string, unknown>)[part]
-                    : undefined;
+              value = readJsonPath(value, jsonPathSteps);
               if (value !== input.jsonExpected)
                 return finish(false, "JSON condition did not match.");
             }

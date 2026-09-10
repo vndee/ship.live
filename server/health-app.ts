@@ -54,6 +54,13 @@ export function healthRouter({
     await auth.assertActive(principal);
     res.status(201).json(service);
   });
+  router.put(`${base}/services/order`, async (req, res) => {
+    const principal = await auth.requireMutation(req, res);
+    await access(principal, req.params.id);
+    await health.reorderServices(req.params.id, req.body?.serviceIds);
+    await auth.assertActive(principal);
+    res.sendStatus(204);
+  });
   router.patch(`${base}/services/:serviceId`, async (req, res) => {
     const principal = await auth.requireMutation(req, res);
     await access(principal, req.params.id);

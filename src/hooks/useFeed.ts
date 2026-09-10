@@ -13,6 +13,11 @@ import type {
 } from "../../shared/workspaces";
 import { createDemoEvents } from "../lib/demo";
 import {
+  chooseInitialWorkspace,
+  readWorkspacePreference,
+  saveWorkspacePreference,
+} from "../lib/workspace-preference";
+import {
   emptyPrivateFeed,
   isAccessFailure,
   privateFeedReducer,
@@ -94,6 +99,12 @@ export function useFeed() {
   const requestNumber = useRef(0);
   const sessionRequest = useRef(0);
   const workspaceRequest = useRef(0);
+  const latestWorkspaceLoad = useRef<Promise<WorkspaceList | undefined> | null>(
+    null,
+  );
+  const identityRevision = useRef(0);
+  const selectionRevision = useRef(0);
+  const authorizedWorkspaces = useRef<Workspace[]>([]);
   const currentUser = useRef<string | null>(null);
   const currentWorkspace = useRef<Workspace | null>(null);
   const csrf = useRef<string | undefined>(undefined);
@@ -112,9 +123,9 @@ export function useFeed() {
       events: sample ? createDemoEvents() : [],
     });
   }, []);
-  const selectWorkspace = useCallback(
+  const applyWorkspace = useCallback(
     (next: Workspace | null) => {
-      if (operationPending.current) return;
+      if (operationPending.current) return false;
       dispatchOperation({
         type: "reset",
         sequence: ++operationSequence.current,
@@ -126,8 +137,25 @@ export function useFeed() {
       blocked.current = false;
       setAccessBlocked(false);
       clearPrivate("", !next);
+      return true;
     },
     [clearPrivate],
+  );
+  const selectWorkspace = useCallback(
+    (next: Workspace | null) => {
+      const user = currentUser.current;
+      const authorized = next
+        ? authorizedWorkspaces.current.find((item) => item.id === next.id)
+        : null;
+      if (next && (!user || !authorized)) return;
+      if (!applyWorkspace(authorized ?? null)) return;
+      selectionRevision.current += 1;
+      if (user && authorized)
+        saveWorkspacePreference(user, authorized.id, (key, value) =>
+          localStorage.setItem(key, value),
+        );
+    },
+    [applyWorkspace],
   );
   const clearIdentity = useCallback(
     (error = "") => {
@@ -137,6 +165,9 @@ export function useFeed() {
         sequence: ++operationSequence.current,
       });
       workspaceRequest.current += 1;
+      identityRevision.current += 1;
+      latestWorkspaceLoad.current = null;
+      authorizedWorkspaces.current = [];
       currentUser.current = null;
       csrf.current = undefined;
       currentWorkspace.current = null;
@@ -176,7 +207,7 @@ export function useFeed() {
     [clearIdentity, failPrivate],
   );
 
-  const loadWorkspaces = useCallback(async () => {
+  const refreshWorkspaces = useCallback(async () => {
     const user = currentUser.current;
     if (!user) return;
     const serial = ++workspaceRequest.current;
@@ -185,31 +216,50 @@ export function useFeed() {
       if (currentUser.current !== user || serial !== workspaceRequest.current)
         return;
       setWorkspaceList(data);
+      authorizedWorkspaces.current = data.workspaces;
       const active = currentWorkspace.current;
       if (active) {
         const replacement = data.workspaces.find(
           (item) => item.id === active.id,
         );
-        if (!replacement)
-          selectWorkspace(
-            data.workspaces.find((item) => item.kind === "personal") || null,
-          );
-        else {
+        if (!replacement) {
+          const fallback = chooseInitialWorkspace(data.workspaces, null);
+          if (applyWorkspace(fallback) && fallback)
+            saveWorkspacePreference(user, fallback.id, (key, value) =>
+              localStorage.setItem(key, value),
+            );
+        } else {
           currentWorkspace.current = replacement;
           setWorkspace(replacement);
         }
-      } else if (initialSelection.current)
-        selectWorkspace(
-          data.workspaces.find((item) => item.kind === "personal") ||
-            data.workspaces[0] ||
-            null,
+      } else if (initialSelection.current) {
+        const preferred = readWorkspacePreference(user, (key) =>
+          localStorage.getItem(key),
         );
+        const next = chooseInitialWorkspace(data.workspaces, preferred);
+        if (
+          applyWorkspace(next) &&
+          next &&
+          preferred !== null &&
+          preferred !== next.id
+        )
+          saveWorkspacePreference(user, next.id, (key, value) =>
+            localStorage.setItem(key, value),
+          );
+      }
+      return data;
     } catch (error) {
       if (currentUser.current !== user || serial !== workspaceRequest.current)
         return;
       if (!accessFailure(error)) setSessionError(message(error));
     }
-  }, [accessFailure, selectWorkspace]);
+  }, [accessFailure, applyWorkspace]);
+
+  const loadWorkspaces = useCallback(() => {
+    const pending = refreshWorkspaces();
+    latestWorkspaceLoad.current = pending;
+    return pending;
+  }, [refreshWorkspaces]);
 
   const loadSession = useCallback(async () => {
     if (pendingLogout.current) return;
@@ -278,6 +328,9 @@ export function useFeed() {
       channel.current?.close();
       channel.current = null;
       sessionRequest.current += 1;
+      workspaceRequest.current += 1;
+      identityRevision.current += 1;
+      latestWorkspaceLoad.current = null;
     };
   }, [clearIdentity, clearPrivate, loadSession]);
 
@@ -482,19 +535,39 @@ export function useFeed() {
   }
   async function connectInstallation(id: number) {
     const user = currentUser.current;
+    const identity = identityRevision.current;
+    const selection = selectionRevision.current;
+    if (!user) throw new Error("Sign in again to continue.");
+    const isCurrent = () =>
+      user === currentUser.current && identity === identityRevision.current;
     const data = await mutate<{ workspace: Workspace }>(
       `/api/github/installations/${id}/connect`,
       undefined,
       "POST",
       180_000,
     );
-    if (user !== currentUser.current)
+    if (!isCurrent())
       throw new Error("Your session changed. Sign in again to continue.");
-    await loadWorkspaces();
-    if (user !== currentUser.current)
-      throw new Error("Your session changed. Sign in again to continue.");
-    selectWorkspace(data.workspace);
-    return data.workspace;
+    let pending = loadWorkspaces();
+    let workspaces: WorkspaceList | undefined;
+    for (;;) {
+      workspaces = await pending;
+      if (!isCurrent())
+        throw new Error("Your session changed. Sign in again to continue.");
+      // Poll/focus refreshes may supersede this load; join the latest result
+      // only while the connection's original identity lifecycle is still current.
+      const latest = latestWorkspaceLoad.current;
+      if (!latest || latest === pending) break;
+      pending = latest;
+    }
+    const connected = workspaces?.workspaces.find(
+      (item) => item.id === data.workspace.id,
+    );
+    if (!connected)
+      throw new Error("Could not verify the connected workspace. Try again.");
+    // An explicit selection made while connecting takes precedence.
+    if (selection === selectionRevision.current) selectWorkspace(connected);
+    return connected;
   }
   async function runPrivateOperation(target: PrivateOperationTarget) {
     const user = currentUser.current;

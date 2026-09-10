@@ -141,11 +141,50 @@ export class HealthStore {
         throw new AuthError(400, "A team can configure up to 20 services.");
       const id = randomUUID();
       await c.query(
-        "INSERT INTO ship_live_health_services(id,workspace_id,name) VALUES($1,$2,$3)",
+        "INSERT INTO ship_live_health_services(id,workspace_id,name,display_order) SELECT $1,$2,$3,coalesce(max(display_order),-1)+1 FROM ship_live_health_services WHERE workspace_id=$2",
         [id, workspaceId, label],
       );
       await this.notify(c, workspaceId);
       return { id };
+    });
+  }
+  async reorderServices(
+    workspaceId: string,
+    serviceIds: string[],
+  ): Promise<void> {
+    const invalidOrder = () =>
+      new AuthError(
+        400,
+        "Include every current service exactly once, up to 20 services.",
+      );
+    if (
+      !Array.isArray(serviceIds) ||
+      serviceIds.length > 20 ||
+      serviceIds.some((id) => typeof id !== "string" || !validId(id))
+    )
+      throw invalidOrder();
+    const ids = serviceIds.map((id) => id.toLowerCase());
+    if (new Set(ids).size !== ids.length) throw invalidOrder();
+    await this.transaction(async (c) => {
+      await this.lockWorkspace(c, workspaceId);
+      const services = await c.query<{ id: string }>(
+        "SELECT id FROM ship_live_health_services WHERE workspace_id=$1 ORDER BY id FOR UPDATE",
+        [workspaceId],
+      );
+      const current = new Set(services.rows.map((service) => service.id));
+      if (current.size !== ids.length || ids.some((id) => !current.has(id)))
+        throw invalidOrder();
+      // Swaps temporarily share positions; enforce uniqueness at commit instead.
+      await c.query(
+        "SET CONSTRAINTS ship_live_health_services_workspace_order_key DEFERRED",
+      );
+      await c.query(
+        `UPDATE ship_live_health_services s SET display_order=ordered.position-1
+         FROM unnest($2::uuid[]) WITH ORDINALITY AS ordered(id,position)
+         WHERE s.workspace_id=$1 AND s.id=ordered.id`,
+        [workspaceId, ids],
+      );
+      await this.notify(c, workspaceId);
     });
   }
   async renameService(workspaceId: string, id: string, value: unknown) {
@@ -292,7 +331,7 @@ export class HealthStore {
     'latencyHistory',coalesce((SELECT jsonb_agg(jsonb_build_object('date',d.day,'avgLatencyMs',round(d.total_latency/d.checks,2),'minLatencyMs',d.min_latency,'maxLatencyMs',d.max_latency,'checks',d.checks) ORDER BY d.day) FROM ship_live_health_latency_daily d WHERE d.probe_id=p.id AND d.day >= (now() AT TIME ZONE 'UTC')::date-29),'[]'::jsonb),
     'checks',(SELECT count(*) FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '24 hours'),
     'rate',(SELECT round(100.0*avg(CASE WHEN (c.result->>'ok')::boolean THEN 1 ELSE 0 END),1) FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '24 hours')
-    ) ORDER BY p.config->>'name',p.id) FROM ship_live_health_probes p WHERE p.service_id=s.id),'[]'::jsonb) AS probes FROM ship_live_health_services s WHERE s.workspace_id=$1 ORDER BY s.created_at,s.id`,
+    ) ORDER BY p.config->>'name',p.id) FROM ship_live_health_probes p WHERE p.service_id=s.id),'[]'::jsonb) AS probes FROM ship_live_health_services s WHERE s.workspace_id=$1 ORDER BY s.display_order,s.created_at,s.id`,
       [workspaceId],
     );
     const now = Date.now();

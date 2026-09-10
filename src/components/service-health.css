@@ -464,6 +464,46 @@
   max-height: 220px;
   overflow: visible;
 }
+.latency-chart-plot {
+  position: relative;
+  min-height: 120px;
+}
+.latency-tooltip {
+  position: absolute;
+  top: 8px;
+  z-index: 1;
+  display: grid;
+  gap: 3px;
+  width: max-content;
+  max-width: calc(100% - 16px);
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 4px 16px #0003;
+  font-size: 11px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+.latency-tooltip strong {
+  font-weight: 600;
+}
+.latency-crosshair {
+  stroke: #a4c8e5;
+  stroke-opacity: 0.35;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+.latency-point.is-active {
+  stroke: var(--surface);
+  stroke-width: 2;
+  paint-order: stroke;
+  vector-effect: non-scaling-stroke;
+}
 .latency-grid {
   stroke: var(--line);
   stroke-width: 1;
@@ -522,8 +562,76 @@
   color: var(--text);
   font-weight: 500;
 }
+.latency-chart svg:focus-visible,
 .latency-chart button:focus-visible,
 .latency-chart summary:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 3px;
+}
+
+.health-service-heading > .health-service-summary {
+  flex: 1 1 520px;
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: 0;
+}
+.health-service-summary .health-service-toggle {
+  flex: 1 1 auto;
+  padding-left: 8px;
+}
+.health-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 40px;
+  margin-left: 8px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: grab;
+  touch-action: none;
+}
+.health-drag-handle[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.health-drag-handle:hover:not([aria-disabled="true"]) {
+  background: var(--background);
+  color: var(--text);
+}
+.health-drag-handle:focus-visible {
+  outline-offset: -3px;
+}
+.health-service.is-dragging {
+  position: relative;
+  z-index: 2;
+  background: var(--background);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 30%);
+  border-color: var(--focus);
+}
+.health-service.is-dragging .health-drag-handle {
+  cursor: grabbing;
+}
+.health-service.is-drop-target {
+  border-color: var(--focus);
+}
+@media (prefers-reduced-motion: reduce) {
+  .health-service {
+    transition: none !important;
+  }
+}
+@media (max-width: 600px) {
+  .health-drag-handle {
+    flex-basis: 36px;
+    width: 36px;
+    height: 44px;
+    margin-left: 4px;
+  }
+  .health-service-summary .health-service-toggle {
+    padding-left: 4px;
+  }
 }

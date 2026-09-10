@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { readFile, readdir } from "node:fs/promises";
 import test, { type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { Pool } from "pg";
@@ -74,9 +76,79 @@ test("PostgreSQL migrations serialize concurrent startup and preserve connection
       { version: 7 },
       { version: 8 },
       { version: 9 },
+      { version: 10 },
     ]);
     await stores[0].merge("team", [event]);
     assert.deepEqual(await stores[1].list("team"), [event]);
+  });
+});
+
+test("service order migration preserves the historical ordering independently in each workspace", async (t) => {
+  await withDatabase(t, async ({ database, open }) => {
+    const directory = new URL("./migrations/", import.meta.url);
+    const previous = (await readdir(directory))
+      .filter((file) => /^00[1-9]_/.test(file))
+      .sort();
+    for (const file of previous)
+      await database.query(await readFile(new URL(file, directory), "utf8"));
+    await database.query(`
+      CREATE TABLE ship_live_schema_migrations (
+        version integer PRIMARY KEY,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      );
+      INSERT INTO ship_live_schema_migrations(version) SELECT generate_series(1,9);
+    `);
+    const workspace = randomUUID();
+    const other = randomUUID();
+    await database.query(
+      "INSERT INTO ship_live_workspaces(id,name,kind) VALUES($1,'Team','team'),($2,'Other','team')",
+      [workspace, other],
+    );
+    const earlier = "00000000-0000-0000-0000-000000000003";
+    const tieFirst = "00000000-0000-0000-0000-000000000001";
+    const tieSecond = "00000000-0000-0000-0000-000000000002";
+    const foreign = "00000000-0000-0000-0000-000000000004";
+    await database.query(
+      `INSERT INTO ship_live_health_services(id,workspace_id,name,created_at) VALUES
+       ($1,$5,'Tie second','2026-09-02'),($2,$5,'Earlier','2026-09-01'),
+       ($3,$5,'Tie first','2026-09-02'),($4,$6,'Foreign','2026-09-03')`,
+      [tieSecond, earlier, tieFirst, foreign, workspace, other],
+    );
+    await open();
+    const services = await database.query(
+      "SELECT id,display_order FROM ship_live_health_services WHERE workspace_id=$1 ORDER BY display_order",
+      [workspace],
+    );
+    assert.deepEqual(services.rows, [
+      { id: earlier, display_order: 0 },
+      { id: tieFirst, display_order: 1 },
+      { id: tieSecond, display_order: 2 },
+    ]);
+    assert.deepEqual(
+      (
+        await database.query(
+          "SELECT display_order FROM ship_live_health_services WHERE id=$1",
+          [foreign],
+        )
+      ).rows,
+      [{ display_order: 0 }],
+    );
+    await assert.rejects(
+      () =>
+        database.query(
+          "UPDATE ship_live_health_services SET display_order=NULL WHERE id=$1",
+          [earlier],
+        ),
+      (error: unknown) => (error as { code: string }).code === "23502",
+    );
+    await assert.rejects(
+      () =>
+        database.query(
+          "UPDATE ship_live_health_services SET display_order=0 WHERE id=$1",
+          [tieFirst],
+        ),
+      (error: unknown) => (error as { code: string }).code === "23505",
+    );
   });
 });
 

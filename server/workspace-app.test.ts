@@ -31,6 +31,13 @@ const team: InstallationInfo = {
   kind: "Organization",
   suspended: false,
 };
+const otherTeam: InstallationInfo = {
+  id: 71,
+  accountId: 701,
+  account: "other-team",
+  kind: "Organization",
+  suspended: false,
+};
 const repoA: Repo = { id: 101, name: "team/alpha", private: true };
 const repoB: Repo = { id: 102, name: "team/beta", private: true };
 
@@ -289,6 +296,7 @@ async function connect(
   workspaces: WorkspaceStore,
   user: AuthUser,
   index: number,
+  installation: InstallationInfo = team,
 ) {
   await workspaces.saveGrant(
     user.id,
@@ -300,7 +308,7 @@ async function connect(
   );
   return workspaces.connectInstallation(
     user,
-    team,
+    installation,
     index,
     (await workspaces.connection(user.id))!.generation,
   );
@@ -1312,7 +1320,7 @@ test("SSE closes when the user's installation grant disappears and notes emit re
 });
 
 test("team health UI routes enforce access and CSRF, validate public probes and stream updates", async (t) => {
-  await withApp(t, async ({ workspaces, auth, users, request }) => {
+  await withApp(t, async ({ workspaces, auth, users, provider, request }) => {
     const workspace = await connect(workspaces, users[0], 1);
     const base = `/api/workspaces/${workspace.id}/health`;
     assert.equal((await request(base, null)).status, 401);
@@ -1332,6 +1340,77 @@ test("team health UI routes enforce access and CSRF, validate public probes and 
     const created = await mutate("/services", "POST", { name: "Platform API" });
     assert.equal(created.status, 201);
     const service = (await created.json()) as { id: string };
+    const another = await (
+      await mutate("/services", "POST", { name: "Worker" })
+    ).json();
+    assert.equal(
+      (
+        await mutate("/services/order", "PUT", {
+          serviceIds: [another.id, service.id],
+        })
+      ).status,
+      204,
+    );
+    assert.deepEqual(
+      (await (await request(base)).json()).services.map(
+        (item: { id: string }) => item.id,
+      ),
+      [another.id, service.id],
+    );
+    assert.equal(
+      (
+        await mutate("/services/order", "PUT", {
+          serviceIds: [service.id, service.id],
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await request(`${base}/services/order`, users[0], {
+          method: "PUT",
+          headers: { "x-csrf-token": "invalid" },
+          body: JSON.stringify({ serviceIds: [service.id, another.id] }),
+        })
+      ).status,
+      403,
+    );
+    provider.accessible.set("token-a", [team, otherTeam]);
+    const otherWorkspace = await connect(workspaces, users[0], 1, otherTeam);
+    assert.notEqual(otherWorkspace.id, workspace.id);
+    const otherBase = `/api/workspaces/${otherWorkspace.id}/health`;
+    const foreign = await (
+      await request(`${otherBase}/services`, users[0], {
+        method: "POST",
+        body: JSON.stringify({ name: "Foreign worker" }),
+      })
+    ).json();
+    const firstOrder = (await (await request(base)).json()).services.map(
+      (item: { id: string }) => item.id,
+    );
+    const secondOrder = (await (await request(otherBase)).json()).services.map(
+      (item: { id: string }) => item.id,
+    );
+    assert.equal(
+      (
+        await mutate("/services/order", "PUT", {
+          serviceIds: [another.id, foreign.id],
+        })
+      ).status,
+      400,
+    );
+    assert.deepEqual(
+      (await (await request(base)).json()).services.map(
+        (item: { id: string }) => item.id,
+      ),
+      firstOrder,
+    );
+    assert.deepEqual(
+      (await (await request(otherBase)).json()).services.map(
+        (item: { id: string }) => item.id,
+      ),
+      secondOrder,
+    );
     const invalid = await mutate(`/services/${service.id}/probes`, "POST", {
       name: "Private",
       url: "http://127.0.0.1/health",
@@ -1345,7 +1424,10 @@ test("team health UI routes enforce access and CSRF, validate public probes and 
     assert.equal(createdProbe.status, 201);
     const probe = (await createdProbe.json()) as { id: string };
     const snapshot = await (await request(base)).json();
-    assert.equal(snapshot.services[0].probes[0].status, "unknown");
+    const probedService = snapshot.services.find(
+      (item: { id: string }) => item.id === service.id,
+    );
+    assert.equal(probedService?.probes[0].status, "unknown");
     assert.equal(
       (await mutate(`/probes/${probe.id}/check`, "POST")).status,
       202,
@@ -1391,6 +1473,16 @@ test("team health UI routes enforce access and CSRF, validate public probes and 
     );
     assert.equal(
       (await mutate(`/services/${service.id}`, "DELETE")).status,
+      204,
+    );
+    assert.deepEqual(
+      (await (await request(base)).json()).services.map(
+        (item: { id: string }) => item.id,
+      ),
+      [another.id],
+    );
+    assert.equal(
+      (await mutate(`/services/${another.id}`, "DELETE")).status,
       204,
     );
     assert.equal((await (await request(base)).json()).services.length, 0);
