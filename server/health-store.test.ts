@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import { AuthError } from "./auth.js";
+import { ACTIVITY_CHANNEL } from "./postgres-notifications.js";
 import { PostgresEventStore } from "./postgres-store.js";
 import { createTestDatabase } from "./test-database.js";
 import { HealthStore } from "./health-store.js";
@@ -52,6 +55,153 @@ async function fixture(t: Parameters<typeof createTestDatabase>[0]) {
     other: ids[1],
   };
 }
+test("service order persists across store instances and new services append after deletion", async (t) => {
+  const f = await fixture(t);
+  if (!f) return;
+  const first = await f.health.createService(f.workspace, "First");
+  const second = await f.health.createService(f.workspace, "Second");
+  await f.health.reorderServices(f.workspace, [second.id, first.id]);
+  const reopened = new HealthStore(f.events.pool);
+  assert.deepEqual(
+    (await reopened.snapshot(f.workspace)).services.map((s) => s.id),
+    [second.id, first.id],
+  );
+  const third = await reopened.createService(f.workspace, "Third");
+  assert.deepEqual(
+    (await reopened.snapshot(f.workspace)).services.map((s) => s.id),
+    [second.id, first.id, third.id],
+  );
+  await reopened.deleteService(f.workspace, first.id);
+  const fourth = await reopened.createService(f.workspace, "Fourth");
+  assert.deepEqual(
+    (await reopened.snapshot(f.workspace)).services.map((s) => s.id),
+    [second.id, third.id, fourth.id],
+  );
+});
+
+test("service reorder requires every current service exactly once and isolates workspaces", async (t) => {
+  const f = await fixture(t);
+  if (!f) return;
+  const first = await f.health.createService(f.workspace, "First");
+  const second = await f.health.createService(f.workspace, "Second");
+  const foreign = await f.health.createService(f.other, "Foreign");
+  const invalidOrders = [
+    [],
+    [first.id],
+    [first.id, first.id],
+    [first.id, randomUUID()],
+    [first.id, foreign.id],
+    [first.id, "invalid-id"],
+    [first.id, second.id, foreign.id],
+    Array.from({ length: 21 }, () => randomUUID()),
+  ];
+  for (const ids of invalidOrders) {
+    await assert.rejects(
+      () => f.health.reorderServices(f.workspace, ids),
+      (error: unknown) => error instanceof AuthError && error.status === 400,
+    );
+    assert.deepEqual(
+      (await f.health.snapshot(f.workspace)).services.map((s) => s.id),
+      [first.id, second.id],
+    );
+    assert.deepEqual(
+      (await f.health.snapshot(f.other)).services.map((s) => s.id),
+      [foreign.id],
+    );
+  }
+  await assert.rejects(
+    () => f.health.reorderServices(randomUUID(), []),
+    /not found/i,
+  );
+  await f.health.deleteService(f.other, foreign.id);
+  await f.health.reorderServices(f.other, []);
+});
+
+test("concurrent service reorders remain atomic and creation respects the 20-service limit", async (t) => {
+  const f = await fixture(t);
+  if (!f) return;
+  const services = await Promise.all(
+    Array.from({ length: 20 }, (_, i) =>
+      f.health.createService(f.workspace, `Service ${i}`),
+    ),
+  );
+  const forward = services.map((s) => s.id);
+  const reverse = [...forward].reverse();
+  await Promise.all([
+    f.health.reorderServices(f.workspace, forward),
+    f.health.reorderServices(f.workspace, reverse),
+  ]);
+  const actual = (await f.health.snapshot(f.workspace)).services.map(
+    (s) => s.id,
+  );
+  assert.ok(
+    JSON.stringify(actual) === JSON.stringify(forward) ||
+      JSON.stringify(actual) === JSON.stringify(reverse),
+  );
+  await assert.rejects(
+    () => f.health.createService(f.workspace, "Overflow"),
+    /up to 20 services/i,
+  );
+});
+
+test("failed service reorder rolls back positions and only committed reorders notify", async (t) => {
+  const f = await fixture(t);
+  if (!f) return;
+  const first = await f.health.createService(f.workspace, "First");
+  const second = await f.health.createService(f.workspace, "Second");
+  const listener = await f.events.pool.connect();
+  const notifications: string[] = [];
+  const onNotification = (message: { payload?: string }) => {
+    if (message.payload) notifications.push(message.payload);
+  };
+  listener.on("notification", onNotification);
+  try {
+    await listener.query(`LISTEN ${ACTIVITY_CHANNEL}`);
+    await assert.rejects(() =>
+      f.health.reorderServices(f.workspace, [first.id, first.id]),
+    );
+    await f.events.pool.query(`
+      CREATE FUNCTION reject_service_order() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.display_order = 1 THEN RAISE EXCEPTION 'test reorder failure'; END IF;
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER reject_service_order BEFORE UPDATE OF display_order
+      ON ship_live_health_services FOR EACH ROW EXECUTE FUNCTION reject_service_order();
+    `);
+    await assert.rejects(
+      () => f.health.reorderServices(f.workspace, [second.id, first.id]),
+      /test reorder failure/,
+    );
+    assert.deepEqual(
+      (await f.health.snapshot(f.workspace)).services.map((s) => s.id),
+      [first.id, second.id],
+    );
+    await f.events.pool.query(
+      "DROP TRIGGER reject_service_order ON ship_live_health_services",
+    );
+    await f.health.reorderServices(f.workspace, [second.id, first.id]);
+    await f.events.pool.query("SELECT pg_notify($1,'reorder-barrier')", [
+      ACTIVITY_CHANNEL,
+    ]);
+    for (let attempt = 0; attempt < 150; attempt++) {
+      if (notifications.includes("reorder-barrier")) break;
+      await delay(20);
+    }
+    assert.deepEqual(notifications, [
+      JSON.stringify({
+        organization: `health-${f.workspace}`,
+        eventId: "health",
+      }),
+      "reorder-barrier",
+    ]);
+  } finally {
+    await listener.query(`UNLISTEN ${ACTIVITY_CHANNEL}`);
+    listener.off("notification", onNotification);
+    listener.release();
+  }
+});
+
 test("health probes preserve encrypted headers and isolate team configuration", async (t) => {
   const f = await fixture(t);
   if (!f) return;
