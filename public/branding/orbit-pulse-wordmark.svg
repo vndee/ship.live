@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 240" role="img" aria-labelledby="title desc">
+  <title id="title">ship.live logo</title>
+  <desc id="desc">Orbit Pulse symbol with the ship.live wordmark.</desc>
+  <g transform="translate(20 12) scale(.84)">
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <ellipse cx="128" cy="128" rx="88" ry="48" transform="rotate(-28 128 128)" stroke="#a0aeab" stroke-width="8"/>
+      <ellipse cx="128" cy="128" rx="63" ry="30" transform="rotate(-28 128 128)" stroke="#52625f" stroke-width="5"/>
+      <path d="M76 150c22 7 48 1 67-15 17-14 28-34 31-56" stroke="#edf0e9" stroke-width="12"/>
+    </g>
+    <circle cx="192" cy="70" r="17" fill="#e3ba8a"/>
+    <circle cx="192" cy="70" r="25" fill="none" stroke="#e3ba8a" stroke-opacity=".22" stroke-width="5"/>
+  </g>
+  <text x="258" y="151" fill="#edf0e9" font-family="DM Sans, Arial, sans-serif" font-size="104" font-weight="500" letter-spacing="-7">ship<tspan fill="#9aa4a4">.live</tspan></text>
+</svg>
