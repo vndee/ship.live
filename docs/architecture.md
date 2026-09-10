@@ -116,6 +116,10 @@ Weekly recognition uses the visible authorized events and the current week begin
 
 The legacy `server/app.ts`, public-organization feed adapter, and JSON importer remain for compatibility tests and data recovery. The production entry point mounts only the authenticated workspace application. Old organization/key routes are not available, and legacy records are not automatically assigned to new accounts. See [upgrade notes](configuration.md#upgrading-an-existing-installation).
 
+## Webhooks
+
+Sources record webhook events in the transaction that causes them: `PostgresEventStore.merge` for live GitHub activity (imported history never announces), `WallStore.apply` for CI and deployment transitions, `HealthStore.complete` for probe changes and incidents, the inbound receiver, and the weekly digest scheduler. Events are stored only for team workspaces with a listening webhook and are deduplicated per workspace. A worker on every replica routes events to matching webhooks, checking the event type, filters, cooldowns, and the owner's pinned and current repository access. It sends due deliveries under leases taken with `FOR UPDATE SKIP LOCKED`, so replicas share the work without sending twice, and fills each digest from that webhook's repositories as it sends. Rendering uses the same template engine as the browser preview (`shared/webhook-template.ts`), and outbound requests share the probes' public-address checks (`server/outbound.ts`). URLs, header values, and secrets are sealed with AES-256-GCM, bound to their row and field.
+
 ## Hosting
 
 One Node service and PostgreSQL are sufficient. Supabase can provide both Auth and the database, with Railway hosting Node. Shared state, including request limits, supports replicas; concurrent-stream limits remain process-local. An HTTPS origin, consistent secrets, database connection capacity, and access-controlled backups are operational requirements. [Configuration](configuration.md) and [Railway deployment](railway.md) describe setup and free-plan limitations.

@@ -2,58 +2,21 @@ import dns from "node:dns/promises";
 import http from "node:http";
 import https from "node:https";
 import { isIP } from "node:net";
-import ipaddr from "ipaddr.js";
 import { AuthError } from "./auth.js";
 import { parseJsonPath, readJsonPath } from "./json-path.js";
+import { publicAddress, publicHttpUrl } from "./outbound.js";
 import type { ProbeInput, ProbeResult } from "../shared/health.js";
 
 const invalid = (message: string): never => {
   throw new AuthError(400, message);
 };
-function publicAddress(address: string): boolean {
-  try {
-    const ip = ipaddr.parse(address);
-    if (ip.range() !== "unicast") return false;
-    if (ip.kind() === "ipv4") {
-      return !(ip as ipaddr.IPv4).match(ipaddr.IPv4.parse("198.18.0.0"), 15);
-    }
-    const v6 = ip as ipaddr.IPv6;
-    return (
-      v6.match(ipaddr.IPv6.parse("2000::"), 3) &&
-      !["2001::/23", "2001:db8::/32", "2002::/16", "3fff::/20"].some((range) =>
-        v6.match(ipaddr.parseCIDR(range) as [ipaddr.IPv6, number]),
-      )
-    );
-  } catch {
-    return false;
-  }
-}
 function probeUrl(input: unknown): URL {
-  if (
-    typeof input !== "string" ||
-    input.length > 2048 ||
-    /[\u0000-\u0020\u007f]/.test(input)
-  )
+  if (typeof input === "string" && !URL.canParse(input))
     return invalid("Enter a valid public HTTP or HTTPS URL.");
-  let url: URL;
-  try {
-    url = new URL(input);
-  } catch {
-    return invalid("Enter a valid public HTTP or HTTPS URL.");
-  }
-  const host = url.hostname.replace(/^\[|\]$/g, "");
-  if (
-    !["http:", "https:"].includes(url.protocol) ||
-    url.username ||
-    url.password ||
-    input.includes("#") ||
-    !host ||
-    (isIP(host) && !publicAddress(host))
-  )
-    return invalid(
-      "Use a public HTTP or HTTPS URL without credentials or fragments.",
-    );
-  return url;
+  return (
+    publicHttpUrl(input) ??
+    invalid("Use a public HTTP or HTTPS URL without credentials or fragments.")
+  );
 }
 export function validateProbe(input: unknown): ProbeInput {
   if (!input || typeof input !== "object" || Array.isArray(input))

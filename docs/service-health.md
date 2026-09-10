@@ -86,3 +86,7 @@ Restoration waits for the freshly authorized workspace list. If the saved worksp
 The existing server process starts the scheduler automatically. No external cron or additional service is required. PostgreSQL stores the schedule and coordinates replicas with expiring leases; each process runs at most four probes concurrently. Restarted workers reclaim expired leases, and overdue results remain visibly Unknown until a new check succeeds or fails.
 
 Migrations `006_service_health.sql`, `007_health_shares.sql`, `008_health_latency_daily.sql` and `010_health_service_order.sql` run through the existing migration mechanism. Set the existing `TOKEN_ENCRYPTION_KEY` (32 bytes encoded as 64 hexadecimal characters) to use secret headers. Replacing this key makes old headers unreadable; update or clear headers through the UI to repair affected probes. Health snapshots and live updates load separately from the GitHub activity feed.
+
+## Incidents and alerts
+
+When a probe goes down, Service Health opens an incident, and resolves it when the probe is healthy again. Each service lists its incidents from the last 30 days, and incidents are kept for a year for uptime reports. To be told, add a [webhook](webhooks.md) for `incident.opened` and `incident.resolved`, or for every probe change with `health.degraded`, `health.down`, and `health.recovered`.

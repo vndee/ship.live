@@ -11,6 +11,9 @@ import { BrandMark } from "./BrandMark";
 import { RouteLink } from "./RouteLink";
 import { ThemeToggle } from "./ThemeToggle";
 
+// Pages with their own status. Every other page is part of Pulse.
+const OWN_PAGES = new Set<Page>(["health", "webhooks"]);
+
 export function AppHeader({
   feed,
   page,
@@ -28,13 +31,15 @@ export function AppHeader({
   onSettings: () => void;
   onToggleWall: () => void;
 }) {
+  const team = !feed.demo && feed.workspace?.kind === "team";
   const pages = (
     [
       ["pulse", "Pulse"],
       ["health", "Service Health"],
+      ["webhooks", "Webhooks"],
     ] as const
   ).filter(
-    ([id]) => id !== "health" || feed.demo || feed.workspace?.kind === "team",
+    ([id]) => id === "pulse" || (id === "health" ? feed.demo || team : team),
   );
   return (
     <header className="app-header">
@@ -56,7 +61,9 @@ export function AppHeader({
             to={{ page: id }}
             // Pages opened from Pulse (feed, team, milestones) keep Pulse current.
             aria-current={
-              (id === "health") === (page === "health") ? "page" : undefined
+              (id === "pulse" ? !OWN_PAGES.has(page) : page === id)
+                ? "page"
+                : undefined
             }
           >
             {label}
@@ -64,7 +71,7 @@ export function AppHeader({
         ))}
       </nav>
       <div className="header-tools">
-        {page !== "health" && status && (
+        {!OWN_PAGES.has(page) && status && (
           <span
             className={`connection-status ${feed.error ? "has-error" : ""}`}
           >

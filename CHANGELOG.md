@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add team webhooks. Outbound webhooks send activity, CI and deployment changes, Service Health incidents and probe changes, inbound alerts, and a weekly digest to Slack, Discord, Microsoft Teams, Google Chat, Lark / Feishu, or any HTTPS endpoint. Bodies are Handlebars-like templates with a live preview. Webhooks filter by repository, branch, environment, service, person, or summary text, with wildcards and exclusions, and a cooldown holds repeated alerts until a recovery. Requests are signed (an `X-Ship-Signature` header, or Lark's body fields), can require a JSON value in the response, retry with backoff for about nine hours, and are logged for 30 days with test sends and redelivery. URLs, header values, and secrets are encrypted, and deliveries follow the webhook owner's current repository access. See the [webhook guide](docs/webhooks.md).
+- Add inbound webhooks: a secret URL, optionally HMAC-signed, whose JSON is mapped by templates to a title, details, link, and delivery ID, then passed on to outbound webhooks.
+- Record Service Health incidents. Each period a probe is down opens and resolves an incident, shown on its service for 30 days and kept for a year.
+- Upgrade note: migration 015 adds the webhook, inbound, incident, and digest tables. Webhooks need `TOKEN_ENCRYPTION_KEY`.
+
 - Give every page its own URL: `/` for Pulse, `/health`, `/feed`, `/team`, and `/milestones`. The Live feed keeps its repository, activity type, search, and period in the URL, and `?person=<login>` opens a contributor profile, so any view can be bookmarked, opened in a new tab, or sent to a teammate with access. Back closes a profile and returns to the previous page. The main navigation and back links are real links.
 - Share request limits across replicas. Each client's per-minute count lives in PostgreSQL, and responses carry `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset`. If the database is unreachable, each process falls back to its own counts.
 - Add a retention job. Accepted webhook delivery IDs expire after 30 days (`DELIVERY_RETENTION_DAYS`); GitHub activity and wall signals expire only once `EVENT_RETENTION_DAYS` is set, to 31 days or more. Open pull requests and journal notes are never removed. It runs hourly on one replica at a time, in batches.

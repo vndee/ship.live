@@ -9,6 +9,11 @@ import type {
   WallSignalUpdate,
 } from "../shared/wall.js";
 import { ACTIVITY_CHANNEL } from "./postgres-notifications.js";
+import {
+  deploymentOutboxEvent,
+  pipelineOutboxEvent,
+} from "./webhook-events.js";
+import { recordInstallationEvent } from "./webhook-outbox.js";
 
 function signalKey(update: WallSignalUpdate): string {
   if (update.kind === "pull_request") return String(update.value.number);
@@ -37,8 +42,22 @@ export class WallStore {
         await client.query("ROLLBACK");
         return false;
       }
-      for (const update of updates)
-        await client.query(
+      for (const update of updates) {
+        // CI and deployment changes become webhook events, so their previous
+        // state is read under the same lock as the write.
+        const tracked =
+          update.kind === "pipeline" || update.kind === "deployment";
+        const previous = tracked
+          ? (
+              await client.query<{ value: PipelineState | DeploymentState }>(
+                `SELECT value FROM ship_live_wall_signals
+                 WHERE installation_id=$1 AND repository_id=$2 AND kind=$3 AND signal_key=$4
+                 FOR UPDATE`,
+                [installationId, repositoryId, update.kind, signalKey(update)],
+              )
+            ).rows[0]?.value
+          : undefined;
+        const written = await client.query(
           `INSERT INTO ship_live_wall_signals
              (installation_id,repository_id,repository,kind,signal_key,observed_at,value)
            VALUES($1,$2,$3,$4,$5,$6,$7)
@@ -46,7 +65,8 @@ export class WallStore {
              repository=EXCLUDED.repository,
              observed_at=EXCLUDED.observed_at,
              value=EXCLUDED.value
-           WHERE ship_live_wall_signals.observed_at <= EXCLUDED.observed_at`,
+           WHERE ship_live_wall_signals.observed_at <= EXCLUDED.observed_at
+           RETURNING 1`,
           [
             installationId,
             repositoryId,
@@ -57,6 +77,26 @@ export class WallStore {
             update.value,
           ],
         );
+        // A stale update changes nothing and announces nothing.
+        if (!written.rowCount) continue;
+        const event =
+          update.kind === "pipeline"
+            ? pipelineOutboxEvent(
+                repository,
+                repositoryId,
+                previous as PipelineState | undefined,
+                update.value,
+              )
+            : update.kind === "deployment"
+              ? deploymentOutboxEvent(
+                  repository,
+                  repositoryId,
+                  previous as DeploymentState | undefined,
+                  update.value,
+                )
+              : undefined;
+        if (event) await recordInstallationEvent(client, installationId, event);
+      }
       await client.query("SELECT pg_notify($1,$2)", [
         ACTIVITY_CHANNEL,
         JSON.stringify({

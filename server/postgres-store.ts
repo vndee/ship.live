@@ -91,6 +91,7 @@ export class PostgresEventStore implements EventStore {
         "012_repository_sync.sql",
         "013_sync_runs.sql",
         "014_rate_limits_retention.sql",
+        "015_webhooks.sql",
       ].map((file) =>
         readFile(new URL(`./migrations/${file}`, import.meta.url), "utf8"),
       ),
@@ -224,7 +225,13 @@ export class PostgresEventStore implements EventStore {
   async merge(
     organization: string,
     events: ActivityEvent[],
-    options: MergeOptions = {},
+    options: MergeOptions & {
+      /** Runs in the write's transaction with the events that are new. */
+      afterWrite?: (
+        client: PoolClient,
+        added: ActivityEvent[],
+      ) => Promise<void>;
+    } = {},
   ): Promise<MergeResult> {
     const org = organization.toLowerCase();
     return this.transaction(async (client) => {
@@ -251,6 +258,7 @@ export class PostgresEventStore implements EventStore {
         })),
         options.preferExisting,
       );
+      if (options.afterWrite) await options.afterWrite(client, added);
       // PostgreSQL releases notifications only after this same transaction commits.
       if (options.deliveryId && eventIds.length) {
         await client.query(

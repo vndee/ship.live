@@ -21,29 +21,29 @@ The demo uses fictional events and needs no external credentials. Real journals 
 
 ## Environment variables
 
-| Variable                   | Purpose                                                                                                                                                               |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`             | Required PostgreSQL connection. Supabase PostgreSQL, Railway PostgreSQL, and other compatible providers are supported.                                                |
-| `PORT`                     | Server port, default `3001`; Railway supplies it automatically.                                                                                                       |
-| `APP_URL`                  | Exact browser origin, required for configured sign-in. HTTPS when hosted; HTTP only on loopback. No path, query, credentials, or fragment.                            |
-| `TRUST_PROXY_HOPS`         | Trusted forwarding proxy count, `0` by default, integer `0`–`5`. Set only for a verified fixed ingress path; see [proxy guidance](railway.md#deploy-the-application). |
-| `SUPABASE_URL`             | Supabase project origin. Configure together with the publishable key.                                                                                                 |
-| `SUPABASE_PUBLISHABLE_KEY` | Supabase publishable Auth key. Legacy `SUPABASE_ANON_KEY` is accepted. Secret/service-role keys are rejected.                                                         |
-| `SUPABASE_GOOGLE_ENABLED`  | `true` by default when Auth is configured; `false` disables this login option. Enable the provider in Supabase too.                                                   |
-| `SUPABASE_GITHUB_ENABLED`  | Same behavior for GitHub sign-in.                                                                                                                                     |
-| `GITHUB_APP_ID`            | Numeric ID of the GitHub App used for repository data.                                                                                                                |
-| `GITHUB_APP_CLIENT_ID`     | That App's OAuth client ID, distinct from its numeric App ID.                                                                                                         |
-| `GITHUB_APP_CLIENT_SECRET` | That App's OAuth client secret.                                                                                                                                       |
-| `GITHUB_APP_PRIVATE_KEY`   | RSA PEM private key from the App settings. Quoted PEM text with escaped `\n` line breaks is accepted.                                                                 |
-| `GITHUB_APP_SLUG`          | App slug from its installation URL.                                                                                                                                   |
-| `GITHUB_WEBHOOK_SECRET`    | Random secret configured on the GitHub App webhook.                                                                                                                   |
-| `TOKEN_ENCRYPTION_KEY`     | Exactly 64 hexadecimal characters representing 32 random bytes. Encrypts GitHub user and refresh tokens in PostgreSQL.                                                |
-| `LOG_FORMAT`               | `json` (one JSON object per line, the production default) or `text` (the development default).                                                                        |
-| `LOG_LEVEL`                | `debug`, `info` (default), `warn`, or `error`. `debug` also logs every API request.                                                                                   |
-| `METRICS_TOKEN`            | Enables `/metrics` for scrapers that send `Authorization: Bearer <token>`. At least 24 characters. Without it, `/metrics` returns 404.                                |
-| `EVENT_RETENTION_DAYS`     | Days to keep GitHub activity and wall signals. `0` (default) keeps them indefinitely; otherwise 31–36500. Open pull requests and journal notes are never removed.     |
-| `DELIVERY_RETENTION_DAYS`  | Days to keep accepted webhook delivery IDs, which only deduplicate redeliveries. Default `30`; `0` keeps them; otherwise 7–36500.                                     |
-| `TEST_DATABASE_URL`        | Dedicated test administration connection with `CREATE DATABASE` permission. Never use production for tests.                                                           |
+| Variable                   | Purpose                                                                                                                                                                             |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`             | Required PostgreSQL connection. Supabase PostgreSQL, Railway PostgreSQL, and other compatible providers are supported.                                                              |
+| `PORT`                     | Server port, default `3001`; Railway supplies it automatically.                                                                                                                     |
+| `APP_URL`                  | Exact browser origin, required for configured sign-in. HTTPS when hosted; HTTP only on loopback. No path, query, credentials, or fragment.                                          |
+| `TRUST_PROXY_HOPS`         | Trusted forwarding proxy count, `0` by default, integer `0`–`5`. Set only for a verified fixed ingress path; see [proxy guidance](railway.md#deploy-the-application).               |
+| `SUPABASE_URL`             | Supabase project origin. Configure together with the publishable key.                                                                                                               |
+| `SUPABASE_PUBLISHABLE_KEY` | Supabase publishable Auth key. Legacy `SUPABASE_ANON_KEY` is accepted. Secret/service-role keys are rejected.                                                                       |
+| `SUPABASE_GOOGLE_ENABLED`  | `true` by default when Auth is configured; `false` disables this login option. Enable the provider in Supabase too.                                                                 |
+| `SUPABASE_GITHUB_ENABLED`  | Same behavior for GitHub sign-in.                                                                                                                                                   |
+| `GITHUB_APP_ID`            | Numeric ID of the GitHub App used for repository data.                                                                                                                              |
+| `GITHUB_APP_CLIENT_ID`     | That App's OAuth client ID, distinct from its numeric App ID.                                                                                                                       |
+| `GITHUB_APP_CLIENT_SECRET` | That App's OAuth client secret.                                                                                                                                                     |
+| `GITHUB_APP_PRIVATE_KEY`   | RSA PEM private key from the App settings. Quoted PEM text with escaped `\n` line breaks is accepted.                                                                               |
+| `GITHUB_APP_SLUG`          | App slug from its installation URL.                                                                                                                                                 |
+| `GITHUB_WEBHOOK_SECRET`    | Random secret configured on the GitHub App webhook.                                                                                                                                 |
+| `TOKEN_ENCRYPTION_KEY`     | Exactly 64 hexadecimal characters representing 32 random bytes. Encrypts GitHub user and refresh tokens, Service Health secret headers, and webhook URLs and secrets in PostgreSQL. |
+| `LOG_FORMAT`               | `json` (one JSON object per line, the production default) or `text` (the development default).                                                                                      |
+| `LOG_LEVEL`                | `debug`, `info` (default), `warn`, or `error`. `debug` also logs every API request.                                                                                                 |
+| `METRICS_TOKEN`            | Enables `/metrics` for scrapers that send `Authorization: Bearer <token>`. At least 24 characters. Without it, `/metrics` returns 404.                                              |
+| `EVENT_RETENTION_DAYS`     | Days to keep GitHub activity and wall signals. `0` (default) keeps them indefinitely; otherwise 31–36500. Open pull requests and journal notes are never removed.                   |
+| `DELIVERY_RETENTION_DAYS`  | Days to keep accepted webhook delivery IDs, which only deduplicate redeliveries. Default `30`; `0` keeps them; otherwise 7–36500.                                                   |
+| `TEST_DATABASE_URL`        | Dedicated test administration connection with `CREATE DATABASE` permission. Never use production for tests.                                                                         |
 
 Configure all GitHub App fields and `TOKEN_ENCRYPTION_KEY` together, or leave the integration unconfigured. Partial credentials fail startup; there is no personal-token or shared-dashboard-key fallback. None of these variables belong in `VITE_*` or frontend source. The frontend does not receive provider tokens or database credentials.
 

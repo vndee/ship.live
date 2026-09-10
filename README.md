@@ -35,6 +35,18 @@ Checks for the public HTTP APIs your team depends on, run from the server even w
 - **Precise probes.** Accepted status ranges, latency limits, and exact JSON conditions, with encrypted secret headers.
 - **Uptime and latency at a glance.** Each service shows its 24-hour uptime and latency mean ± standard deviation, with recent, 24-hour, and 30-day latency charts for every probe.
 - **Shareable status.** Arrange services for the team and share a read-only status page through an expiring link.
+- **Incident history.** Each time a probe goes down, an incident opens and later resolves. Services list their incidents from the last 30 days, and webhooks announce them.
+
+## Webhooks
+
+Send what matters to the tools your team already watches, and bring outside alerts in.
+
+- **Every event, any destination.** Merges, reviews, releases, CI failures and recoveries, deployments, Service Health incidents, inbound alerts, and a weekly digest, sent to Slack, Discord, Microsoft Teams, Google Chat, Lark / Feishu, or any HTTPS endpoint.
+- **Bodies you control.** A preset for each service and a template editor with a live preview, filters with wildcards and exclusions, cooldowns for flapping alerts, custom headers, signed requests, and success checks for services that report errors inside a 200 response.
+- **Reliable delivery.** Retries with backoff, a delivery log with each request and response, test sends, and redelivery. Deliveries follow each webhook owner's repository access.
+- **Inbound alerts.** Give Grafana, Sentry, or any service a URL, map its JSON to a title and link, and pass it on.
+
+See the [webhook guide](docs/webhooks.md).
 
 ## Also included
 
@@ -118,6 +130,7 @@ The database suite creates and removes isolated test databases. Use a dedicated 
 
 - [Architecture](docs/architecture.md) — identity, repository permissions, storage, and realtime.
 - [Configuration](docs/configuration.md) — OAuth setup, GitHub App setup, migration, and hosting.
+- [Webhooks](docs/webhooks.md) — events, presets, templates, signing, delivery, and inbound alerts.
 - [Service Health](docs/service-health.md) — probes, JSON conditions, figures, and sharing.
 - [Branding](public/branding/README.md) — the Orbit Pulse mark, palette, and usage.
 - [Contributing](CONTRIBUTING.md) — development conventions and checks.
