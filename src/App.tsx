@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ElementType } from "react";
 import {
+  Activity,
   ArrowDown,
+  ArrowLeft,
   ArrowUpRight,
   Check,
   CheckCheck,
@@ -62,10 +64,14 @@ import { ActivityCelebration } from "./components/ActivityCelebration";
 import { useActivityCelebration } from "./hooks/useActivityCelebration";
 import { useEngineeringWall } from "./hooks/useEngineeringWall";
 import { EngineeringWall } from "./components/EngineeringWall";
+import { createDemoHealth, demoSignals } from "./lib/demo-wall";
+import { PublicHealthList } from "./components/PublicHealthList";
+import { ContributorProfile } from "./components/ContributorProfile";
+import { RepositoryList } from "./components/RepositoryList";
 import { ThemeToggle } from "./components/ThemeToggle";
+import { BrandMark } from "./components/BrandMark";
 
-type Page =
-  "dashboard" | "feed" | "team" | "milestones" | "repositories" | "health";
+type Page = "dashboard" | "feed" | "team" | "milestones" | "health";
 type Kind = ActivityEvent["type"];
 type Period = "24h" | "7d" | "30d";
 const icons: Record<Kind, ElementType> = {
@@ -99,6 +105,10 @@ const periodNames: Record<Period, string> = {
   "7d": "Last 7 days",
   "30d": "Last 30 days",
 };
+const REPOSITORY_NOTE =
+  "Activity from repositories your GitHub account can see. Sync imports part of the last 30 days; new pushes arrive through webhooks.";
+const SOURCES_NOTE =
+  "Your private journal notes and activity from repositories your GitHub account can see. Sync imports part of the last 30 days; new pushes arrive through webhooks.";
 const shortRepo = (repo: string) =>
   repo === "journal/notes" ? "Ship notes" : repo.split("/").pop() || repo;
 function safeUrl(url?: string) {
@@ -223,6 +233,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     }
   }, [feed.session.user?.id, feed.workspace?.id]);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [profileLogin, setProfileLogin] = useState<string | null>(null);
   const detail = feed.events.find((event) => event.id === detailId) || null;
   const [actionError, setActionError] = useState("");
   const syncing = feed.syncRun?.status === "running";
@@ -280,8 +291,9 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     page === "dashboard" && selected
       ? [selected, ...visible.filter((e) => e.id !== selected.id)].slice(0, 5)
       : visible.slice(0, page === "dashboard" ? 5 : limit);
+  // The signed-out demo shows no connection label.
   const status = feed.demo
-    ? "Demo"
+    ? ""
     : feed.loading
       ? "Syncing"
       : feed.error
@@ -293,6 +305,20 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             : "Polling";
   const displayName = (login: string) =>
     feed.demo ? names[login] || login : login;
+  // A repository chosen in Pulse opens its activity in the Live feed.
+  function focusRepository(repository: string) {
+    clearFilters();
+    setRepo(repository);
+    setPeriod("30d");
+    setReplay(null);
+    setPage("feed");
+  }
+  // Demo checks stay current: a probe reads as unknown after two missed intervals.
+  const demoMinute = Math.floor(now / 60_000);
+  const demoHealth = useMemo(
+    () => (feed.demo ? createDemoHealth(demoMinute * 60_000) : null),
+    [feed.demo, demoMinute],
+  );
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 15_000);
@@ -653,46 +679,42 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             setPage("dashboard");
           }}
         >
-          ship<span>.</span>live
+          <BrandMark />
+          <span className="brand-name">
+            ship<span>.live</span>
+          </span>
         </a>
         <button className="organization-switch" onClick={openConnect}>
           {!feed.demo && <LockKeyhole size={12} />}
-          <span>{feed.demo ? "Demo workspace" : feed.organization}</span>
+          <span>{feed.demo ? "Acme Team" : feed.organization}</span>
           <ChevronDown size={13} />
         </button>
         <nav aria-label="Main navigation">
           {(
             [
-              ["dashboard", "Dashboard"],
+              ["dashboard", "Pulse"],
               ["health", "Service Health"],
-              ["feed", "Live feed"],
-              ["team", "Team"],
-              ["milestones", "Milestones"],
-              ["repositories", "Repositories"],
             ] as const
           )
             .filter(
               ([id]) =>
-                (!personal || (id !== "team" && id !== "milestones")) &&
-                (id !== "health" ||
-                  (!feed.demo && feed.workspace?.kind === "team")),
+                id !== "health" || feed.demo || feed.workspace?.kind === "team",
             )
             .map(([id, label]) => (
               <button
                 key={id}
-                aria-current={page === id ? "page" : undefined}
+                // Pages opened from Pulse (feed, team, milestones) keep Pulse current.
+                aria-current={
+                  (id === "health") === (page === "health") ? "page" : undefined
+                }
                 onClick={() => setPage(id)}
               >
-                {personal && id === "feed"
-                  ? "Journal"
-                  : personal && id === "repositories"
-                    ? "Sources"
-                    : label}
+                {label}
               </button>
             ))}
         </nav>
         <div className="header-tools">
-          {page !== "health" && (
+          {page !== "health" && status && (
             <span
               className={`connection-status ${feed.error ? "has-error" : ""}`}
             >
@@ -730,13 +752,22 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
       <main>
         <div className="page-heading">
           <div>
-            <p className="date-line">
-              {new Date(now).toLocaleDateString(undefined, {
-                weekday: "long",
-                month: "long",
-                day: "numeric",
-              })}
-            </p>
+            {page === "feed" || page === "team" || page === "milestones" ? (
+              <button
+                className="text-button page-back"
+                onClick={() => setPage("dashboard")}
+              >
+                <ArrowLeft size={14} /> Pulse
+              </button>
+            ) : (
+              <p className="date-line">
+                {new Date(now).toLocaleDateString(undefined, {
+                  weekday: "long",
+                  month: "long",
+                  day: "numeric",
+                })}
+              </p>
+            )}
             <h1>
               {
                 {
@@ -749,7 +780,6 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                   health: "Service Health",
                   team: "The people behind it.",
                   milestones: "Built, together.",
-                  repositories: "Where work takes shape.",
                 }[page]
               }
             </h1>
@@ -765,7 +795,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                 <Sparkles size={15} /> Try live activity
               </button>
             )}
-            {!personal && (
+            {!personal && !(feed.demo && page === "health") && (
               <button
                 className="button secondary share-dashboard-button"
                 onClick={() =>
@@ -773,7 +803,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                 }
               >
                 <Share2 size={15} />{" "}
-                {page === "health" ? "Share service health" : "Share dashboard"}
+                {page === "health" ? "Share service health" : "Share Pulse"}
               </button>
             )}
             {page === "feed" && (
@@ -894,19 +924,34 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
               <div className="dashboard-layout">
                 {!personal ? (
                   <EngineeringWall
-                    snapshot={engineering.data}
-                    health={engineering.health}
+                    snapshot={
+                      feed.demo ? demoSignals().snapshot : engineering.data
+                    }
+                    health={
+                      feed.demo ? demoSignals().health : engineering.health
+                    }
                     events={feed.events}
                     now={now}
                     demo={feed.demo}
+                    displayName={displayName}
+                    preferencesKey={feed.demo ? "demo" : feed.workspace?.id}
                     moving={moving}
+                    // Signed-out visitors and the wall display slide by default.
+                    autoplayDefault={(!feed.session.user || wall) && moving}
                     loading={feed.loading || engineering.loading}
                     onToggleMotion={() => setMoving(!moving)}
                     onRules={() => setModal("rules")}
                     onMilestones={() => setPage("milestones")}
+                    onOpenHealth={
+                      feed.demo ? undefined : () => setPage("health")
+                    }
+                    onSelectPerson={setProfileLogin}
+                    onOpenTeam={() => setPage("team")}
+                    onSelectRepository={focusRepository}
+                    repositoryNote={feed.demo ? undefined : REPOSITORY_NOTE}
                     status={
                       feed.demo
-                        ? "Demo"
+                        ? ""
                         : feed.paused
                           ? "Paused"
                           : feed.streaming
@@ -917,16 +962,27 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                     }
                   />
                 ) : (
-                  <LiveLeaderboard
-                    events={feed.events}
-                    now={now}
-                    demo={feed.demo}
-                    moving={moving}
-                    loading={feed.loading}
-                    onToggleMotion={() => setMoving(!moving)}
-                    onRules={() => setModal("rules")}
-                    status={status}
-                  />
+                  <div className="dashboard-main">
+                    <LiveLeaderboard
+                      events={feed.events}
+                      now={now}
+                      demo={feed.demo}
+                      onSelect={setProfileLogin}
+                      moving={moving}
+                      loading={feed.loading}
+                      onToggleMotion={() => setMoving(!moving)}
+                      onRules={() => setModal("rules")}
+                      status={status}
+                    />
+                    <RepositoryList
+                      events={feed.events}
+                      now={now}
+                      title="Sources"
+                      framed
+                      note={feed.demo ? undefined : SOURCES_NOTE}
+                      onSelect={focusRepository}
+                    />
+                  </div>
                 )}
                 <aside className="dashboard-sidebar">{renderFeed()}</aside>
               </div>
@@ -991,6 +1047,26 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
               csrfToken={feed.session.csrfToken}
             />
           )}
+        {page === "health" && demoHealth && (
+          <section
+            className="service-health"
+            aria-labelledby="service-health-title"
+          >
+            <div className="section-heading health-heading">
+              <h2 id="service-health-title">
+                <Activity size={19} /> Service Health{" "}
+                <span className="section-count">
+                  {demoHealth.services.length}
+                </span>
+              </h2>
+            </div>
+            <p className="health-intro">
+              Sample services with fictional checks. Sign in and connect a team
+              to monitor your own endpoints.
+            </p>
+            <PublicHealthList services={demoHealth.services} now={now} />
+          </section>
+        )}
         {page === "team" && (
           <section className="team-page">
             <div className="section-heading">
@@ -1035,6 +1111,12 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                     {person.xp.toLocaleString()}
                     <small> XP</small>
                   </strong>
+                  <button
+                    type="button"
+                    className="row-select"
+                    aria-label={`Open ${displayName(person.login)}'s profile`}
+                    onClick={() => setProfileLogin(person.login)}
+                  />
                 </div>
               ))}
             </div>
@@ -1098,62 +1180,6 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             </p>
           </section>
         )}
-        {page === "repositories" && (
-          <section className="repositories-page">
-            <div className="section-heading">
-              <h2>
-                {allRepositories.length} {personal ? "sources" : "repositories"}
-              </h2>
-              <span className="period-note">Weekly activity · UTC</span>
-            </div>
-            <div className="repository-list">
-              {allRepositories.map((repository) => {
-                const events = feed.events.filter((e) => e.repo === repository),
-                  m = getMetrics(events, now);
-                return (
-                  <button
-                    className="repository-row"
-                    key={repository}
-                    onClick={() => {
-                      clearFilters();
-                      setRepo(repository);
-                      setPeriod("30d");
-                      setReplay(null);
-                      setPage("dashboard");
-                    }}
-                  >
-                    <FolderGit2 size={21} />
-                    <span className="repository-identity">
-                      <strong>{shortRepo(repository)}</strong>
-                      <small>{repository}</small>
-                    </span>
-                    <span>
-                      {m.merges}
-                      <small>merges</small>
-                    </span>
-                    <span>
-                      {m.reviews}
-                      <small>reviews</small>
-                    </span>
-                    <span className="repository-latest">
-                      {ago(events[0].occurredAt, now)}
-                    </span>
-                    <ArrowUpRight size={18} />
-                  </button>
-                );
-              })}
-            </div>
-            {!allRepositories.length && (
-              <div className="empty-state">
-                <h3>Repositories appear with activity</h3>
-                <p>Connect GitHub to start receiving repository activity.</p>
-                <button className="button" onClick={openConnect}>
-                  Manage connection
-                </button>
-              </div>
-            )}
-          </section>
-        )}
         <footer className="app-footer">
           <span>
             {feed.demo
@@ -1205,7 +1231,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
           </Modal>
         )}
       {modal === "share" && feed.demo && (
-        <Modal title="Share dashboard" onClose={() => setModal(null)}>
+        <Modal title="Share Pulse" onClose={() => setModal(null)}>
           <p className="modal-description">
             Share a connected team dashboard with a read-only link. Choose an
             expiration, rotate the link, or revoke access at any time.
@@ -1220,7 +1246,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
         </Modal>
       )}
       {modal === "share" && feed.workspace?.kind === "team" && (
-        <Modal title="Share dashboard" onClose={() => setModal(null)}>
+        <Modal title="Share Pulse" onClose={() => setModal(null)}>
           <SharePanel feed={feed} link={shareLink} onLink={setShareLink} />
         </Modal>
       )}
@@ -1322,7 +1348,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
               />
             </label>
             <label className="settings-toggle">
-              <span>Animate dashboard</span>
+              <span>Animate Pulse</span>
               <input
                 type="checkbox"
                 checked={moving}
@@ -1357,6 +1383,20 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             </p>
             <span className="version">ship.live / 0.1.0</span>
           </section>
+        </Modal>
+      )}
+      {profileLogin && (
+        <Modal
+          title={displayName(profileLogin)}
+          onClose={() => setProfileLogin(null)}
+        >
+          <ContributorProfile
+            events={feed.events}
+            login={profileLogin}
+            now={now}
+            demo={feed.demo}
+            displayName={displayName}
+          />
         </Modal>
       )}
       {detail && (

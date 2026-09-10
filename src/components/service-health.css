@@ -24,7 +24,7 @@
 .health-result,
 .health-empty p {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.7;
 }
 .health-intro {
@@ -77,7 +77,7 @@
 .health-probe-count {
   color: var(--muted);
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 12px;
 }
 .health-service-strip {
   display: grid;
@@ -124,7 +124,7 @@
   align-items: center;
   gap: 6px;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--muted);
 }
@@ -152,7 +152,7 @@
 }
 .health-probe-top {
   justify-content: space-between;
-  font-size: 13px;
+  font-size: 14px;
 }
 .health-probe-top strong {
   overflow-wrap: anywhere;
@@ -165,18 +165,18 @@
 }
 .health-metrics > span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .health-metrics strong {
   display: block;
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
   margin-top: 5px;
   font-weight: 500;
 }
 .health-metrics small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
 }
 .health-history {
@@ -199,11 +199,11 @@
 }
 .health-no-history {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 .health-timeline {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 .health-timeline summary {
   cursor: pointer;
@@ -228,7 +228,7 @@
 .health-empty {
   padding: 24px 20px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
 }
 .health-empty h3 {
   margin: 0 0 6px;
@@ -237,13 +237,13 @@
 }
 .health-error {
   color: var(--danger-strong);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
 }
 .health-notice,
 .health-change {
   color: var(--success-strong);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
 }
 .health-change {
@@ -281,7 +281,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
 }
 .health-editor input,
@@ -319,7 +319,7 @@
   border: 1px solid var(--danger-border);
   margin-top: 16px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 14px;
 }
 .service-health button:focus-visible,
 .service-health input:focus-visible,
@@ -425,7 +425,7 @@
   gap: 10px;
 }
 .latency-chart-heading h4 {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   margin: 0;
 }
@@ -444,7 +444,7 @@
   border-radius: 3px;
   padding: 6px 9px;
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
 .latency-chart-range button[aria-pressed="true"] {
@@ -453,7 +453,7 @@
 }
 .latency-chart-caption {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.6;
   margin: 10px 0 0;
 }
@@ -483,7 +483,7 @@
   background: var(--surface);
   color: var(--text);
   box-shadow: 0 4px 16px #0003;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
@@ -510,7 +510,7 @@
 }
 .latency-axis {
   fill: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-family: inherit;
 }
 .latency-line {
@@ -525,11 +525,11 @@
 }
 .latency-chart-empty {
   padding: 24px 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
 }
 .latency-data {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .latency-data summary {
@@ -634,4 +634,81 @@
   .health-service-summary .health-service-toggle {
     padding-left: 4px;
   }
+}
+/* Compact 24-hour figures in each service row. */
+.health-service-toggle .health-service-stats {
+  margin-left: auto;
+}
+.health-service-stats + .health-service-strip {
+  margin-left: 0;
+}
+.health-service-stats {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 14px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.health-service-stats b {
+  margin-right: 3px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 550;
+}
+.health-info-button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  margin-right: 12px;
+  border-radius: 50%;
+  color: var(--subtle);
+}
+.health-info-button:hover,
+.health-info-button[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+/* Fixed to the viewport so the clipped service card never cuts it off. */
+.health-info-tooltip {
+  position: fixed;
+  z-index: 40;
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 14px 34px var(--shadow);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+}
+.health-info-tooltip strong {
+  color: var(--text);
+  font-weight: 550;
+}
+@media (max-width: 600px) {
+  .health-service-toggle .health-service-stats {
+    flex: 1 0 calc(100% - 26px);
+    margin-left: 26px;
+  }
+}
+@media (max-width: 600px) {
+  /* Keep the info button beside the service name instead of on its own line. */
+  .health-service-heading:has(> .health-info-button) {
+    flex-wrap: nowrap;
+    align-items: flex-start;
+  }
+  .health-service-heading > .health-info-button {
+    margin-top: 12px;
+  }
+}
+/* The info button sits right after the status strip, not a full padding away. */
+.health-service-toggle:has(+ .health-info-button) {
+  padding-right: 4px;
 }

@@ -1,48 +1,25 @@
-import { LatencyChart } from "./LatencyChart";
-import { ServiceStatusStrip } from "./ServiceStatusStrip";
 import { useEffect, useRef, useState } from "react";
 import {
   Clock3,
-  ChevronDown,
   Eye,
   Maximize2,
   Minimize2,
   RefreshCw,
   Unlink,
 } from "lucide-react";
-import type { HealthStatus, PublicHealthProbe } from "../../shared/health";
+import type { HealthStatus } from "../../shared/health";
 import { isEffectivelyNoExpiration } from "../../shared/shares";
 import { useSharedHealth } from "../hooks/useSharedHealth";
-import { aggregate } from "../lib/service-status-strip";
+import { PublicHealthList, publicProbeStatus } from "./PublicHealthList";
 import "./service-health.css";
 import { ThemeToggle } from "./ThemeToggle";
+import { BrandMark } from "./BrandMark";
 
-function statusOf(probe: PublicHealthProbe, now: number): HealthStatus {
-  if (!probe.enabled) return "paused";
-  if (
-    !probe.lastCheck ||
-    now - Date.parse(probe.lastCheck.checkedAt) >
-      probe.intervalSeconds * 2000 + probe.timeoutMs
-  )
-    return "unknown";
-  return probe.status;
-}
-function Badge({ status }: { status: HealthStatus }) {
-  return (
-    <span className={`health-badge health-${status}`}>
-      <span aria-hidden="true" />
-      {status[0].toUpperCase() + status.slice(1)}
-    </span>
-  );
-}
 function SharedHealthView({ token }: { token: string }) {
   const feed = useSharedHealth(token);
   const [now, setNow] = useState(Date.now());
   const [wall, setWall] = useState(false);
   const [announcement, setAnnouncement] = useState("");
-  const [expandedServiceId, setExpandedServiceId] = useState<string | null>(
-    null,
-  );
   const previous = useRef<Map<string, HealthStatus> | null>(null);
   useEffect(() => {
     const clock = setInterval(() => setNow(Date.now()), 500);
@@ -63,7 +40,7 @@ function SharedHealthView({ token }: { token: string }) {
     const changes: string[] = [];
     for (const service of feed.data.services)
       for (const probe of service.probes) {
-        const status = statusOf(probe, Date.now());
+        const status = publicProbeStatus(probe, Date.now());
         next.set(probe.id, status);
         const before = previous.current?.get(probe.id);
         if (
@@ -99,7 +76,10 @@ function SharedHealthView({ token }: { token: string }) {
     >
       <header className="app-header">
         <a className="brand" href="/">
-          ship<span>.</span>live
+          <BrandMark />
+          <span className="brand-name">
+            ship<span>.live</span>
+          </span>
         </a>
         <span className="shared-workspace">
           {feed.data?.organization || "Shared service health"}
@@ -178,175 +158,7 @@ function SharedHealthView({ token }: { token: string }) {
             <div aria-live="polite" role="status">
               {announcement && <p className="health-change">{announcement}</p>}
             </div>
-            {!feed.data.services.length && (
-              <div className="health-empty">
-                <h3>No services configured</h3>
-                <p>Services will appear when the team adds them.</p>
-              </div>
-            )}
-            {feed.data.services.map((service) => {
-              const statuses = service.probes.map((probe) =>
-                statusOf(probe, now),
-              );
-              const status = aggregate(statuses);
-              const expanded = expandedServiceId === service.id;
-              return (
-                <article
-                  className={`health-service ${expanded ? "is-expanded" : ""}`}
-                  key={service.id}
-                >
-                  <div className="health-service-heading">
-                    <button
-                      className="health-service-toggle"
-                      type="button"
-                      aria-expanded={expanded}
-                      onClick={() =>
-                        setExpandedServiceId((current) =>
-                          current === service.id ? null : service.id,
-                        )
-                      }
-                    >
-                      <ChevronDown aria-hidden="true" size={16} />
-                      <span className="health-service-name">
-                        {service.name}
-                      </span>
-                      <Badge status={status} />
-                      <span className="health-probe-count">
-                        {service.probes.length}{" "}
-                        {service.probes.length === 1 ? "probe" : "probes"}
-                      </span>
-                      <ServiceStatusStrip probes={service.probes} />
-                    </button>
-                  </div>
-                  {expanded && (
-                    <div className="health-service-details">
-                      {!service.probes.length && (
-                        <p className="health-empty">No probes configured.</p>
-                      )}
-                      {service.probes.map((probe) => (
-                        <div className="health-probe" key={probe.id}>
-                          <div className="health-probe-top">
-                            <strong>{probe.name}</strong>
-                            <Badge status={statusOf(probe, now)} />
-                          </div>
-                          <div className="health-metrics">
-                            <span>
-                              Latency
-                              <strong>
-                                {probe.lastCheck
-                                  ? `${Math.round(probe.lastCheck.latencyMs)} ms`
-                                  : "—"}
-                              </strong>
-                            </span>
-                            <span>
-                              Last check
-                              <strong>
-                                {probe.lastCheck ? (
-                                  <time dateTime={probe.lastCheck.checkedAt}>
-                                    {new Date(
-                                      probe.lastCheck.checkedAt,
-                                    ).toLocaleString()}
-                                  </time>
-                                ) : (
-                                  "Never"
-                                )}
-                              </strong>
-                            </span>
-                            <span>
-                              Check success · 24h
-                              <strong>
-                                {probe.successRate24h === null
-                                  ? "—"
-                                  : `${probe.successRate24h.toFixed(1)}%`}{" "}
-                                <small>({probe.checks24h} checks)</small>
-                              </strong>
-                            </span>
-                          </div>
-                          {statusOf(probe, now) === "unknown" && (
-                            <p className="health-result">
-                              {probe.lastCheck
-                                ? "Check overdue. Waiting for a fresh result."
-                                : "Waiting for the first check."}
-                            </p>
-                          )}
-                          <LatencyChart
-                            name={probe.name}
-                            history={probe.history}
-                            daily={probe.latencyHistory}
-                            windows={probe.latency24h}
-                            now={now}
-                          />
-                          <div
-                            className="health-history"
-                            role="img"
-                            aria-label={`Recent checks for ${probe.name}, oldest to newest: ${
-                              probe.history
-                                .slice(0, 40)
-                                .reverse()
-                                .map((check) =>
-                                  check.ok ? "passed" : "failed",
-                                )
-                                .join(", ") || "no checks"
-                            }`}
-                          >
-                            {probe.history
-                              .slice(0, 40)
-                              .reverse()
-                              .map((check, index) => (
-                                <span
-                                  key={`${check.checkedAt}-${index}`}
-                                  className={
-                                    check.ok ? "health-pass" : "health-fail"
-                                  }
-                                  title={`${new Date(check.checkedAt).toLocaleString()} · ${check.ok ? "Passed" : "Failed"} · ${Math.round(check.latencyMs)} ms`}
-                                />
-                              ))}
-                            {!probe.history.length && (
-                              <span className="health-no-history">
-                                No recorded checks
-                              </span>
-                            )}
-                          </div>
-                          <details className="health-timeline">
-                            <summary>State-change timeline</summary>
-                            <ul>
-                              {probe.history
-                                .slice()
-                                .reverse()
-                                .filter(
-                                  (check, index, history) =>
-                                    index === 0 ||
-                                    check.status !== history[index - 1].status,
-                                )
-                                .slice(-8)
-                                .reverse()
-                                .map((check, index) => (
-                                  <li key={`${check.checkedAt}-${index}`}>
-                                    <Badge status={check.status} />
-                                    <time dateTime={check.checkedAt}>
-                                      {new Date(
-                                        check.checkedAt,
-                                      ).toLocaleString()}
-                                    </time>
-                                  </li>
-                                ))}
-                            </ul>
-                            {!probe.history.length && (
-                              <p>No state changes recorded.</p>
-                            )}
-                          </details>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-            <p className="health-footnote">
-              Check success is the percentage of recorded checks that passed in
-              the last 24 hours. Missing checks do not count as successes.
-              Recent checks run from oldest to newest.
-            </p>
+            <PublicHealthList services={feed.data.services} now={now} />
           </section>
         )}
         <footer className="app-footer">

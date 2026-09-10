@@ -73,9 +73,7 @@ export function SharePanel({
       if (action === "revoke") {
         await feed.revokeShare();
         setShare(null);
-        setMessage(
-          "Link revoked. Viewers can no longer access this dashboard.",
-        );
+        setMessage("Link revoked. Viewers can no longer access this Pulse.");
       } else {
         const created = await feed.createShare(duration, action === "rotate");
         setShare(created);
@@ -83,7 +81,7 @@ export function SharePanel({
         setMessage(
           action === "rotate"
             ? "New link created. The previous link no longer works."
-            : "Your read-only dashboard link is ready.",
+            : "Your read-only Pulse link is ready.",
         );
       }
     } catch (error) {
@@ -114,12 +112,12 @@ export function SharePanel({
     <div className="share-panel">
       <p className="modal-description">
         Give your team a live view of the work. Anyone with this link can view
-        this dashboard for the lifetime you choose.
+        this Pulse for the lifetime you choose.
       </p>
       <div className="share-scope">
         <ShieldCheck size={20} />
         <div>
-          <strong>Read-only team dashboard</strong>
+          <strong>Read-only team Pulse</strong>
           <p>
             Includes contributor names, XP and GitHub activity from repositories
             you can access. Personal journal notes are always private.
@@ -166,7 +164,7 @@ export function SharePanel({
               Your share link
               <div className="share-link-input">
                 <input
-                  aria-label="Dashboard share link"
+                  aria-label="Pulse share link"
                   readOnly
                   value={url}
                   onFocus={(e) => e.target.select()}

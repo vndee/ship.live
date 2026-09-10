@@ -40,6 +40,13 @@ export interface LatencyWindow {
   maxLatencyMs: number;
   checks: number;
 }
+/** Response times of every check in the last 24 hours. */
+export interface LatencyStats {
+  mean: number;
+  /** Population standard deviation. */
+  sd: number;
+  checks: number;
+}
 export interface HealthProbe extends ProbeInput {
   id: string;
   serviceId: string;
@@ -51,6 +58,7 @@ export interface HealthProbe extends ProbeInput {
   history: HealthCheck[];
   latencyHistory: DailyLatency[];
   latency24h: LatencyWindow[];
+  latencyStats24h: LatencyStats | null;
 }
 export interface HealthService {
   id: string;
@@ -78,6 +86,7 @@ export type PublicHealthProbe = Pick<
   | "history"
   | "latencyHistory"
   | "latency24h"
+  | "latencyStats24h"
 >;
 export interface PublicHealthService {
   id: string;

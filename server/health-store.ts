@@ -10,6 +10,7 @@ import type {
   HealthSnapshot,
   HealthCheck,
   DailyLatency,
+  LatencyStats,
   LatencyWindow,
   ProbeInput,
   ProbeResult,
@@ -324,6 +325,7 @@ export class HealthStore {
         history: HealthCheck[];
         latencyHistory: DailyLatency[];
         latency24h: LatencyWindow[];
+        latencyStats24h: LatencyStats | null;
         checks: number;
         rate: number | null;
       })[];
@@ -332,6 +334,7 @@ export class HealthStore {
     'history',coalesce((SELECT jsonb_agg(h.entry ORDER BY h.checked_at DESC,h.id DESC) FROM (SELECT c.id,c.checked_at,c.result||jsonb_build_object('checkedAt',c.checked_at,'status',c.state) AS entry FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '30 days' ORDER BY c.checked_at DESC,c.id DESC LIMIT 120) h),'[]'::jsonb),
     'latencyHistory',coalesce((SELECT jsonb_agg(jsonb_build_object('date',d.day,'avgLatencyMs',round(d.total_latency/d.checks,2),'minLatencyMs',d.min_latency,'maxLatencyMs',d.max_latency,'checks',d.checks) ORDER BY d.day) FROM ship_live_health_latency_daily d WHERE d.probe_id=p.id AND d.day >= (now() AT TIME ZONE 'UTC')::date-29),'[]'::jsonb),
     'latency24h',coalesce((SELECT jsonb_agg(jsonb_build_object('start',w.start,'avgLatencyMs',round(w.avg,2),'minLatencyMs',w.min,'maxLatencyMs',w.max,'checks',w.checks) ORDER BY w.start) FROM (SELECT to_timestamp(floor(extract(epoch FROM c.checked_at)/900)*900) AS start,avg((c.result->>'latencyMs')::numeric) AS avg,min((c.result->>'latencyMs')::numeric) AS min,max((c.result->>'latencyMs')::numeric) AS max,count(c.result->>'latencyMs') AS checks FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>=to_timestamp(floor(extract(epoch FROM now())/900)*900-95*900) GROUP BY 1 HAVING count(c.result->>'latencyMs')>0) w),'[]'::jsonb),
+    'latencyStats24h',(SELECT CASE WHEN count(x.l)>0 THEN jsonb_build_object('mean',round(avg(x.l),2),'sd',round(coalesce(stddev_pop(x.l),0),2),'checks',count(x.l)) END FROM (SELECT (c.result->>'latencyMs')::numeric AS l FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '24 hours') x),
     'checks',(SELECT count(*) FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '24 hours'),
     'rate',(SELECT round(100.0*avg(CASE WHEN (c.result->>'ok')::boolean THEN 1 ELSE 0 END),1) FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '24 hours')
     ) ORDER BY p.config->>'name',p.id) FROM ship_live_health_probes p WHERE p.service_id=s.id),'[]'::jsonb) AS probes FROM ship_live_health_services s WHERE s.workspace_id=$1 ORDER BY s.display_order,s.created_at,s.id`,
@@ -371,6 +374,7 @@ export class HealthStore {
             history: p.history,
             latencyHistory: p.latencyHistory,
             latency24h: p.latency24h,
+            latencyStats24h: p.latencyStats24h,
           };
         });
         return {

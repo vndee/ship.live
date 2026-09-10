@@ -16,7 +16,10 @@ import { ActivityCelebration } from "./ActivityCelebration";
 import { useActivityCelebration } from "../hooks/useActivityCelebration";
 import type { ActivityEvent } from "../../shared/types";
 import { ThemeToggle } from "./ThemeToggle";
+import { BrandMark } from "./BrandMark";
 import { EngineeringWall } from "./EngineeringWall";
+import { ContributorProfile } from "./ContributorProfile";
+import { Modal } from "./Modal";
 
 const noEvents: ActivityEvent[] = [];
 
@@ -29,6 +32,7 @@ export function SharedDashboard() {
   );
   const [wall, setWall] = useState(false);
   const [celebrations, setCelebrations] = useState(true);
+  const [profileLogin, setProfileLogin] = useState<string | null>(null);
   const liveEffects = useActivityCelebration(feed.data?.events || noEvents, {
     scope: token,
     ready: Boolean(feed.data) && !feed.error,
@@ -61,10 +65,13 @@ export function SharedDashboard() {
     <div className={`app-shell shared-dashboard ${wall ? "wall-mode" : ""}`}>
       <header className="app-header">
         <a className="brand" href="/">
-          ship<span>.</span>live
+          <BrandMark />
+          <span className="brand-name">
+            ship<span>.live</span>
+          </span>
         </a>
         <span className="shared-workspace">
-          {feed.data?.organization || "Shared dashboard"}
+          {feed.data?.organization || "Shared Pulse"}
         </span>
         <div className="header-tools">
           <ThemeToggle />
@@ -124,11 +131,7 @@ export function SharedDashboard() {
             ) : (
               <Unlink size={28} />
             )}
-            <h2>
-              {feed.loading
-                ? "Opening the team dashboard…"
-                : "Dashboard unavailable"}
-            </h2>
+            <h2>{feed.loading ? "Opening Pulse…" : "Pulse unavailable"}</h2>
             <p>{feed.error || "Checking this share link."}</p>
             {!feed.loading && (
               <button className="button secondary" onClick={feed.retry}>
@@ -145,10 +148,13 @@ export function SharedDashboard() {
               now={now}
               demo={false}
               moving={moving}
+              autoplayDefault={wall && moving}
+              preferencesKey="shared-dashboard"
               loading={feed.loading}
               onToggleMotion={() => setMoving((value) => !value)}
               onRules={() => undefined}
               onMilestones={() => undefined}
+              onSelectPerson={setProfileLogin}
               status={feed.connected ? "Live" : "Reconnecting"}
             />
             <aside className="dashboard-sidebar">
@@ -206,8 +212,8 @@ export function SharedDashboard() {
                   <Eye size={17} />
                   <h3>A live window into the team.</h3>
                   <p>
-                    This dashboard updates as the team ships. Access ends when
-                    the link is revoked or its lifetime ends.
+                    Pulse updates as the team ships. Access ends when the link
+                    is revoked or its lifetime ends.
                   </p>
                 </div>
               </section>
@@ -215,10 +221,19 @@ export function SharedDashboard() {
           </div>
         )}
         <footer className="app-footer">
-          <span>Shared team dashboard · Read only</span>
+          <span>Shared team Pulse · Read only</span>
           <span>Weekly recognition resets Monday, 00:00 UTC</span>
         </footer>
       </main>
+      {profileLogin && feed.data && (
+        <Modal title={profileLogin} onClose={() => setProfileLogin(null)}>
+          <ContributorProfile
+            events={feed.data.events}
+            login={profileLogin}
+            now={now}
+          />
+        </Modal>
+      )}
       <ActivityCelebration
         celebration={liveEffects.celebration}
         moving={moving}

@@ -3,7 +3,7 @@
   grid-template-columns: minmax(110px, 1fr) auto;
   align-items: center;
   gap: 8px 18px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .expiration-label {
   color: var(--text);
@@ -76,7 +76,7 @@
   display: block;
   margin: 0 0 5px 4px;
   color: var(--subtle);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 650;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -122,7 +122,7 @@
 }
 .expiration-options small {
   color: var(--success);
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.2;
 }
 .expiration-options svg {
@@ -136,7 +136,7 @@
   max-width: 260px;
   margin: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.45;
 }
 @media (prefers-reduced-motion: reduce) {

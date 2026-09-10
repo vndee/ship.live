@@ -4,15 +4,126 @@ import type {
   PipelineState,
 } from "../../shared/wall.js";
 import type { HealthSnapshot } from "../../shared/health.js";
+import { getCreditedEvents, getWeekStart } from "./activity.js";
 
 export type WallScene =
   "pulse" | "review" | "release" | "health" | "leaderboard";
+export const ALL_SCENES: readonly WallScene[] = [
+  "pulse",
+  "review",
+  "release",
+  "health",
+  "leaderboard",
+];
+
+export interface WallTabs {
+  /** Every scene, in the viewer's order. */
+  order: WallScene[];
+  hidden: WallScene[];
+}
+
+const isScene = (value: unknown): value is WallScene =>
+  ALL_SCENES.includes(value as WallScene);
+
+/**
+ * A viewer's stored tab order and hidden tabs. Unknown values are ignored;
+ * scenes missing from a stored order keep their default place at the end.
+ */
+export function parseWallTabs(raw: string | null): WallTabs {
+  let value: unknown = null;
+  try {
+    value = JSON.parse(raw ?? "null");
+  } catch {
+    // Treat unreadable storage as no preference.
+  }
+  const stored =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const order = [
+    ...new Set(Array.isArray(stored.order) ? stored.order.filter(isScene) : []),
+  ];
+  const hidden = Array.isArray(stored.hidden) ? stored.hidden : [];
+  return {
+    order: [...order, ...ALL_SCENES.filter((scene) => !order.includes(scene))],
+    hidden: ALL_SCENES.filter((scene) => hidden.includes(scene)),
+  };
+}
+
+/** Available scenes in the viewer's order minus hidden ones, never empty. */
+export function visibleScenes(
+  available: WallScene[],
+  tabs: WallTabs,
+): WallScene[] {
+  const shown = tabs.order.filter(
+    (scene) => available.includes(scene) && !tabs.hidden.includes(scene),
+  );
+  return shown.length ? shown : available.slice(0, 1);
+}
+
+/** Swap a scene with its neighbor among the scenes the viewer can choose. */
+export function moveScene(
+  order: WallScene[],
+  scene: WallScene,
+  offset: -1 | 1,
+  among: readonly WallScene[] = order,
+): WallScene[] {
+  const peers = order.filter((item) => among.includes(item));
+  const index = peers.indexOf(scene);
+  const target = index < 0 ? undefined : peers[index + offset];
+  if (!target) return order;
+  return order.map((item) =>
+    item === scene ? target : item === target ? scene : item,
+  );
+}
+
+export interface RepositoryActivity {
+  repository: string;
+  /** Activity this UTC week. */
+  weekly: number;
+  merges: number;
+  reviews: number;
+  latestAt: string;
+}
+
+/** Per-repository activity from human events, most active this week first. */
+export function getRepositoryActivity(
+  events: ActivityEvent[],
+  now = Date.now(),
+): RepositoryActivity[] {
+  const weekStart = getWeekStart(now).getTime();
+  const repositories = new Map<string, RepositoryActivity>();
+  for (const { event } of getCreditedEvents(events, now)) {
+    const at = Date.parse(event.occurredAt);
+    const entry = repositories.get(event.repo) ?? {
+      repository: event.repo,
+      weekly: 0,
+      merges: 0,
+      reviews: 0,
+      latestAt: event.occurredAt,
+    };
+    if (at > Date.parse(entry.latestAt)) entry.latestAt = event.occurredAt;
+    if (at >= weekStart) {
+      entry.weekly += 1;
+      entry.merges += Number(event.type === "merge");
+      entry.reviews += Number(event.type === "review");
+    }
+    repositories.set(event.repo, entry);
+  }
+  return [...repositories.values()].sort(
+    (a, b) =>
+      b.weekly - a.weekly ||
+      Date.parse(b.latestAt) - Date.parse(a.latestAt) ||
+      a.repository.localeCompare(b.repository),
+  );
+}
 export interface ReviewRadarItem {
   repository: string;
   number: number;
   title: string;
   url: string;
   author: string;
+  avatarUrl?: string;
   ageMs: number;
   state: "failing" | "running" | "ready" | "waiting";
   checks: PipelineState[];
@@ -86,6 +197,7 @@ export function getReviewRadar(
         title: pull.title,
         url: pull.url,
         author: pull.author,
+        avatarUrl: pull.authorAvatarUrl,
         ageMs: Math.max(0, now - Date.parse(pull.createdAt)),
         state,
         checks,
@@ -194,15 +306,27 @@ export function getAttention(
   return null;
 }
 
+/**
+ * Review Radar is always offered (with an empty state), and Service Health
+ * whenever health data is available. Release Pulse needs deployments.
+ */
 export function getAvailableScenes(
   snapshot: EngineeringWallSnapshot,
   events: ActivityEvent[],
   health?: HealthSnapshot,
 ): WallScene[] {
-  const scenes: WallScene[] = ["pulse"];
-  if (getReviewRadar(snapshot).length) scenes.push("review");
+  const scenes: WallScene[] = ["pulse", "review"];
   if (getReleasePulse(snapshot).length) scenes.push("release");
-  if (health?.services.length) scenes.push("health");
+  if (health) scenes.push("health");
   scenes.push("leaderboard");
   return scenes;
+}
+
+/** Compact age for wall rows: "now", "12m", "5h", "3d". */
+export function shortAge(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 48 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
 }
