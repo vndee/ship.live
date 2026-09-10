@@ -99,6 +99,9 @@ export function useFeed() {
   const requestNumber = useRef(0);
   const sessionRequest = useRef(0);
   const workspaceRequest = useRef(0);
+  const latestWorkspaceLoad = useRef<Promise<WorkspaceList | undefined> | null>(
+    null,
+  );
   const identityRevision = useRef(0);
   const selectionRevision = useRef(0);
   const authorizedWorkspaces = useRef<Workspace[]>([]);
@@ -163,6 +166,7 @@ export function useFeed() {
       });
       workspaceRequest.current += 1;
       identityRevision.current += 1;
+      latestWorkspaceLoad.current = null;
       authorizedWorkspaces.current = [];
       currentUser.current = null;
       csrf.current = undefined;
@@ -203,7 +207,7 @@ export function useFeed() {
     [clearIdentity, failPrivate],
   );
 
-  const loadWorkspaces = useCallback(async () => {
+  const refreshWorkspaces = useCallback(async () => {
     const user = currentUser.current;
     if (!user) return;
     const serial = ++workspaceRequest.current;
@@ -250,6 +254,12 @@ export function useFeed() {
       if (!accessFailure(error)) setSessionError(message(error));
     }
   }, [accessFailure, applyWorkspace]);
+
+  const loadWorkspaces = useCallback(() => {
+    const pending = refreshWorkspaces();
+    latestWorkspaceLoad.current = pending;
+    return pending;
+  }, [refreshWorkspaces]);
 
   const loadSession = useCallback(async () => {
     if (pendingLogout.current) return;
@@ -320,6 +330,7 @@ export function useFeed() {
       sessionRequest.current += 1;
       workspaceRequest.current += 1;
       identityRevision.current += 1;
+      latestWorkspaceLoad.current = null;
     };
   }, [clearIdentity, clearPrivate, loadSession]);
 
@@ -537,9 +548,18 @@ export function useFeed() {
     );
     if (!isCurrent())
       throw new Error("Your session changed. Sign in again to continue.");
-    const workspaces = await loadWorkspaces();
-    if (!isCurrent())
-      throw new Error("Your session changed. Sign in again to continue.");
+    let pending = loadWorkspaces();
+    let workspaces: WorkspaceList | undefined;
+    for (;;) {
+      workspaces = await pending;
+      if (!isCurrent())
+        throw new Error("Your session changed. Sign in again to continue.");
+      // Poll/focus refreshes may supersede this load; join the latest result
+      // only while the connection's original identity lifecycle is still current.
+      const latest = latestWorkspaceLoad.current;
+      if (!latest || latest === pending) break;
+      pending = latest;
+    }
     const connected = workspaces?.workspaces.find(
       (item) => item.id === data.workspace.id,
     );
