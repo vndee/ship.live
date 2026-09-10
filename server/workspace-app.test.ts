@@ -1424,7 +1424,10 @@ test("team health UI routes enforce access and CSRF, validate public probes and 
     assert.equal(createdProbe.status, 201);
     const probe = (await createdProbe.json()) as { id: string };
     const snapshot = await (await request(base)).json();
-    assert.equal(snapshot.services[0].probes[0].status, "unknown");
+    const probedService = snapshot.services.find(
+      (item: { id: string }) => item.id === service.id,
+    );
+    assert.equal(probedService?.probes[0].status, "unknown");
     assert.equal(
       (await mutate(`/probes/${probe.id}/check`, "POST")).status,
       202,
