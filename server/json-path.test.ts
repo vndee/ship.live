@@ -51,6 +51,26 @@ test("accepts every bounded primitive and chooses the first strict match", () =>
   );
 });
 
+test("decodes escaped JSON string literals before strict filter matching", () => {
+  assert.equal(
+    readJsonPath(
+      { v: [{ x: 'a"b', y: "matched" }] },
+      parseJsonPath(String.raw`v[?(@.x=="a\"b")].y`),
+    ),
+    "matched",
+  );
+});
+
+test("returns undefined when a filter has no match before later traversal", () => {
+  assert.equal(
+    readJsonPath(
+      { v: [{ x: 1, y: "present" }] },
+      parseJsonPath("v[?(@.x==2)].y"),
+    ),
+    undefined,
+  );
+});
+
 test("rejects executable, ambiguous, malformed, and prototype paths", () => {
   for (const path of [
     "components[*].status",
