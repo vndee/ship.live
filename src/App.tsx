@@ -225,7 +225,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   const [detailId, setDetailId] = useState<string | null>(null);
   const detail = feed.events.find((event) => event.id === detailId) || null;
   const [actionError, setActionError] = useState("");
-  const [syncing, setSyncing] = useState(false);
+  const syncing = feed.syncRun?.status === "running";
   const liveEffects = useActivityCelebration(feed.events, {
     scope: feed.scopeKey,
     ready: feed.demo || (feed.hasSnapshot && !feed.error),
@@ -306,6 +306,21 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     const id = setTimeout(() => setToast(""), 4000);
     return () => clearTimeout(id);
   }, [toast]);
+  // A background sync reports its outcome once, if this view saw it running.
+  const watchedSync = useRef<string | null>(null);
+  useEffect(() => {
+    const run = feed.syncRun;
+    if (!run) return;
+    if (run.status === "running") {
+      watchedSync.current = run.id;
+      return;
+    }
+    if (watchedSync.current !== run.id) return;
+    watchedSync.current = null;
+    if (run.status === "succeeded")
+      setToast(run.message || "GitHub activity synced");
+    else setActionError(run.message || "Could not sync GitHub activity.");
+  }, [feed.syncRun]);
   useEffect(() => {
     setLimit(30);
   }, [query, kind, repo, period, page]);
@@ -356,19 +371,16 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     setModal("connect");
   }
   async function syncGithub() {
-    setSyncing(true);
     setActionError("");
     try {
-      const result = await feed.sync();
-      setToast(result?.notice || "GitHub activity refreshed");
+      await feed.sync();
+      setToast("Sync started in the background.");
     } catch (error) {
       setActionError(
         error instanceof Error
           ? error.message
-          : "Could not sync GitHub activity.",
+          : "Could not start the GitHub sync.",
       );
-    } finally {
-      setSyncing(false);
     }
   }
   async function deleteNote(id: string) {
@@ -1285,7 +1297,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                 >
                   <RefreshCw size={14} className={syncing ? "spin" : ""} />
                   {syncing
-                    ? "Importing recent activity…"
+                    ? "Syncing in the background…"
                     : "Sync GitHub activity"}
                 </button>
                 <p className="field-hint">

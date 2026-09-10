@@ -8,7 +8,11 @@ import {
 import type { Pool, PoolClient } from "pg";
 import type { AuthUser } from "../shared/auth.js";
 import type { ActivityEvent } from "../shared/types.js";
-import type { ShipNoteInput, Workspace } from "../shared/workspaces.js";
+import type {
+  ShipNoteInput,
+  SyncRun,
+  Workspace,
+} from "../shared/workspaces.js";
 import { AuthError } from "./auth.js";
 import type { GitHubGrant, InstallationInfo, Repo } from "./github-app.js";
 import { ACTIVITY_CHANNEL } from "./postgres-notifications.js";
@@ -16,6 +20,34 @@ import { combineEvents, FEED_LIMIT } from "./store.js";
 
 export interface AccessibleInstallation extends InstallationInfo {
   repositories: Repo[];
+}
+
+interface SyncRunRow {
+  id: string;
+  status: SyncRun["status"];
+  started_at: Date;
+  finished_at: Date | null;
+  synced: number | null;
+  message: string | null;
+}
+// A run whose process stopped never finishes; report it rather than poll forever.
+const SYNC_INTERRUPTED_AFTER = 60 * 60_000;
+function syncRun(row: SyncRunRow): SyncRun {
+  const interrupted =
+    row.status === "running" &&
+    Date.now() - row.started_at.getTime() > SYNC_INTERRUPTED_AFTER;
+  return {
+    id: row.id,
+    status: interrupted ? "failed" : row.status,
+    startedAt: row.started_at.toISOString(),
+    ...(row.finished_at ? { finishedAt: row.finished_at.toISOString() } : {}),
+    ...(row.synced === null ? {} : { synced: row.synced }),
+    ...(interrupted
+      ? { message: "The sync was interrupted. Start it again." }
+      : row.message
+        ? { message: row.message }
+        : {}),
+  };
 }
 
 const hash = (value: string) =>
@@ -799,6 +831,53 @@ export class WorkspaceStore {
       [installationId],
     );
     return result.rows.map((row) => row.user_id);
+  }
+  /** Start a background sync unless one is running; an interrupted run can be replaced. */
+  async startSync(
+    workspaceId: string,
+    userId: string,
+  ): Promise<{ run: SyncRun; started: boolean }> {
+    const started = await this.pool.query<SyncRunRow>(
+      `INSERT INTO ship_live_sync_runs(workspace_id,id,user_id,status) VALUES($1,$2,$3,'running')
+      ON CONFLICT(workspace_id) DO UPDATE SET id=EXCLUDED.id,user_id=EXCLUDED.user_id,status='running',
+        started_at=now(),finished_at=NULL,synced=NULL,message=NULL
+      WHERE ship_live_sync_runs.status<>'running'
+        OR ship_live_sync_runs.started_at<now()-make_interval(secs=>$4)
+      RETURNING *`,
+      [workspaceId, randomUUID(), userId, SYNC_INTERRUPTED_AFTER / 1000],
+    );
+    if (started.rows[0])
+      return { run: syncRun(started.rows[0]), started: true };
+    return { run: (await this.syncRun(workspaceId))!, started: false };
+  }
+  /** Only the run that is still current records its outcome. */
+  async finishSync(
+    workspaceId: string,
+    runId: string,
+    outcome: {
+      status: "succeeded" | "failed";
+      synced?: number;
+      message: string;
+    },
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE ship_live_sync_runs SET status=$3,finished_at=now(),synced=$4,message=$5
+      WHERE workspace_id=$1 AND id=$2 AND status='running'`,
+      [
+        workspaceId,
+        runId,
+        outcome.status,
+        outcome.synced ?? null,
+        outcome.message,
+      ],
+    );
+  }
+  async syncRun(workspaceId: string): Promise<SyncRun | undefined> {
+    const result = await this.pool.query<SyncRunRow>(
+      "SELECT * FROM ship_live_sync_runs WHERE workspace_id=$1",
+      [workspaceId],
+    );
+    return result.rows[0] && syncRun(result.rows[0]);
   }
   /** The database clock, shared by every replica. */
   async clock(): Promise<number> {

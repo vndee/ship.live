@@ -8,6 +8,7 @@ import type {
 import type {
   InstallationChoice,
   ShipNoteInput,
+  SyncRun,
   Workspace,
   WorkspaceList,
 } from "../../shared/workspaces";
@@ -52,19 +53,26 @@ async function request<T>(
   options: RequestInit = {},
   timeout = 20_000,
 ): Promise<T> {
-  const response = await fetch(path, {
-    credentials: "same-origin",
-    cache: "no-store",
-    ...options,
-    signal: options.signal || AbortSignal.timeout(timeout),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok)
-    throw new ApiError(
-      data.error || "Could not complete this request. Try again.",
-      response.status,
-    );
-  return data as T;
+  try {
+    const response = await fetch(path, {
+      credentials: "same-origin",
+      cache: "no-store",
+      ...options,
+      signal: options.signal || AbortSignal.timeout(timeout),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok)
+      throw new ApiError(
+        data.error || "Could not complete this request. Try again.",
+        response.status,
+      );
+    return data as T;
+  } catch (error) {
+    // Browsers report an elapsed timeout as "signal timed out".
+    if (error instanceof DOMException && error.name === "TimeoutError")
+      throw new Error("The server took too long to respond. Try again.");
+    throw error;
+  }
 }
 function message(error: unknown) {
   return error instanceof Error
@@ -86,6 +94,7 @@ export function useFeed() {
   const [paused, setPaused] = useState(false);
   const [accessBlocked, setAccessBlocked] = useState(false);
   const [logoutIncomplete, setLogoutIncomplete] = useState(false);
+  const [syncRun, setSyncRun] = useState<SyncRun | null>(null);
   const [operationState, dispatchOperation] = useReducer(
     privateOperationReducer,
     emptyPrivateOperation,
@@ -189,6 +198,17 @@ export function useFeed() {
     setAccessBlocked(true);
     generation.current += 1;
     requestNumber.current += 1;
+    dispatch({
+      type: "error",
+      generation: generation.current,
+      message: message(error),
+    });
+  }, []);
+  // A transient failure (network, timeout, 5xx) hides cached private data but
+  // does not block: polling and the live stream keep retrying, and the next
+  // verified snapshot restores the feed. The generation stays the same, so the
+  // refresh effect does not rerun into a tight retry loop.
+  const hidePrivate = useCallback((error: unknown) => {
     dispatch({
       type: "error",
       generation: generation.current,
@@ -357,13 +377,13 @@ export function useFeed() {
       if (serial !== requestNumber.current || current !== generation.current)
         return;
       if (!accessFailure(error))
-        failPrivate(
+        hidePrivate(
           new Error(
-            "Activity could not be verified. Cached private data is hidden. Retry when the connection is available.",
+            "Activity could not be verified, so private data is hidden. Retrying automatically.",
           ),
         );
     }
-  }, [accessFailure, failPrivate]);
+  }, [accessFailure, hidePrivate]);
 
   useEffect(() => {
     if (demo || accessBlocked) return;
@@ -643,17 +663,57 @@ export function useFeed() {
   async function disconnectGithub() {
     await runPrivateOperation({ kind: "disconnect" });
   }
+  // Sync runs in the background. Read the workspace's latest run, and while it
+  // runs, poll it every few seconds (database reads only) until it settles.
+  const syncRunning = syncRun?.status === "running";
+  useEffect(() => {
+    setSyncRun(null);
+    if (demo || !workspace?.installationId) return;
+    const id = workspace.id;
+    let cancelled = false;
+    void request<{ run: SyncRun | null }>(
+      `/api/workspaces/${encodeURIComponent(id)}/sync`,
+    )
+      .then((data) => {
+        if (!cancelled) setSyncRun(data.run);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // Load once per selected workspace, not on each workspace object refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demo, workspace?.id, workspace?.installationId]);
+  useEffect(() => {
+    if (!syncRunning || !workspace) return;
+    const id = workspace.id;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      void request<{ run: SyncRun | null }>(
+        `/api/workspaces/${encodeURIComponent(id)}/sync`,
+      )
+        .then((data) => {
+          if (cancelled || !data.run) return;
+          setSyncRun(data.run);
+          if (data.run.status !== "running") void refresh();
+        })
+        .catch(() => {});
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncRunning, workspace?.id, refresh]);
   async function sync() {
     const active = currentWorkspace.current;
     if (!active) return;
-    const data = await mutate<{ synced: number; notice?: string }>(
+    // Returns at once; the polling effect above reports the outcome.
+    const run = await mutate<SyncRun>(
       `/api/workspaces/${encodeURIComponent(active.id)}/sync`,
-      undefined,
-      "POST",
-      180_000,
     );
-    await refresh();
-    return data;
+    if (currentWorkspace.current?.id === active.id) setSyncRun(run);
+    return run;
   }
   async function addNote(input: ShipNoteInput) {
     const active = currentWorkspace.current;
@@ -747,6 +807,7 @@ export function useFeed() {
     connectInstallation,
     disconnectGithub,
     sync,
+    syncRun,
     addNote,
     deleteNote,
     readShare: () =>

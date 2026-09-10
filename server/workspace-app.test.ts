@@ -12,6 +12,8 @@ import type { AuthUser } from "../shared/auth.js";
 import type { ActivityEvent, FeedResponse } from "../shared/types.js";
 import { AuthError, AuthService, type Principal } from "./auth.js";
 import { GitHubApp, type InstallationInfo, type Repo } from "./github-app.js";
+import { FeedError } from "./github.js";
+import type { SyncRun } from "../shared/workspaces.js";
 import { PostgresEventStore } from "./postgres-store.js";
 import { createTestDatabase } from "./test-database.js";
 import { createWorkspaceApp } from "./workspace-app.js";
@@ -1084,7 +1086,10 @@ test("installation connection proves user access and sync processes every select
       { method: "POST" },
     );
     assert.equal(connected.status, 200);
-    const { workspace } = await connected.json();
+    const { workspace, run } = await connected.json();
+    // Connecting returns at once; its history import runs in the background.
+    assert.equal(run.status, "running");
+    await settledSync(request, workspace.id, users[0]);
     assert.deepEqual(
       batches.map((batch) => batch.length),
       [20, 1],
@@ -1094,27 +1099,24 @@ test("installation connection proves user access and sync processes every select
     assert.equal(listed.installations[0].repositories.length, 21);
     assert.equal(provider.calls.length, calls, "listing reads synced access");
     batches.length = 0;
+    const sync = () =>
+      request(`/api/workspaces/${workspace.id}/sync`, users[0], {
+        method: "POST",
+      });
+    assert.equal((await sync()).status, 202);
     assert.equal(
-      (
-        await request(`/api/workspaces/${workspace.id}/sync`, users[0], {
-          method: "POST",
-        })
-      ).status,
-      200,
+      (await settledSync(request, workspace.id, users[0]))?.status,
+      "succeeded",
     );
     assert.deepEqual(
       batches.flat(),
       Array.from({ length: 21 }, (_, index) => 101 + index),
     );
     provider.accessible.set("token-a", []);
-    assert.equal(
-      (
-        await request(`/api/workspaces/${workspace.id}/sync`, users[0], {
-          method: "POST",
-        })
-      ).status,
-      403,
-    );
+    assert.equal((await sync()).status, 202);
+    const denied = await settledSync(request, workspace.id, users[0]);
+    assert.equal(denied?.status, "failed");
+    assert.match(denied?.message ?? "", /could not be verified/);
   });
 });
 
@@ -1412,8 +1414,10 @@ test("repeat syncs resume from each repository's last import and never move it b
       request(`/api/workspaces/${workspace.id}/sync`, users[0], {
         method: "POST",
       });
-    assert.equal((await sync()).status, 200);
-    assert.equal((await sync()).status, 200);
+    for (let index = 0; index < 2; index += 1) {
+      assert.equal((await sync()).status, 202);
+      await settledSync(request, workspace.id, users[0]);
+    }
     assert.deepEqual(seen, [[], [[101, imported]]]);
     await workspaces.markSynced(70, 101, imported - 60_000);
     assert.deepEqual(
@@ -1482,6 +1486,76 @@ test("repository-selection webhooks fail closed when neither GitHub nor the deli
       await request(`/api/workspaces/${workspace.id}/feed`)
     ).json()) as FeedResponse;
     assert.deepEqual(feed.events, []);
+  });
+});
+
+async function settledSync(
+  request: (
+    path: string,
+    user?: AuthUser | null,
+    init?: RequestInit,
+  ) => Promise<Response>,
+  workspaceId: string,
+  user: AuthUser,
+) {
+  const latest: { run?: SyncRun | null } = {};
+  await eventually(async () => {
+    latest.run = (
+      (await (
+        await request(`/api/workspaces/${workspaceId}/sync`, user)
+      ).json()) as { run: SyncRun | null }
+    ).run;
+    return latest.run?.status !== "running";
+  }, "background sync settles");
+  return latest.run;
+}
+
+test("sync returns at once, runs once per workspace in the background, and records its outcome", async (t) => {
+  await withApp(t, async ({ workspaces, users, provider, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let imports = 0;
+    provider.github.backfill = async () => {
+      imports += 1;
+      await gate;
+      return { synced: 3, notice: "Imported recent history." };
+    };
+    const start = () =>
+      request(`/api/workspaces/${workspace.id}/sync`, users[0], {
+        method: "POST",
+      });
+    const first = await start();
+    assert.equal(first.status, 202);
+    const run = (await first.json()) as SyncRun;
+    assert.equal(run.status, "running");
+    // A second request while it runs joins the same run instead of starting another.
+    assert.equal(((await (await start()).json()) as SyncRun).id, run.id);
+    const status = await (
+      await request(`/api/workspaces/${workspace.id}/sync`, users[0])
+    ).json();
+    assert.equal(status.run.status, "running");
+    assert.equal(
+      (await request(`/api/workspaces/${workspace.id}/sync`, users[1])).status,
+      404,
+    );
+    release();
+    const settled = await settledSync(request, workspace.id, users[0]);
+    assert.deepEqual(
+      [settled?.status, settled?.message, settled?.synced],
+      ["succeeded", "Imported recent history.", 3],
+    );
+    assert.equal(imports, 1);
+    // Failures are recorded for the client instead of timing out a request.
+    provider.github.backfill = async () => {
+      throw new FeedError(502, "GitHub rejected the request.");
+    };
+    assert.equal((await start()).status, 202);
+    const failed = await settledSync(request, workspace.id, users[0]);
+    assert.deepEqual(
+      [failed?.status, failed?.message],
+      ["failed", "GitHub rejected the request."],
+    );
   });
 });
 
