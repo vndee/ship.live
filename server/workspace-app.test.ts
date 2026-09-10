@@ -1475,6 +1475,16 @@ test("team health UI routes enforce access and CSRF, validate public probes and 
       (await mutate(`/services/${service.id}`, "DELETE")).status,
       204,
     );
+    assert.deepEqual(
+      (await (await request(base)).json()).services.map(
+        (item: { id: string }) => item.id,
+      ),
+      [another.id],
+    );
+    assert.equal(
+      (await mutate(`/services/${another.id}`, "DELETE")).status,
+      204,
+    );
     assert.equal((await (await request(base)).json()).services.length, 0);
     auth.active.delete(users[0].id);
     assert.equal((await request(base)).status, 401);
