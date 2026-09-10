@@ -1,0 +1,83 @@
+name: ship-live
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ship_live}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.self-host}
+      POSTGRES_DB: ${POSTGRES_DB:-ship_live}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      - private
+    logging: *default-logging
+
+  app:
+    image: ship-live:local
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env.self-host
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      APP_URL: https://${APP_DOMAIN:?Set APP_DOMAIN in .env.self-host}
+      TRUST_PROXY_HOPS: 1
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ship_live}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ship_live}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "3001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    networks:
+      - private
+    logging: *default-logging
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Set APP_DOMAIN in .env.self-host}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - private
+    logging: *default-logging
+
+networks:
+  private:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

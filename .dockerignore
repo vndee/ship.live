@@ -1,0 +1,16 @@
+.git
+.github
+.agents
+.codex
+.env
+.env.*
+node_modules
+dist
+coverage
+.data*
+.artifacts
+backups
+docs
+*.log
+*.tsbuildinfo
+.DS_Store
