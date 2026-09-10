@@ -95,7 +95,7 @@ function upstream() {
   ]);
   const accessible = new Map<string, InstallationInfo[]>([
     ["token-a", [team]],
-    ["token-b", [team, otherTeam]],
+    ["token-b", [team]],
   ]);
   const calls: string[] = [];
   const codes = new Map<string, string>();
@@ -1320,7 +1320,7 @@ test("SSE closes when the user's installation grant disappears and notes emit re
 });
 
 test("team health UI routes enforce access and CSRF, validate public probes and stream updates", async (t) => {
-  await withApp(t, async ({ workspaces, auth, users, request }) => {
+  await withApp(t, async ({ workspaces, auth, users, provider, request }) => {
     const workspace = await connect(workspaces, users[0], 1);
     const base = `/api/workspaces/${workspace.id}/health`;
     assert.equal((await request(base, null)).status, 401);
@@ -1375,7 +1375,8 @@ test("team health UI routes enforce access and CSRF, validate public probes and 
       ).status,
       403,
     );
-    const otherWorkspace = await connect(workspaces, users[0], 2, otherTeam);
+    provider.accessible.set("token-a", [team, otherTeam]);
+    const otherWorkspace = await connect(workspaces, users[0], 1, otherTeam);
     assert.notEqual(otherWorkspace.id, workspace.id);
     const otherBase = `/api/workspaces/${otherWorkspace.id}/health`;
     const foreign = await (
