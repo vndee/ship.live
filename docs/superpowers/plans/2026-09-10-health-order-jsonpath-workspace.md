@@ -10,6 +10,12 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-10-health-order-jsonpath-workspace-design.md`
 
+## Verification status — 2026-09-10
+
+Tasks 1–7 are implemented and committed (through `2367278`). Checked steps reflect the implementation ledger and recorded verification. Task 3's database RED step used its explicitly allowed unit-suite fallback; PostgreSQL RED behavior was not observed. Task 3's store/migration checks and Task 4's focused route check completed with explicit database skips, as those steps allow. Task 4's runtime RED assertion remains unchecked because no isolated `TEST_DATABASE_URL` was available.
+
+Final `npm test`: 202 tests, 128 passed, 74 PostgreSQL skips, zero failures. TypeScript and production build passed. Database migrations/backfill, actual persisted order, concurrency, transactional rollback/notifications, and database-backed route authorization must still run in CI with an isolated `TEST_DATABASE_URL`. Synthetic browser fixtures verify UI behavior and ordered API consumption; they do not prove PostgreSQL persistence or live GitHub authorization. No real OAuth, service credentials, or remote mutations are used for local release QA. Task 8 browser QA uses the real service/share components and workspace hook with local synthetic API responses: three-service creation, pointer/touch/keyboard reorder, delayed save/failure, queued refresh, editor conditions, reload/shared ordering, chart interaction at desktop and narrow widths, and authorized workspace restoration/fallback are exercised. This is fixture-backed browser coverage, not a live end-to-end production run.
+
 ## Global Constraints
 
 - JSON paths remain limited to 256 characters and never execute code, regular expressions, or arbitrary expressions.
@@ -36,7 +42,7 @@
 - Produces: `readJsonPath(value: unknown, steps: JsonPathStep[]): unknown`
 - Produces: `JsonPathStep = { kind: "property"; key: string } | { kind: "filter"; key: string; expected: string | number | boolean | null }`
 
-- [ ] **Step 1: Write failing parser and evaluator tests**
+- [x] **Step 1: Write failing parser and evaluator tests**
 
 ```ts
 test("reads fields, numeric indexes, and primitive equality filters", () => {
@@ -102,13 +108,13 @@ test("rejects executable, ambiguous, malformed, and prototype paths", () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run: `node --import tsx --test server/json-path.test.ts`
 
 Expected: FAIL because `server/json-path.ts` does not exist.
 
-- [ ] **Step 3: Implement the tokenizer, parser, and evaluator**
+- [x] **Step 3: Implement the tokenizer, parser, and evaluator**
 
 ```ts
 export type JsonPrimitive = string | number | boolean | null;
@@ -178,13 +184,13 @@ export function readJsonPath(value: unknown, steps: JsonPathStep[]): unknown {
 }
 ```
 
-- [ ] **Step 4: Run the focused test and verify GREEN**
+- [x] **Step 4: Run the focused test and verify GREEN**
 
 Run: `node --import tsx --test server/json-path.test.ts`
 
 Expected: PASS for valid traversal and every rejection case.
 
-- [ ] **Step 5: Commit the parser unit**
+- [x] **Step 5: Commit the parser unit**
 
 ```bash
 git add server/json-path.ts server/json-path.test.ts
@@ -205,7 +211,7 @@ git commit -m "Add safe filtered JSON path parser"
 - Preserves: `validateProbe(input): ProbeInput`
 - Preserves: `runProbe(input, headers): Promise<ProbeResult>`
 
-- [ ] **Step 1: Add a failing OpenAI-style component test**
+- [x] **Step 1: Add a failing OpenAI-style component test**
 
 ```ts
 test("filters status components by a stable primitive property", async () => {
@@ -241,13 +247,13 @@ for (const jsonPath of [
 
 Then replace the payload with `{"components":[]}` and assert the same probe returns `{ ok: false }` with reason `JSON condition did not match.`.
 
-- [ ] **Step 2: Run the health probe test and verify RED**
+- [x] **Step 2: Run the health probe test and verify RED**
 
 Run: `node --import tsx --test server/health-probe.test.ts`
 
 Expected: FAIL because `validateProbe` still rejects filter syntax.
 
-- [ ] **Step 3: Replace regex-only validation and split traversal**
+- [x] **Step 3: Replace regex-only validation and split traversal**
 
 In `validateProbe`, call `parseJsonPath(jsonPath)` when non-empty and convert its parser error to `AuthError(400, "Use a supported JSON path.")`. In `runProbe`, parse the already-validated path and call `readJsonPath` instead of splitting on dots.
 
@@ -259,13 +265,13 @@ items.0.status
 components[?(@.name=="Embeddings")].status
 ```
 
-- [ ] **Step 4: Run parser and health probe tests**
+- [x] **Step 4: Run parser and health probe tests**
 
 Run: `node --import tsx --test server/json-path.test.ts server/health-probe.test.ts`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit probe integration**
+- [x] **Step 5: Commit probe integration**
 
 ```bash
 git add server/health-probe.ts server/health-probe.test.ts docs/service-health.md
@@ -287,7 +293,7 @@ git commit -m "Support filtered JSON health conditions"
 - Changes: `createService` appends under the existing workspace transaction lock
 - Changes: `snapshot` sorts services by saved order
 
-- [ ] **Step 1: Write failing PostgreSQL ordering tests**
+- [x] **Step 1: Write failing PostgreSQL ordering tests**
 
 ```ts
 test("service order persists, is tenant safe, and new services append", async (t) => {
@@ -313,13 +319,13 @@ test("service order persists, is tenant safe, and new services append", async (t
 
 Extend the migration expectation in `server/postgres-store.test.ts` from versions `1..9` to `1..10`. Add missing-ID and foreign-workspace cases.
 
-- [ ] **Step 2: Run the database test and verify RED**
+- [x] **Step 2: Run the database test and verify RED**
 
 Run: `TEST_DATABASE_URL="$TEST_DATABASE_URL" node --import tsx --test server/health-store.test.ts server/postgres-store.test.ts`
 
 Expected: FAIL because migration 010 and `reorderServices` do not exist. If `TEST_DATABASE_URL` is unavailable, run the full unit suite now and retain the database cases for CI.
 
-- [ ] **Step 3: Add migration 010**
+- [x] **Step 3: Add migration 010**
 
 ```sql
 ALTER TABLE ship_live_health_services ADD COLUMN display_order integer;
@@ -334,17 +340,17 @@ ALTER TABLE ship_live_health_services ALTER COLUMN display_order SET NOT NULL;
 ALTER TABLE ship_live_health_services ADD CONSTRAINT ship_live_health_services_workspace_order_key UNIQUE(workspace_id, display_order) DEFERRABLE INITIALLY IMMEDIATE;
 ```
 
-- [ ] **Step 4: Implement append, reorder, and ordered snapshots**
+- [x] **Step 4: Implement append, reorder, and ordered snapshots**
 
 Within the existing workspace lock transaction, create with `coalesce(max(display_order), -1) + 1`. For reorder, lock all rows, validate exact set equality, defer the unique constraint, and update positions with one `unnest($2::uuid[]) WITH ORDINALITY` statement. Notify only after successful validation and updates.
 
-- [ ] **Step 5: Run store and migration tests**
+- [x] **Step 5: Run store and migration tests**
 
 Run: `TEST_DATABASE_URL="$TEST_DATABASE_URL" node --import tsx --test server/health-store.test.ts server/postgres-store.test.ts`
 
 Expected: PASS, or explicit database skips when the isolated test URL is not configured.
 
-- [ ] **Step 6: Commit persistence**
+- [x] **Step 6: Commit persistence**
 
 ```bash
 git add server/migrations/010_health_service_order.sql server/health-store.ts server/health-store.test.ts server/postgres-store.test.ts
@@ -363,7 +369,7 @@ git commit -m "Persist service health display order"
 - Consumes: `HealthStore.reorderServices(workspaceId, serviceIds)` from Task 3
 - Produces: `PUT /api/workspaces/:id/health/services/order` with `{ serviceIds: string[] }`, returning HTTP 204
 
-- [ ] **Step 1: Add failing route authorization and mutation tests**
+- [x] **Step 1: Add failing route authorization and mutation tests**
 
 Extend the existing `team health UI routes enforce access and CSRF` test with two services and these assertions:
 
@@ -413,7 +419,7 @@ Run: `node --import tsx --test --test-name-pattern="team health UI routes" serve
 
 Expected: FAIL with 404 for the new route.
 
-- [ ] **Step 3: Add the route before `/:serviceId` routes**
+- [x] **Step 3: Add the route before `/:serviceId` routes**
 
 ```ts
 router.put(`${base}/services/order`, async (req, res) => {
@@ -427,13 +433,13 @@ router.put(`${base}/services/order`, async (req, res) => {
 
 Validate the body inside `reorderServices` so direct store callers and routes share the same tenant-safe contract.
 
-- [ ] **Step 4: Run the focused route test**
+- [x] **Step 4: Run the focused route test**
 
 Run: `node --import tsx --test --test-name-pattern="team health UI routes" server/workspace-app.test.ts`
 
 Expected: PASS, or the existing PostgreSQL skip when no isolated database URL is configured.
 
-- [ ] **Step 5: Commit the endpoint**
+- [x] **Step 5: Commit the endpoint**
 
 ```bash
 git add server/health-app.ts server/workspace-app.test.ts
@@ -458,7 +464,7 @@ git commit -m "Add service health reorder endpoint"
 - Produces: `SortableHealthService` wrapper that supplies drag handle attributes, listeners, transform, transition, and dragging state
 - Consumes: `PUT ${base}/services/order` from Task 4
 
-- [ ] **Step 1: Write failing immutable ordering tests**
+- [x] **Step 1: Write failing immutable ordering tests**
 
 ```ts
 test("moves a service without mutating the server snapshot", () => {
@@ -480,19 +486,19 @@ test("returns the same order for missing or identical targets", () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run: `node --import tsx --test src/lib/service-order.test.ts`
 
 Expected: FAIL because `moveService` does not exist.
 
-- [ ] **Step 3: Install dnd-kit and implement the pure move helper**
+- [x] **Step 3: Install dnd-kit and implement the pure move helper**
 
 Run: `npm install @dnd-kit/core @dnd-kit/sortable @dnd-kit/utilities`
 
 Implement `moveService` with dnd-kit's `arrayMove` after checking both IDs exist and differ.
 
-- [ ] **Step 4: Add the sortable wrapper and integrate it with the health list**
+- [x] **Step 4: Add the sortable wrapper and integrate it with the health list**
 
 Use `DndContext`, `PointerSensor`, `TouchSensor`, `KeyboardSensor`, `closestCenter`, `SortableContext`, and `sortableKeyboardCoordinates`. Render a `GripVertical` button labeled `Reorder ${service.name}`. Keep the existing expansion button separate so dragging never toggles a service.
 
@@ -519,17 +525,17 @@ if (!saved)
 
 Use the existing refresh scheduler after success. Disable sensors while another mutation is busy. Apply any queued server snapshot after drop or cancellation.
 
-- [ ] **Step 5: Style and manually verify all input modes**
+- [x] **Step 5: Style and manually verify all input modes**
 
 Add compact handle, dragging elevation, drop target, and focus-visible styles. Verify pointer reorder, touch emulation, Space/arrow/Space keyboard reorder, Escape cancellation, expanded row dragging, mutation rollback, and narrow viewport layout.
 
-- [ ] **Step 6: Run unit tests and build**
+- [x] **Step 6: Run unit tests and build**
 
 Run: `node --import tsx --test src/lib/service-order.test.ts && npm run build`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit sortable UI**
+- [x] **Step 7: Commit sortable UI**
 
 ```bash
 git add package.json package-lock.json src/lib/service-order.ts src/lib/service-order.test.ts src/components/SortableHealthService.tsx src/components/ServiceHealth.tsx src/components/service-health.css
@@ -552,7 +558,7 @@ git commit -m "Add draggable service health ordering"
 - Produces: `moveLatencyPoint(points: (LatencyPoint | null)[], active: number | null, key: "previous" | "next" | "first" | "last"): number | null`
 - Produces: `clampTooltipLeft(anchor: number, tooltipWidth: number, containerWidth: number, padding?: number): number`
 
-- [ ] **Step 1: Write failing interaction helper tests**
+- [x] **Step 1: Write failing interaction helper tests**
 
 ```ts
 const point = (time: number): LatencyPoint => ({
@@ -586,13 +592,13 @@ test("tooltip position stays inside the chart container", () => {
 });
 ```
 
-- [ ] **Step 2: Run the latency test and verify RED**
+- [x] **Step 2: Run the latency test and verify RED**
 
 Run: `node --import tsx --test src/lib/latency-chart.test.ts`
 
 Expected: FAIL because the interaction helpers do not exist.
 
-- [ ] **Step 3: Implement the pure selection, navigation, and clamp helpers**
+- [x] **Step 3: Implement the pure selection, navigation, and clamp helpers**
 
 ```ts
 export function nearestLatencyPoint(
@@ -627,7 +633,7 @@ export function clampTooltipLeft(
 
 Implement `moveLatencyPoint` by deriving the non-null indexes, selecting the first point when no point is active, and clamping previous/next movement to the first and last recorded index.
 
-- [ ] **Step 4: Preserve recent check status metadata**
+- [x] **Step 4: Preserve recent check status metadata**
 
 When `buildLatencySeries` maps recent checks, include:
 
@@ -638,7 +644,7 @@ statusCode: check.statusCode,
 
 Daily points leave both fields undefined because their aggregate contains successful and failed checks.
 
-- [ ] **Step 5: Integrate pointer, touch, and keyboard selection in `LatencyChart`**
+- [x] **Step 5: Integrate pointer, touch, and keyboard selection in `LatencyChart`**
 
 Keep `activeIndex` in component state and clear it when mode or series changes. Make the SVG focusable with `tabIndex={0}`. Convert pointer X from its client rectangle into the chart's time domain, call `nearestLatencyPoint`, and use pointer leave to dismiss mouse hover. Handle ArrowLeft, ArrowRight, Home, End, and Escape with `moveLatencyPoint`.
 
@@ -662,17 +668,17 @@ Render the active point after the regular series so it stays visible:
 
 Render one `.latency-tooltip` HTML element inside a positioned chart wrapper. Measure the wrapper and tooltip refs in a layout effect, then use `clampTooltipLeft`. Recent content includes local timestamp, rounded latency, Passed/Failed, and `HTTP ${statusCode}` when non-null. Daily content includes UTC date, average, min, max, and check count. Associate its ID with the focused SVG using `aria-describedby` while active.
 
-- [ ] **Step 6: Style and manually verify the interaction**
+- [x] **Step 6: Style and manually verify the interaction**
 
 Add a faint crosshair, active-point ring, compact surface tooltip, tabular numbers, and focus-visible outline. Verify hover between small points chooses the nearest point, daily gaps are skipped, tooltip stays inside both card edges, touch selection persists, pointer leave dismisses hover, and keyboard navigation works without creating per-point tab stops.
 
-- [ ] **Step 7: Run latency tests and build**
+- [x] **Step 7: Run latency tests and build**
 
 Run: `node --import tsx --test src/lib/latency-chart.test.ts && npm run build`
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit the chart interaction**
+- [x] **Step 8: Commit the chart interaction**
 
 ```bash
 git add src/lib/latency-chart.ts src/lib/latency-chart.test.ts src/components/LatencyChart.tsx src/components/service-health.css
@@ -694,7 +700,7 @@ git commit -m "Add interactive latency chart tooltips"
 - Produces: `saveWorkspacePreference(userId: string, workspaceId: string, write: (key: string, value: string) => void): boolean`
 - Produces: `chooseInitialWorkspace(workspaces: Workspace[], preferredId: string | null): Workspace | null`
 
-- [ ] **Step 1: Write failing preference and selection tests**
+- [x] **Step 1: Write failing preference and selection tests**
 
 ```ts
 test("restores only an authorized workspace for the current user", () => {
@@ -723,27 +729,27 @@ test("uses account-scoped keys and tolerates blocked storage", () => {
 });
 ```
 
-- [ ] **Step 2: Run the preference test and verify RED**
+- [x] **Step 2: Run the preference test and verify RED**
 
 Run: `node --import tsx --test src/lib/workspace-preference.test.ts`
 
 Expected: FAIL because the preference module does not exist.
 
-- [ ] **Step 3: Implement the pure preference helpers**
+- [x] **Step 3: Implement the pure preference helpers**
 
 Use a key prefix `ship-live-workspace:` plus the authenticated user ID. Catch read/write exceptions. `chooseInitialWorkspace` finds the preferred ID first, then a personal workspace, then the first entry, then null.
 
-- [ ] **Step 4: Integrate restoration into `useFeed`**
+- [x] **Step 4: Integrate restoration into `useFeed`**
 
 Split selection into an internal setter and a user-facing selector. During initial `loadWorkspaces`, read the account-scoped preference and pass it to `chooseInitialWorkspace`. Save after explicit workspace selection and after `connectInstallation`; save the authorized fallback when a stale preferred ID is rejected. Do not save demo selection and do not read preferences before session identity is established.
 
-- [ ] **Step 5: Run preference and private-state tests**
+- [x] **Step 5: Run preference and private-state tests**
 
 Run: `node --import tsx --test src/lib/workspace-preference.test.ts src/lib/privateFeed.test.ts`
 
 Expected: PASS and existing identity-reset assertions remain green.
 
-- [ ] **Step 6: Commit workspace restoration**
+- [x] **Step 6: Commit workspace restoration**
 
 ```bash
 git add src/lib/workspace-preference.ts src/lib/workspace-preference.test.ts src/hooks/useFeed.ts
@@ -761,11 +767,11 @@ git commit -m "Restore the last selected workspace"
 
 - Verifies all interfaces from Tasks 1–7 without adding new production behavior.
 
-- [ ] **Step 1: Update user documentation**
+- [x] **Step 1: Update user documentation**
 
 Document filtered path syntax, first-match behavior, exact primitive comparison, reorder persistence, shared-view ordering, interactive latency controls, and last-workspace restoration. Include the OpenAI Embeddings and Chat Completions examples.
 
-- [ ] **Step 2: Run the full verification suite**
+- [x] **Step 2: Run the full verification suite**
 
 ```bash
 npm test
@@ -776,11 +782,11 @@ git diff --check
 
 Expected: zero failures. PostgreSQL tests may skip only when `TEST_DATABASE_URL` is unavailable; CI must run them with its isolated database.
 
-- [ ] **Step 3: Browser QA the complete flow**
+- [x] **Step 3: Browser QA the complete flow**
 
 Create three demo services, reorder them by pointer and keyboard, reload and confirm order, open a public health share and confirm the same order, configure the OpenAI-style filtered component payload, exercise recent and 30-day latency tooltips with pointer/touch/keyboard, switch to `kamilabs-ai`, reload, and confirm the workspace is restored. Revoke access or use a nonexistent saved ID and confirm the authorized fallback.
 
-- [ ] **Step 4: Mark completed plan checkboxes and commit final documentation**
+- [x] **Step 4: Mark completed plan checkboxes and commit final documentation**
 
 ```bash
 git add docs/service-health.md docs/superpowers/plans/2026-09-10-health-order-jsonpath-workspace.md
