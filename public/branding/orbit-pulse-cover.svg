@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">ship.live — Great work. Shared momentum.</title>
+  <desc id="desc">Dark brand cover with the Orbit Pulse logo and sweeping contribution paths.</desc>
+  <defs>
+    <radialGradient id="background" cx="75%" cy="0%" r="110%">
+      <stop offset="0" stop-color="#20292d"/>
+      <stop offset=".48" stop-color="#0f1519"/>
+      <stop offset="1" stop-color="#090c10"/>
+    </radialGradient>
+    <linearGradient id="trail" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#52625f" stop-opacity="0"/>
+      <stop offset=".48" stop-color="#a0aeab" stop-opacity=".5"/>
+      <stop offset="1" stop-color="#e3ba8a" stop-opacity=".05"/>
+    </linearGradient>
+    <filter id="coverGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="34"/>
+    </filter>
+  </defs>
+  <rect width="1600" height="900" fill="url(#background)"/>
+  <path d="M-80 882C324 842 671 908 966 656S1340 246 1700 326" fill="none" stroke="url(#trail)" stroke-width="2"/>
+  <path d="M-90 918C346 884 704 940 1000 702S1366 294 1700 372" fill="none" stroke="#52625f" stroke-opacity=".22"/>
+  <ellipse cx="1330" cy="190" rx="368" ry="176" transform="rotate(-25 1330 190)" fill="none" stroke="#a0aeab" stroke-opacity=".12" stroke-width="2"/>
+  <ellipse cx="1330" cy="190" rx="278" ry="124" transform="rotate(-25 1330 190)" fill="none" stroke="#52625f" stroke-opacity=".16"/>
+  <circle cx="1421" cy="54" r="82" fill="#e3ba8a" opacity=".09" filter="url(#coverGlow)"/>
+  <circle cx="1421" cy="54" r="10" fill="#e3ba8a"/>
+  <g transform="translate(126 114) scale(.48)">
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <ellipse cx="128" cy="128" rx="88" ry="48" transform="rotate(-28 128 128)" stroke="#a0aeab" stroke-width="8"/>
+      <ellipse cx="128" cy="128" rx="63" ry="30" transform="rotate(-28 128 128)" stroke="#52625f" stroke-width="5"/>
+      <path d="M76 150c22 7 48 1 67-15 17-14 28-34 31-56" stroke="#edf0e9" stroke-width="12"/>
+    </g>
+    <circle cx="192" cy="70" r="17" fill="#e3ba8a"/>
+  </g>
+  <text x="256" y="210" fill="#edf0e9" font-family="DM Sans, Arial, sans-serif" font-size="74" font-weight="500" letter-spacing="-5">ship<tspan fill="#9aa4a4">.live</tspan></text>
+  <text x="126" y="466" fill="#edf0e9" font-family="DM Sans, Arial, sans-serif" font-size="82" font-weight="500" letter-spacing="-4">Great work.</text>
+  <text x="126" y="558" fill="#e3ba8a" font-family="DM Sans, Arial, sans-serif" font-size="82" font-weight="500" letter-spacing="-4">Shared momentum.</text>
+  <text x="132" y="636" fill="#9aa4a4" font-family="DM Sans, Arial, sans-serif" font-size="26" letter-spacing=".2">Private ship journals and live GitHub activity for builders and teams.</text>
+  <g transform="translate(130 760)">
+    <circle cx="5" cy="5" r="5" fill="#95d8bd"/>
+    <text x="24" y="13" fill="#748080" font-family="DM Sans, Arial, sans-serif" font-size="20" letter-spacing="2">BUILD · SHIP · CELEBRATE</text>
+  </g>
+</svg>

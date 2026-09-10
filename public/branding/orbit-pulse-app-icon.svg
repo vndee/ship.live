@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">ship.live app icon</title>
+  <desc id="desc">Orbit Pulse mark on a dark rounded square.</desc>
+  <defs>
+    <radialGradient id="bg" cx="72%" cy="12%" r="105%">
+      <stop offset="0" stop-color="#1c2529"/>
+      <stop offset=".58" stop-color="#0d1216"/>
+      <stop offset="1" stop-color="#090c10"/>
+    </radialGradient>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="232" fill="url(#bg)"/>
+  <rect x="48" y="48" width="928" height="928" rx="216" fill="none" stroke="#ffffff" stroke-opacity=".07" stroke-width="8"/>
+  <g transform="translate(128 128) scale(3)">
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <ellipse cx="128" cy="128" rx="88" ry="48" transform="rotate(-28 128 128)" stroke="#a0aeab" stroke-width="8"/>
+      <ellipse cx="128" cy="128" rx="63" ry="30" transform="rotate(-28 128 128)" stroke="#52625f" stroke-width="5"/>
+      <path d="M76 150c22 7 48 1 67-15 17-14 28-34 31-56" stroke="#edf0e9" stroke-width="12"/>
+    </g>
+    <circle cx="192" cy="70" r="28" fill="#e3ba8a" opacity=".17" filter="url(#glow)"/>
+    <circle cx="192" cy="70" r="17" fill="#e3ba8a"/>
+    <circle cx="192" cy="70" r="25" fill="none" stroke="#e3ba8a" stroke-opacity=".22" stroke-width="5"/>
+  </g>
+</svg>
