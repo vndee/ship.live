@@ -87,6 +87,19 @@ test("clients over the request limit get 429 with retry guidance; the health che
   });
 });
 
+test("inbound alerts count against the webhook limit, not the API limit", async (t) => {
+  await withServer(t, { rateLimits: { api: 1 } }, async (request) => {
+    const statuses = [];
+    for (let index = 0; index < 3; index += 1)
+      statuses.push(
+        (await request("/api/hooks/not-a-token", { method: "POST" })).status,
+      );
+    assert.ok(!statuses.includes(429), statuses.join(", "));
+    assert.equal((await request("/api/not-a-route")).status, 404);
+    assert.equal((await request("/api/not-a-route")).status, 429);
+  });
+});
+
 test("/metrics is absent without a token and otherwise requires it", async (t) => {
   await withServer(t, {}, async (request) => {
     assert.equal((await request("/metrics")).status, 404);

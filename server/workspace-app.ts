@@ -540,7 +540,9 @@ export function createWorkspaceApp({
       next();
       return;
     }
-    const webhook = request.path === "/webhooks/github";
+    // Machines deliver GitHub events and inbound alerts in bursts.
+    const webhook =
+      request.path === "/webhooks/github" || request.path.startsWith("/hooks/");
     if (await withinLimit(request, response, webhook ? "webhook" : "api"))
       next();
   });

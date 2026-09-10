@@ -34,6 +34,12 @@ export class WallStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      // One delivery at a time per repository: FOR UPDATE below cannot lock a
+      // signal's first row, which does not exist yet.
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [`wall:${installationId}:${repositoryId}`],
+      );
       const accepted = await client.query(
         "INSERT INTO ship_live_wall_deliveries(delivery_id) VALUES($1) ON CONFLICT DO NOTHING RETURNING delivery_id",
         [deliveryId],

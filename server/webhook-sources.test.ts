@@ -74,7 +74,7 @@ const stored = async (pool: Pool) =>
     )
   ).rows.map((row) => row.type);
 
-test("a probe that goes down opens an incident, and recovering resolves it", async (t) => {
+test("a probe that goes down opens an incident, and recovering resolves it, even after new rules", async (t) => {
   await withListener(t, async ({ pool, workspace }) => {
     const health = new HealthStore(pool, "11".repeat(32));
     const service = randomUUID();
@@ -120,7 +120,19 @@ test("a probe that goes down opens an incident, and recovering resolves it", asy
         reason: "HTTP status is outside the accepted range.",
       },
     ]);
-    for (const ok of [true, true]) await check(ok);
+    // New rules keep a down probe down: one pass must not resolve the incident.
+    await health.saveProbe(
+      workspace,
+      service,
+      probe,
+      validateProbe({ name: "Health", url: "https://example.com/v2/health" }),
+    );
+    await check(true);
+    const still = await pool.query(
+      "SELECT 1 FROM ship_live_health_incidents WHERE resolved_at IS NULL",
+    );
+    assert.equal(still.rowCount, 1);
+    await check(true);
     const resolved = await pool.query<{ open: boolean }>(
       "SELECT resolved_at IS NULL AS open FROM ship_live_health_incidents",
     );
@@ -214,6 +226,21 @@ test("CI and deployment changes announce transitions once, ignoring stale and re
       "pipeline.recovered",
       "deployment.succeeded",
     ]);
+  });
+});
+
+test("concurrent first deliveries of a signal announce one transition", async (t) => {
+  await withListener(t, async ({ pool }) => {
+    const wall = new WallStore(pool);
+    await Promise.all(
+      ["08:00", "08:01", "08:02"].map((time, index) => {
+        const value = pipeline("failing", `2026-09-10T${time}:00Z`);
+        return wall.apply(99, 7, "acme/api", `race-${index}`, [
+          { kind: "pipeline", observedAt: value.updatedAt, value },
+        ]);
+      }),
+    );
+    assert.deepEqual(await stored(pool), ["pipeline.failed"]);
   });
 });
 

@@ -19,6 +19,18 @@ import { LatencyChart } from "./LatencyChart";
 import { ServiceStatusStrip } from "./ServiceStatusStrip";
 import { HealthServiceStats, HealthStatsInfo } from "./HealthServiceStats";
 
+/** Paused probes are not checked, so their open incidents wait for them. */
+function incidentState(
+  incident: { probeId: string; resolvedAt: string | null },
+  probes: { id: string; enabled: boolean }[],
+) {
+  if (incident.resolvedAt) return "Resolved";
+  const paused = probes.some(
+    (probe) => probe.id === incident.probeId && !probe.enabled,
+  );
+  return paused ? "Ongoing · probe paused" : "Ongoing";
+}
+
 /** How long an incident lasted, or has lasted so far. */
 function incidentLength(
   incident: { openedAt: string; resolvedAt: string | null },
@@ -637,16 +649,14 @@ export function ServiceHealth({
                       <div className="health-service-details">
                         {Boolean(service.incidents?.length) && (
                           <div className="health-incidents">
-                            <h4>Incidents in the last 30 days</h4>
+                            <h4>Recent incidents</h4>
                             <ul>
                               {service.incidents!.map((incident) => (
                                 <li key={incident.id}>
                                   <span
                                     className={`health-incident-state ${incident.resolvedAt ? "resolved" : "open"}`}
                                   >
-                                    {incident.resolvedAt
-                                      ? "Resolved"
-                                      : "Ongoing"}
+                                    {incidentState(incident, service.probes)}
                                   </span>
                                   <span className="health-incident-text">
                                     <strong>{incident.probeName}</strong>{" "}

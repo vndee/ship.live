@@ -262,8 +262,10 @@ export class HealthStore {
         );
         if (reset) {
           // New rules reset current state; recorded measurements stay available.
+          // A down probe stays down, so its open incident still waits for the
+          // recovery threshold rather than resolving on the first pass.
           await c.query(
-            "UPDATE ship_live_health_probes SET state='unknown',failures=0,successes=0,last_checked_at=NULL,last_result=NULL WHERE id=$1",
+            "UPDATE ship_live_health_probes SET state=CASE WHEN state='down' THEN 'down' ELSE 'unknown' END,failures=0,successes=0,last_checked_at=NULL,last_result=NULL WHERE id=$1",
             [id],
           );
         }

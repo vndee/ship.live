@@ -163,6 +163,7 @@ After Monday 09:00 UTC, each team workspace with a webhook listening to `digest.
 | ------------------------------- | ---------------------------------- |
 | Outbound webhooks per workspace | 20                                 |
 | Inbound webhooks per workspace  | 10                                 |
+| Inbound requests                | 600 a minute from each IP address  |
 | Events per webhook              | 30                                 |
 | Filter patterns per list        | 50                                 |
 | Custom headers                  | 20, 8 KiB in total                 |
