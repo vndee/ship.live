@@ -9,6 +9,7 @@ A private shipping journal for individual builders and a live GitHub activity wa
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
   <a href="docs/configuration.md">Connect accounts</a> ·
+  <a href="docs/self-host-docker.md">Self-host with Docker</a> ·
   <a href="docs/railway.md">Deploy on Railway</a> ·
   <a href="docs/showcase.md">Screenshots</a> ·
   <a href="PRIVACY.md">Hosted service privacy</a> ·
@@ -81,6 +82,8 @@ npm start
 ```
 
 Production serves the built UI and API together on `PORT` (default `3001`). Set your public HTTPS origin as `APP_URL`, configure authentication, and point `DATABASE_URL` at persistent PostgreSQL. Startup applies SQL migrations; there is no JSON or memory fallback.
+
+For a physical Linux machine, the [Docker self-host guide](docs/self-host-docker.md) provides a production image and Compose stack with PostgreSQL, automatic Caddy HTTPS, persistent volumes, healthchecks, backup, restore, and upgrade commands.
 
 **Supabase Auth + Supabase PostgreSQL + one Railway Node service** is a practical starting point. The database needs a direct connection or session pooler that supports `LISTEN`. Free plans can support a prototype, but Railway's monthly credit does not guarantee an always-on service at no cost. The [Railway guide](docs/railway.md) includes current quotas, estimates, connection settings, and availability tradeoffs.
 
