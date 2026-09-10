@@ -172,7 +172,27 @@ function upstream() {
       return Response.json({
         token: "installation-token",
         expires_at: new Date(Date.now() + 3600000).toISOString(),
+        permissions: Object.fromEntries(
+          [
+            "metadata",
+            "contents",
+            "pull_requests",
+            "issues",
+            "actions",
+            "checks",
+            "statuses",
+            "deployments",
+          ].map((name) => [name, "read"]),
+        ),
       });
+    if (url.pathname === "/installation/repositories") {
+      const repositories = installed.map((repo) => ({
+        id: repo.id,
+        full_name: repo.name,
+        private: repo.private,
+      }));
+      return Response.json({ total_count: repositories.length, repositories });
+    }
     if (url.pathname.startsWith("/repos/")) return Response.json([]);
     return Response.json({ error: "unknown" }, { status: 404 });
   };
@@ -187,10 +207,12 @@ function upstream() {
     },
     fetcher,
   );
+  const installed: Repo[] = [repoA, repoB];
   return {
     github,
     visible,
     accessible,
+    installed,
     calls,
     codes,
     unavailable: () => {
@@ -297,7 +319,9 @@ async function connect(
   user: AuthUser,
   index: number,
   installation: InstallationInfo = team,
+  repositories = index === 1 ? [repoA] : [repoB],
 ) {
+  const previous = (await workspaces.access(user.id)) ?? [];
   await workspaces.saveGrant(
     user.id,
     { id: index, login: `builder-${index}` },
@@ -306,12 +330,13 @@ async function connect(
       expiresAt: Date.now() + 3600000,
     },
   );
-  return workspaces.connectInstallation(
-    user,
-    installation,
-    index,
-    (await workspaces.connection(user.id))!.generation,
-  );
+  const { generation, accessVersion } = (await workspaces.connection(user.id))!;
+  // Mirrors a sync, which records every installation the viewer can access.
+  await workspaces.replaceAccess(user.id, generation, accessVersion, [
+    ...previous.filter((item) => item.id !== installation.id),
+    { ...installation, repositories },
+  ]);
+  return workspaces.connectInstallation(user, installation, index, generation);
 }
 function event(id: string, repositoryId?: number): ActivityEvent {
   return {
@@ -379,14 +404,23 @@ test("dashboard shares expose only the creator's pinned repositories and never n
       ),
       [101],
     );
+    const resync = () =>
+      request("/api/github/installations/refresh", users[0], {
+        method: "POST",
+      });
+    const sharedIds = async () =>
+      (await (await read()).json()).events.map((e: ActivityEvent) => e.id);
     // New permission grants must not silently widen an already distributed link.
     provider.visible.set("token-a", [repoA, repoB]);
-    assert.deepEqual(
-      (await (await read()).json()).events.map((e: ActivityEvent) => e.id),
-      ["allowed"],
-    );
+    assert.equal((await resync()).status, 200);
+    assert.deepEqual(await sharedIds(), ["allowed"]);
+    // Shared reads never call GitHub; lost access applies at the creator's next sync.
     provider.visible.set("token-a", [repoB]);
-    assert.deepEqual((await (await read()).json()).events, []);
+    const calls = provider.calls.length;
+    assert.deepEqual(await sharedIds(), ["allowed"]);
+    assert.equal(provider.calls.length, calls);
+    assert.equal((await resync()).status, 200);
+    assert.deepEqual(await sharedIds(), []);
     const row = (
       await store.pool.query("SELECT * FROM ship_live_dashboard_shares")
     ).rows[0];
@@ -485,15 +519,19 @@ test("rotating, revoking, and expiring a share invalidates its bearer token", as
   });
 });
 
-test("shared feed fails closed on disconnect and concurrent rotation during GitHub checks", async (t) => {
-  await withApp(t, async ({ workspaces, users, provider, request }) => {
+test("shared feed fails closed on disconnect and on rotation during the feed read", async (t) => {
+  await withApp(t, async ({ workspaces, users, request }) => {
     const workspace = await connect(workspaces, users[0], 1);
     const path = `/api/workspaces/${workspace.id}/share`;
     const post = { method: "POST", body: JSON.stringify({ expiresIn: 3600 }) };
     const link = await (await request(path, users[0], post)).json();
-    provider.beforeRepositories(async () => {
+    const read = workspaces.feed.bind(workspaces);
+    workspaces.feed = async (...args) => {
+      const result = await read(...args);
+      workspaces.feed = read;
       await request(`${path}/rotate`, users[0], post);
-    });
+      return result;
+    };
     assert.equal(
       (
         await request("/api/shared/feed", null, {
@@ -637,7 +675,7 @@ test("shared streams expire even without new activity or a revocation notificati
   });
 });
 
-test("shared feeds never return cached private activity when GitHub access cannot be verified", async (t) => {
+test("shared feeds serve synced access during GitHub outages and release nothing without it", async (t) => {
   await withApp(t, async ({ store, workspaces, users, provider, request }) => {
     const workspace = await connect(workspaces, users[0], 1);
     await store.merge("installation-70", [event("private", 101)]);
@@ -648,10 +686,21 @@ test("shared feeds never return cached private activity when GitHub access canno
     );
     assert.equal(created.status, 201);
     const { token } = await created.json();
+    const read = () =>
+      request("/api/shared/feed", null, {
+        headers: { "x-dashboard-share": token },
+      });
     provider.unavailable();
-    const response = await request("/api/shared/feed", null, {
-      headers: { "x-dashboard-share": token },
-    });
+    const calls = provider.calls.length;
+    const shared = await read();
+    assert.equal(shared.status, 200);
+    assert.deepEqual(
+      (await shared.json()).events.map((e: ActivityEvent) => e.id),
+      ["private"],
+    );
+    assert.equal(provider.calls.length, calls);
+    await store.pool.query("DELETE FROM ship_live_github_access");
+    const response = await read();
     assert.equal(response.status, 410);
     assert.equal((await response.json()).events, undefined);
   });
@@ -770,7 +819,7 @@ test("feed verifies the session after each permission read without redundant ent
   });
 });
 
-test("each viewer gets a fresh immutable repository intersection, including access changes during a feed read", async (t) => {
+test("each viewer reads their own synced repository intersection, rechecked after the feed read", async (t) => {
   await withApp(t, async ({ store, workspaces, users, provider, request }) => {
     const workspace = await connect(workspaces, users[0], 1);
     await connect(workspaces, users[1], 2);
@@ -787,6 +836,7 @@ test("each viewer gets a fresh immutable repository intersection, including acce
       (await (
         await request(`/api/workspaces/${workspace.id}/feed`, user)
       ).json()) as FeedResponse;
+    const calls = provider.calls.length;
     assert.deepEqual(
       (await feed(users[0])).events.map((item) => item.id),
       ["alpha"],
@@ -795,14 +845,24 @@ test("each viewer gets a fresh immutable repository intersection, including acce
       (await feed(users[1])).events.map((item) => item.id),
       ["beta-with-alpha-name"],
     );
+    assert.equal(
+      provider.calls.length,
+      calls,
+      "feed reads must not call GitHub",
+    );
     const read = workspaces.feed.bind(workspaces);
     workspaces.feed = async (...args) => {
       const result = await read(...args);
-      provider.visible.set("token-a", []);
+      workspaces.feed = read;
+      // A repository-removal webhook commits while this response is built.
+      await workspaces.restrictAccess(70, [102], true);
       return result;
     };
     assert.deepEqual((await feed(users[0])).events, []);
-    provider.unavailable();
+    await store.pool.query(
+      "DELETE FROM ship_live_github_access WHERE user_id=$1",
+      [users[1].id],
+    );
     const denied = await request(
       `/api/workspaces/${workspace.id}/feed`,
       users[1],
@@ -816,60 +876,71 @@ test("each viewer gets a fresh immutable repository intersection, including acce
 });
 
 test("disconnect and logout during the final authorization read cannot release saved activity or notes", async (t) => {
-  await withApp(
-    t,
-    async ({ workspaces, store, auth, users, provider, request }) => {
-      const workspace = await connect(workspaces, users[0], 1);
-      await store.merge("installation-70", [event("must-stay-private", 101)], {
-        restricted: true,
-      });
-      const read = workspaces.feed.bind(workspaces);
-      workspaces.feed = async (...args) => {
-        const result = await read(...args);
-        provider.beforeRepositories(() => workspaces.disconnect(users[0].id));
-        return result;
-      };
-      const denied = await request(`/api/workspaces/${workspace.id}/feed`);
-      assert.ok([403, 404].includes(denied.status));
-      assert.doesNotMatch(await denied.text(), /must-stay-private/);
-      workspaces.feed = read;
-      const journal = await workspaces.ensurePersonal(users[0]);
-      await workspaces.addNote(users[0], journal.id, {
-        title: "A private note",
-        body: "",
-      });
-      let finalRead = false;
-      const get = workspaces.get.bind(workspaces);
-      workspaces.get = async (...args) => {
-        const result = await get(...args);
-        if (finalRead) auth.active.delete(users[0].id);
-        return result;
-      };
-      workspaces.feed = async (...args) => {
-        const result = await read(...args);
-        finalRead = true;
-        return result;
-      };
-      const loggedOut = await request(`/api/workspaces/${journal.id}/feed`);
-      assert.equal(loggedOut.status, 401);
-      assert.doesNotMatch(await loggedOut.text(), /A private note/);
-    },
-  );
+  await withApp(t, async ({ workspaces, store, auth, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    await store.merge("installation-70", [event("must-stay-private", 101)], {
+      restricted: true,
+    });
+    const read = workspaces.feed.bind(workspaces);
+    workspaces.feed = async (...args) => {
+      const result = await read(...args);
+      await workspaces.disconnect(users[0].id);
+      return result;
+    };
+    const denied = await request(`/api/workspaces/${workspace.id}/feed`);
+    assert.ok([403, 404].includes(denied.status));
+    assert.doesNotMatch(await denied.text(), /must-stay-private/);
+    workspaces.feed = read;
+    const journal = await workspaces.ensurePersonal(users[0]);
+    await workspaces.addNote(users[0], journal.id, {
+      title: "A private note",
+      body: "",
+    });
+    let finalRead = false;
+    const get = workspaces.get.bind(workspaces);
+    workspaces.get = async (...args) => {
+      const result = await get(...args);
+      if (finalRead) auth.active.delete(users[0].id);
+      return result;
+    };
+    workspaces.feed = async (...args) => {
+      const result = await read(...args);
+      finalRead = true;
+      return result;
+    };
+    const loggedOut = await request(`/api/workspaces/${journal.id}/feed`);
+    assert.equal(loggedOut.status, 401);
+    assert.doesNotMatch(await loggedOut.text(), /A private note/);
+  });
 });
 
-test("workspace discovery hides revoked teams and personal journals retain only notes during GitHub outages", async (t) => {
+test("workspace discovery follows synced access and journals keep synced activity through GitHub outages", async (t) => {
   await withApp(t, async ({ workspaces, store, users, provider, request }) => {
     const workspace = await connect(workspaces, users[0], 1);
-    const before = await (await request("/api/workspaces")).json();
-    assert.ok(
-      before.workspaces.some(
-        (item: { id: string }) => item.id === workspace.id,
-      ),
-    );
+    const refresh = () =>
+      request("/api/github/installations/refresh", users[0], {
+        method: "POST",
+      });
+    const listed = async () =>
+      (await (await request("/api/workspaces")).json()).workspaces as Array<{
+        id: string;
+        kind: string;
+      }>;
+    assert.ok((await listed()).some((item) => item.id === workspace.id));
     provider.accessible.set("token-a", []);
-    const removed = await (await request("/api/workspaces")).json();
+    const calls = provider.calls.length;
     assert.deepEqual(
-      removed.workspaces.map((item: { kind: string }) => item.kind),
+      (await listed()).map((item) => item.kind),
+      ["personal", "team"],
+    );
+    assert.equal(
+      provider.calls.length,
+      calls,
+      "discovery must not call GitHub",
+    );
+    assert.equal((await refresh()).status, 200);
+    assert.deepEqual(
+      (await listed()).map((item) => item.kind),
       ["personal"],
     );
     const personal: InstallationInfo = {
@@ -879,6 +950,8 @@ test("workspace discovery hides revoked teams and personal journals retain only 
       kind: "User",
       suspended: false,
     };
+    provider.accessible.set("token-a", [personal]);
+    assert.equal((await refresh()).status, 200);
     const journal = await workspaces.connectInstallation(
       users[0],
       personal,
@@ -889,12 +962,9 @@ test("workspace discovery hides revoked teams and personal journals retain only 
       title: "An offline reflection",
       body: "Still private",
     });
-    await store.merge(
-      "installation-71",
-      [event("must-not-escape-outage", 101)],
-      { restricted: true },
-    );
-    provider.accessible.set("token-a", [personal]);
+    await store.merge("installation-71", [event("synced-before-outage", 101)], {
+      restricted: true,
+    });
     const live = await stream(
       await request(`/api/workspaces/${journal.id}/events`),
     );
@@ -903,26 +973,30 @@ test("workspace discovery hides revoked teams and personal journals retain only 
       provider.unavailable();
       await store.merge(
         "installation-71",
-        [event("new-event-after-outage", 101)],
+        [event("new-event-during-outage", 101)],
         { restricted: true, deliveryId: randomUUID() },
       );
-      await live.frame("refresh");
-      const response = await request(`/api/workspaces/${journal.id}/feed`);
-      assert.equal(response.status, 200);
-      const feed = await response.json();
+      assert.match(await live.frame("activity"), /new-event-during-outage/);
+      const feed = await (
+        await request(`/api/workspaces/${journal.id}/feed`)
+      ).json();
       assert.deepEqual(
-        feed.events.map((item: ActivityEvent) => item.id),
-        [note.id],
-      );
-      assert.match(feed.notice, /notes only/i);
-      const listed = await (await request("/api/workspaces")).json();
-      assert.deepEqual(
-        listed.workspaces.map((item: { kind: string }) => item.kind),
-        ["personal"],
+        feed.events.map((item: ActivityEvent) => item.id).sort(),
+        ["new-event-during-outage", note.id, "synced-before-outage"].sort(),
       );
     } finally {
       await live.close();
     }
+    // Without synced access the journal releases only its private notes.
+    await store.pool.query("DELETE FROM ship_live_github_access");
+    const notesOnly = await (
+      await request(`/api/workspaces/${journal.id}/feed`)
+    ).json();
+    assert.deepEqual(
+      notesOnly.events.map((item: ActivityEvent) => item.id),
+      [note.id],
+    );
+    assert.match(notesOnly.notice, /notes only/i);
   });
 });
 
@@ -930,7 +1004,11 @@ test("GitHub installation metadata and connection requests cannot outlive a disc
   await withApp(t, async ({ workspaces, users, provider, request }) => {
     await connect(workspaces, users[0], 1);
     provider.beforeRepositories(() => workspaces.disconnect(users[0].id));
-    const listed = await request("/api/github/installations");
+    const listed = await request(
+      "/api/github/installations/refresh",
+      users[0],
+      { method: "POST" },
+    );
     assert.ok([401, 403].includes(listed.status));
     assert.doesNotMatch(await listed.text(), /team\/alpha/);
     await connect(workspaces, users[0], 1);
@@ -1011,6 +1089,10 @@ test("installation connection proves user access and sync processes every select
       batches.map((batch) => batch.length),
       [20, 1],
     );
+    const calls = provider.calls.length;
+    const listed = await (await request("/api/github/installations")).json();
+    assert.equal(listed.installations[0].repositories.length, 21);
+    assert.equal(provider.calls.length, calls, "listing reads synced access");
     batches.length = 0;
     assert.equal(
       (
@@ -1222,6 +1304,352 @@ test("personal GitHub installations accept signed User-owner payloads and revoke
   });
 });
 
+test("installation repository webhooks narrow every viewer's synced access without user-token calls", async (t) => {
+  await withApp(t, async ({ workspaces, store, users, provider, request }) => {
+    const workspace = await connect(workspaces, users[0], 1, team, [
+      repoA,
+      repoB,
+    ]);
+    await store.merge(
+      "installation-70",
+      [event("alpha", 101), event("beta", 102)],
+      { restricted: true },
+    );
+    const ids = async () =>
+      (
+        (await (
+          await request(`/api/workspaces/${workspace.id}/feed`)
+        ).json()) as FeedResponse
+      ).events
+        .map((item) => item.id)
+        .sort();
+    const removal = () => {
+      const init = delivery({
+        action: "removed",
+        installation: { id: 70 },
+        repository_selection: "selected",
+        repositories_removed: [{ id: 102, full_name: "team/beta" }],
+      });
+      (init.headers as Record<string, string>)["x-github-event"] =
+        "installation_repositories";
+      return request("/api/webhooks/github", null, init);
+    };
+    assert.deepEqual(await ids(), ["alpha", "beta"]);
+    provider.installed.splice(0, provider.installed.length, repoA);
+    const before = provider.calls.length;
+    assert.equal((await removal()).status, 202);
+    assert.deepEqual(await ids(), ["alpha"]);
+    const webhookCalls = provider.calls.slice(before);
+    assert.ok(webhookCalls.includes("/installation/repositories:app"));
+    assert.ok(webhookCalls.every((call) => !call.endsWith(":token-a")));
+    // When GitHub cannot list the selection, the delivery's removed list applies.
+    const { generation, accessVersion } = (await workspaces.connection(
+      users[0].id,
+    ))!;
+    await workspaces.replaceAccess(users[0].id, generation, accessVersion, [
+      { ...team, repositories: [repoA, repoB] },
+    ]);
+    assert.deepEqual(await ids(), ["alpha", "beta"]);
+    provider.unavailable();
+    assert.equal((await removal()).status, 202);
+    assert.deepEqual(await ids(), ["alpha"]);
+  });
+});
+
+test("authorizations without synced access get one automatic snapshot, then reads stay local", async (t) => {
+  await withApp(t, async ({ workspaces, users, provider, request }) => {
+    await workspaces.saveGrant(
+      users[0].id,
+      { id: 1, login: "builder-a" },
+      { accessToken: "token-a", expiresAt: Date.now() + 3600000 },
+    );
+    assert.equal(await workspaces.access(users[0].id), undefined);
+    assert.equal((await request("/api/workspaces")).status, 200);
+    assert.deepEqual(
+      (await workspaces.access(users[0].id))?.map((item) => item.id),
+      [70],
+    );
+    const calls = provider.calls.length;
+    await request("/api/workspaces");
+    await request("/api/github/installations");
+    assert.equal(provider.calls.length, calls);
+    await workspaces.saveGrant(
+      users[1].id,
+      { id: 2, login: "builder-b" },
+      { accessToken: "token-b", expiresAt: Date.now() + 3600000 },
+    );
+    provider.unavailable();
+    await request("/api/workspaces", users[1]);
+    const failed = provider.calls.length;
+    await request("/api/workspaces", users[1]);
+    assert.equal(provider.calls.length, failed, "failed snapshots back off");
+    assert.equal(await workspaces.access(users[1].id), undefined);
+  });
+});
+
+test("repeat syncs resume from each repository's last import and never move it backwards", async (t) => {
+  await withApp(t, async ({ workspaces, users, provider, request }) => {
+    const workspace = await connect(workspaces, users[0], 1, team, [
+      repoA,
+      repoB,
+    ]);
+    provider.visible.set("token-a", [repoA, repoB]);
+    const imported = Date.parse("2026-09-10T08:00:00Z");
+    const seen: Array<Array<[number, number]>> = [];
+    provider.github.backfill = async (
+      _installation,
+      repositories,
+      _onEvents,
+      options,
+    ) => {
+      seen.push([...(options?.since ?? new Map<number, number>())]);
+      // Alpha imports; beta fails and keeps no watermark.
+      if (repositories.some((repo) => repo.id === repoA.id))
+        await options?.onSynced?.(repoA.id, imported);
+      return { synced: 0, notice: "Partial historical coverage." };
+    };
+    const sync = () =>
+      request(`/api/workspaces/${workspace.id}/sync`, users[0], {
+        method: "POST",
+      });
+    assert.equal((await sync()).status, 200);
+    assert.equal((await sync()).status, 200);
+    assert.deepEqual(seen, [[], [[101, imported]]]);
+    await workspaces.markSynced(70, 101, imported - 60_000);
+    assert.deepEqual(
+      [...(await workspaces.syncWatermarks(70, [101, 102]))],
+      [[101, imported]],
+    );
+  });
+});
+
+test("a refresh that read GitHub before a webhook narrowing is discarded and read again", async (t) => {
+  await withApp(t, async ({ workspaces, users, provider, request }) => {
+    await connect(workspaces, users[0], 1, team, [repoA, repoB]);
+    provider.visible.set("token-a", [repoA, repoB]);
+    const listRepositories = provider.github.repositories.bind(provider.github);
+    let raced = false;
+    provider.github.repositories = async (...args) => {
+      const listed = await listRepositories(...args);
+      if (!raced) {
+        raced = true;
+        // GitHub removes beta and its webhook fails closed while this now
+        // stale listing is still in flight.
+        provider.visible.set("token-a", [repoA]);
+        await workspaces.dropAccess(users[0].id, 70, 102);
+      }
+      return listed;
+    };
+    const refreshed = await request(
+      "/api/github/installations/refresh",
+      users[0],
+      { method: "POST" },
+    );
+    assert.equal(refreshed.status, 200);
+    assert.deepEqual(
+      (await workspaces.repositoryAccess(users[0].id, 70))?.map(
+        (repo) => repo.id,
+      ),
+      [101],
+    );
+  });
+});
+
+test("repository-selection webhooks fail closed when neither GitHub nor the delivery names removals", async (t) => {
+  await withApp(t, async ({ workspaces, store, users, provider, request }) => {
+    const workspace = await connect(workspaces, users[0], 1, team, [
+      repoA,
+      repoB,
+    ]);
+    await store.merge("installation-70", [event("alpha", 101)], {
+      restricted: true,
+    });
+    provider.unavailable();
+    const init = delivery({
+      action: "removed",
+      installation: { id: 70 },
+      repository_selection: "selected",
+      repositories_removed: [],
+    });
+    (init.headers as Record<string, string>)["x-github-event"] =
+      "installation_repositories";
+    assert.equal(
+      (await request("/api/webhooks/github", null, init)).status,
+      202,
+    );
+    assert.deepEqual(await workspaces.repositoryAccess(users[0].id, 70), []);
+    const feed = (await (
+      await request(`/api/workspaces/${workspace.id}/feed`)
+    ).json()) as FeedResponse;
+    assert.deepEqual(feed.events, []);
+  });
+});
+
+async function eventually(check: () => Promise<boolean>, message: string) {
+  const deadline = Date.now() + 3000;
+  while (!(await check())) {
+    assert.ok(Date.now() < deadline, message);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+test("membership webhooks fail closed at once, then recompute affected viewers from GitHub", async (t) => {
+  await withApp(t, async ({ workspaces, store, users, provider, request }) => {
+    const workspace = await connect(workspaces, users[0], 1, team, [
+      repoA,
+      repoB,
+    ]);
+    await connect(workspaces, users[1], 2, team, [repoB]);
+    await store.merge(
+      "installation-70",
+      [event("alpha", 101), event("beta", 102)],
+      { restricted: true },
+    );
+    const ids = async (user: AuthUser) =>
+      (
+        (await (
+          await request(`/api/workspaces/${workspace.id}/feed`, user)
+        ).json()) as FeedResponse
+      ).events
+        .map((item) => item.id)
+        .sort();
+    const repos = async (user: AuthUser) =>
+      ((await workspaces.repositoryAccess(user.id, 70)) ?? [])
+        .map((repo) => repo.id)
+        .sort()
+        .join();
+    const send = (
+      kind: string,
+      payload: Record<string, unknown>,
+      organization = 700,
+    ) => {
+      const init = delivery({
+        installation: { id: 70 },
+        organization: { id: organization, login: "team" },
+        ...payload,
+      });
+      (init.headers as Record<string, string>)["x-github-event"] = kind;
+      return request("/api/webhooks/github", null, init);
+    };
+    // Holds every background GitHub repository read, so the fail-closed state
+    // stays visible while refreshes run in parallel.
+    const listRepositories = provider.github.repositories.bind(provider.github);
+    let gate: Promise<void> | undefined;
+    provider.github.repositories = async (...args) => {
+      await gate;
+      return listRepositories(...args);
+    };
+    const hold = () => {
+      let release!: () => void;
+      gate = new Promise<void>((resolve) => (release = resolve));
+      return async () => {
+        gate = undefined;
+        release();
+      };
+    };
+    const beta = {
+      id: 102,
+      full_name: "team/beta",
+      owner: { id: 700, login: "team" },
+    };
+
+    // Removing a collaborator drops that repository for that viewer only.
+    provider.visible.set("token-a", [repoA]);
+    let release = hold();
+    assert.equal(
+      (
+        await send("member", {
+          action: "removed",
+          member: { id: 1 },
+          repository: beta,
+        })
+      ).status,
+      202,
+    );
+    assert.deepEqual(await ids(users[0]), ["alpha"]);
+    assert.deepEqual(await ids(users[1]), ["beta"]);
+    await release();
+    await eventually(async () => (await repos(users[0])) === "101", "refresh");
+
+    // A team losing a repository drops it for everyone, then GitHub restores it
+    // for viewers who still have access another way.
+    release = hold();
+    assert.equal(
+      (
+        await send("team", {
+          action: "removed_from_repository",
+          team: { id: 5, slug: "core" },
+          repository: beta,
+        })
+      ).status,
+      202,
+    );
+    assert.deepEqual(await ids(users[1]), []);
+    await release();
+    await eventually(
+      async () => (await repos(users[1])) === "102",
+      "access GitHub still grants is restored",
+    );
+    assert.equal(await repos(users[0]), "101");
+
+    // Deliveries for another organization change nothing. Viewer A's background
+    // refresh may still be running, so count only viewer B's GitHub reads.
+    const readsForB = () =>
+      provider.calls.filter((call) => call.endsWith(":token-b")).length;
+    const calls = readsForB();
+    assert.equal(
+      (
+        await send(
+          "organization",
+          { action: "member_removed", membership: { user: { id: 2 } } },
+          999,
+        )
+      ).status,
+      202,
+    );
+    assert.equal(await repos(users[1]), "102");
+    assert.equal(readsForB(), calls);
+
+    // A removed organization member loses the installation entirely.
+    provider.accessible.set("token-a", []);
+    assert.equal(
+      (
+        await send("organization", {
+          action: "member_removed",
+          membership: { user: { id: 1, login: "builder-a" } },
+        })
+      ).status,
+      202,
+    );
+    await eventually(
+      async () =>
+        (await workspaces.repositoryAccess(users[0].id, 70)) === undefined,
+      "removed members lose the installation",
+    );
+    assert.equal(
+      (await request(`/api/workspaces/${workspace.id}/feed`)).status,
+      403,
+    );
+
+    // Grants arrive without waiting for a sync, too.
+    provider.visible.set("token-b", [repoA, repoB]);
+    assert.equal(
+      (
+        await send("team", {
+          action: "added_to_repository",
+          team: { id: 5, slug: "core" },
+          repository: { ...beta, id: 101, full_name: "team/alpha" },
+        })
+      ).status,
+      202,
+    );
+    await eventually(
+      async () => (await repos(users[1])) === "101,102",
+      "granted repositories appear",
+    );
+  });
+});
+
 async function stream(response: Response) {
   assert.equal(response.status, 200);
   const reader = response.body!.getReader();
@@ -1253,37 +1681,34 @@ async function stream(response: Response) {
 }
 
 test("SSE checks cross-instance notifications against current repository access and closes on session revocation", async (t) => {
-  await withApp(
-    t,
-    async ({ workspaces, store, auth, users, provider, request }) => {
-      const workspace = await connect(workspaces, users[0], 1);
-      const live = await stream(
-        await request(`/api/workspaces/${workspace.id}/events`),
-      );
-      try {
-        await live.frame("connected");
-        await store.merge("installation-70", [event("hidden-beta", 102)], {
-          restricted: true,
-          deliveryId: randomUUID(),
-        });
-        await store.merge("installation-70", [event("visible-alpha", 101)], {
-          restricted: true,
-          deliveryId: randomUUID(),
-        });
-        const frame = await live.frame("activity");
-        assert.match(frame, /visible-alpha/);
-        assert.doesNotMatch(frame, /hidden-beta/);
-        provider.visible.set("token-a", []);
-        await workspaces.notifyInstallation(70);
-        await live.frame("refresh");
-        auth.active.delete(users[0].id);
-        await workspaces.notifyInstallation(70);
-        await live.frame("access-revoked");
-      } finally {
-        await live.close();
-      }
-    },
-  );
+  await withApp(t, async ({ workspaces, store, auth, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const live = await stream(
+      await request(`/api/workspaces/${workspace.id}/events`),
+    );
+    try {
+      await live.frame("connected");
+      await store.merge("installation-70", [event("hidden-beta", 102)], {
+        restricted: true,
+        deliveryId: randomUUID(),
+      });
+      await store.merge("installation-70", [event("visible-alpha", 101)], {
+        restricted: true,
+        deliveryId: randomUUID(),
+      });
+      const frame = await live.frame("activity");
+      assert.match(frame, /visible-alpha/);
+      assert.doesNotMatch(frame, /hidden-beta/);
+      // A repository-removal webhook narrows access and refreshes open streams.
+      await workspaces.restrictAccess(70, [], true);
+      await live.frame("refresh");
+      auth.active.delete(users[0].id);
+      await workspaces.notifyInstallation(70);
+      await live.frame("access-revoked");
+    } finally {
+      await live.close();
+    }
+  });
 });
 
 test("SSE closes when the user's installation grant disappears and notes emit refresh frames", async (t) => {
@@ -1311,7 +1736,14 @@ test("SSE closes when the user's installation grant disappears and notes emit re
     try {
       await live.frame("connected");
       provider.accessible.set("token-a", []);
-      await workspaces.notifyInstallation(70);
+      assert.equal(
+        (
+          await request("/api/github/installations/refresh", users[0], {
+            method: "POST",
+          })
+        ).status,
+        200,
+      );
       await live.frame("access-revoked");
     } finally {
       await live.close();
@@ -1695,6 +2127,14 @@ test("health shares expire, revoke live viewers and reject loss of creator acces
     );
     const replacement = await create();
     provider.visible.set("token-a", []);
+    assert.equal(
+      (
+        await request("/api/github/installations/refresh", users[0], {
+          method: "POST",
+        })
+      ).status,
+      200,
+    );
     assert.equal(
       (
         await request("/api/shared/health", null, {

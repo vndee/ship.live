@@ -41,10 +41,10 @@ export function AccountPanel({
   const [loaded, setLoaded] = useState(false);
 
   async function loadInstallations() {
-    setBusy("Loading GitHub installations…");
+    setBusy("Refreshing GitHub access…");
     setError("");
     try {
-      const result = await feed.installations();
+      const result = await feed.refreshInstallations();
       setChoices(result.installations);
       setInstallUrl(installationUrl(result.installUrl) || "");
       setLoaded(true);

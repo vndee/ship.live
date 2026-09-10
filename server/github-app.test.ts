@@ -508,73 +508,6 @@ test("backfill bounds repository and review work and propagates persistence fail
   );
 });
 
-test("access listings revalidate every read with ETags, reusing unchanged pages without spending rate limit", async () => {
-  const sent: Array<{ page: string; etag: string | null }> = [];
-  let version = "v1";
-  const repositoriesPath = "/user/installations/7/repositories";
-  const app = new GitHubApp(
-    config,
-    mockApi((url, init) => {
-      const headers = new Headers(init.headers);
-      const page = `${url.pathname}?${url.searchParams.get("page")}`;
-      const etag = `W/"${headers.get("authorization")}:${page}:${version}"`;
-      sent.push({ page, etag: headers.get("if-none-match") });
-      if (headers.get("if-none-match") === etag)
-        return new Response(null, { status: 304, headers: { etag } });
-      if (url.pathname === "/user/installations")
-        return json(
-          { total_count: 1, installations: [installation()] },
-          { etag },
-        );
-      const first = url.searchParams.get("page") === "1";
-      return json(
-        {
-          total_count: 2,
-          repositories: [
-            {
-              id: first ? 1 : 2,
-              full_name: `our-team/${version}-${first ? "a" : "b"}`,
-              private: true,
-            },
-          ],
-        },
-        {
-          etag,
-          ...(first
-            ? {
-                link: `<https://api.github.com${repositoriesPath}?per_page=100&page=2>; rel="next"`,
-              }
-            : {}),
-        },
-      );
-    }),
-  );
-  const expected = (tag: string) => [
-    { id: 1, name: `our-team/${tag}-a`, private: true },
-    { id: 2, name: `our-team/${tag}-b`, private: true },
-  ];
-  assert.deepEqual(await app.repositories("ghu_one", 7), expected("v1"));
-  assert.ok(sent.every((request) => request.etag === null));
-  sent.length = 0;
-  // Unchanged pages come back as free 304s, including the cached next-page link.
-  assert.deepEqual(await app.repositories("ghu_one", 7), expected("v1"));
-  assert.equal(sent.length, 3);
-  assert.ok(sent.every((request) => request.etag?.includes("Bearer ghu_one")));
-  sent.length = 0;
-  // Validators are never shared between users' tokens.
-  await app.repositories("ghu_two", 7);
-  assert.ok(sent.every((request) => request.etag === null));
-  // GitHub is still asked on every read, so access changes apply immediately.
-  version = "v2";
-  assert.deepEqual(await app.repositories("ghu_one", 7), expected("v2"));
-
-  const unexpected = new GitHubApp(
-    config,
-    mockApi(() => new Response(null, { status: 304 })),
-  );
-  await assert.rejects(unexpected.installations("ghu_one"), /unexpected/);
-});
-
 test("GitHub App rate limits report when to retry, including secondary limits", async () => {
   const reset = Math.floor(Date.now() / 1000) + 600;
   const cases: Array<[number, Record<string, string>, number]> = [
@@ -609,4 +542,137 @@ test("GitHub App rate limits report when to retry, including secondary limits", 
         ),
     );
   }
+});
+
+test("known installation listings skip a second user listing, and installation selections use the installation token", async () => {
+  const paths: string[] = [];
+  const app = new GitHubApp(
+    config,
+    mockApi((url, init) => {
+      const authorization = new Headers(init.headers).get("authorization");
+      paths.push(
+        `${url.pathname}:${authorization?.startsWith("Bearer ghu_") ? "user" : "app"}`,
+      );
+      if (url.pathname === "/app/installations/7") return json(installation());
+      if (url.pathname.endsWith("/access_tokens")) return installationToken();
+      return json({
+        total_count: 1,
+        repositories: [{ id: 101, full_name: "our-team/first", private: true }],
+      });
+    }),
+  );
+  const repo = { id: 101, name: "our-team/first", private: true };
+  const known = [
+    {
+      id: 7,
+      accountId: 107,
+      account: "our-team",
+      kind: "Organization" as const,
+      suspended: false,
+    },
+  ];
+  assert.deepEqual(await app.repositories("ghu_viewer", 7, known), [repo]);
+  assert.deepEqual(paths, ["/user/installations/7/repositories:user"]);
+  paths.length = 0;
+  assert.deepEqual(await app.installationRepositories(7), [repo]);
+  assert.deepEqual(paths, [
+    "/app/installations/7:app",
+    "/app/installations/7/access_tokens:app",
+    "/installation/repositories:app",
+  ]);
+});
+
+test("backfill resumes each repository after its last import and reports stored repositories", async () => {
+  const now = Date.now();
+  const iso = (ago: number) => new Date(now - ago).toISOString();
+  const reviewed: string[] = [];
+  const issuesSince = new Map<string, number>();
+  const app = new GitHubApp(
+    config,
+    mockApi((url) => {
+      if (url.pathname === "/app/installations/7") return json(installation());
+      if (url.pathname.endsWith("/access_tokens")) return installationToken();
+      const [, , , repo, , number] = url.pathname.split("/");
+      if (repo === "broken") return new Response("{}", { status: 404 });
+      if (url.pathname.endsWith("/reviews")) {
+        reviewed.push(`${repo}#${number}`);
+        return json([]);
+      }
+      if (url.pathname.endsWith("/issues"))
+        issuesSince.set(repo, Date.parse(url.searchParams.get("since")!));
+      if (url.pathname.endsWith("/pulls"))
+        return json([
+          {
+            number: 1,
+            created_at: iso(5 * 86_400_000),
+            updated_at: iso(5 * 86_400_000),
+            user: { login: "author" },
+          },
+          {
+            number: 2,
+            created_at: iso(3_600_000),
+            updated_at: iso(3_600_000),
+            user: { login: "author" },
+          },
+        ]);
+      return json([]);
+    }),
+  );
+  const lastSync = now - 86_400_000;
+  const stored: string[] = [];
+  const synced: number[] = [];
+  const result = await app.backfill(
+    7,
+    [
+      { id: 1, name: "our-team/fresh", private: false },
+      { id: 2, name: "our-team/known", private: false },
+      { id: 3, name: "our-team/broken", private: false },
+    ],
+    async (events) => {
+      stored.push(...events.map((event) => event.id));
+    },
+    {
+      since: new Map([[2, lastSync]]),
+      onSynced: async (repositoryId) => {
+        synced.push(repositoryId);
+      },
+    },
+  );
+  // A new repository reads the whole window; a known one only what changed
+  // since its last import, with a short overlap.
+  assert.deepEqual(reviewed.sort(), ["fresh#1", "fresh#2", "known#2"]);
+  assert.equal(issuesSince.get("known"), lastSync - 15 * 60_000);
+  assert.ok(issuesSince.get("fresh")! <= now - 29 * 86_400_000);
+  assert.ok(stored.some((id) => id.startsWith("our-team/fresh:pr:1:")));
+  assert.ok(stored.some((id) => id.startsWith("our-team/known:pr:2:")));
+  assert.ok(!stored.some((id) => id.startsWith("our-team/known:pr:1:")));
+  // A failed repository keeps its previous watermark.
+  assert.deepEqual(synced, [1, 2]);
+  assert.match(result.notice, /1 resumed from their previous sync/);
+  assert.match(result.notice, /1 repositories could not be imported/);
+});
+
+test("backfill watermarks use the caller's start time", async () => {
+  const app = new GitHubApp(
+    config,
+    mockApi((url) => {
+      if (url.pathname === "/app/installations/7") return json(installation());
+      if (url.pathname.endsWith("/access_tokens")) return installationToken();
+      return json([]);
+    }),
+  );
+  const startedAt = Date.parse("2026-09-10T08:00:00Z");
+  const synced: number[] = [];
+  await app.backfill(
+    7,
+    [{ id: 1, name: "our-team/repo", private: false }],
+    async () => {},
+    {
+      startedAt,
+      onSynced: async (_repositoryId, syncedAt) => {
+        synced.push(syncedAt);
+      },
+    },
+  );
+  assert.deepEqual(synced, [startedAt]);
 });

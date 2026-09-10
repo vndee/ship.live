@@ -1,11 +1,6 @@
-import {
-  createHash,
-  createPrivateKey,
-  sign,
-  type KeyObject,
-} from "node:crypto";
+import { createPrivateKey, sign, type KeyObject } from "node:crypto";
 import type { ActivityEvent } from "../shared/types.js";
-import { FeedError } from "./github.js";
+import { FeedError, rateLimitRetryAfter } from "./github.js";
 import { normalizeWebhook, object, validOrganization } from "./normalize.js";
 
 export interface GitHubAppConfig {
@@ -48,6 +43,8 @@ const READ_PERMISSIONS = {
   deployments: "read",
 };
 const DAY = 86_400_000;
+// Resumed syncs re-read this much before the last import, for late GitHub writes.
+const SYNC_OVERLAP = 15 * 60_000;
 
 function positiveId(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
@@ -156,7 +153,6 @@ export class GitHubApp {
   private async request(
     url: string,
     init: RequestInit,
-    revalidating = false,
   ): Promise<{ data: unknown; response: Response }> {
     let response: Response;
     try {
@@ -171,10 +167,6 @@ export class GitHubApp {
         "GitHub could not be reached. Please try again.",
       );
     }
-    if (response.status === 304) {
-      if (!revalidating) malformed();
-      return { data: undefined, response };
-    }
     if (!response.ok) {
       const retryHeader = response.headers.get("retry-after");
       // Secondary limits can arrive as a 403 with Retry-After and quota remaining.
@@ -183,14 +175,7 @@ export class GitHubApp {
         response.headers.get("x-ratelimit-remaining") === "0" ||
         (response.status === 403 && retryHeader !== null)
       ) {
-        const reset = Number(response.headers.get("x-ratelimit-reset")) * 1000;
-        const retryAfter = Math.min(
-          3600,
-          Math.max(
-            60,
-            Number(retryHeader) || Math.ceil((reset - Date.now()) / 1000) || 60,
-          ),
-        );
+        const retryAfter = rateLimitRetryAfter(response.headers, Date.now());
         const minutes = Math.ceil(retryAfter / 60);
         throw new FeedError(
           429,
@@ -215,25 +200,20 @@ export class GitHubApp {
     }
   }
 
-  private api(path: string, token: string, body?: unknown, etag?: string) {
+  private api(path: string, token: string, body?: unknown) {
     if (!credential(token))
       throw new FeedError(401, "A valid GitHub access token is required.");
-    return this.request(
-      new URL(path, API).href,
-      {
-        method: body === undefined ? "GET" : "POST",
-        headers: {
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${token}`,
-          "X-GitHub-Api-Version": "2026-03-10",
-          "User-Agent": "ship.live",
-          ...(etag ? { "If-None-Match": etag } : {}),
-          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-        },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    return this.request(new URL(path, API).href, {
+      method: body === undefined ? "GET" : "POST",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "ship.live",
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
-      Boolean(etag),
-    );
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
   }
 
   private async grant(
@@ -380,68 +360,33 @@ export class GitHubApp {
     return url;
   }
 
-  // Access listings are re-checked with GitHub on every read. Unchanged pages
-  // return 304s, which do not spend the user's shared hourly rate limit. Keys
-  // hold token hashes, never tokens.
-  private readonly pages = new Map<
-    string,
-    {
-      etag: string;
-      total: number;
-      items: { id: number }[];
-      link: string | null;
-    }
-  >();
-
-  private async viewerPages<T extends { id: number }>(
+  /** Complete, validated pagination. Callers choose the token kind the listing needs. */
+  private async listPages<T extends { id: number }>(
     path: string,
-    userToken: string,
+    token: string,
     field: string,
     parse: (item: unknown) => T,
   ): Promise<T[]> {
     let url = new URL(`${path}?per_page=100&page=1`, API);
     let total: number | undefined;
     const items = new Map<number, T>();
-    const owner = createHash("sha256").update(userToken).digest("hex");
     for (let page = 1; page <= 100; page += 1) {
-      const key = `${owner} ${url.href}`;
-      const cached = this.pages.get(key);
-      const { data, response } = await this.api(
-        url.href,
-        userToken,
-        undefined,
-        cached?.etag,
-      );
-      // request() only accepts a 304 when this read sent a cached ETag.
-      let current = cached!;
-      if (response.status !== 304) {
-        const result = object(data);
-        if (
-          !count(result.total_count) ||
-          !Array.isArray(result[field]) ||
-          result[field].length > 100
-        )
-          malformed();
-        current = {
-          etag: response.headers.get("etag") ?? "",
-          total: result.total_count,
-          items: result[field].map(parse),
-          link: response.headers.get("link"),
-        };
-      }
-      this.pages.delete(key);
-      if (current.etag) {
-        this.pages.set(key, current);
-        if (this.pages.size > 1_000)
-          this.pages.delete(this.pages.keys().next().value!);
-      }
-      if (total !== undefined && current.total !== total) malformed();
-      total = current.total;
-      for (const item of current.items as T[]) {
+      const { data, response } = await this.api(url.href, token);
+      const result = object(data);
+      if (
+        !count(result.total_count) ||
+        !Array.isArray(result[field]) ||
+        result[field].length > 100 ||
+        (total !== undefined && result.total_count !== total)
+      )
+        malformed();
+      total = result.total_count;
+      for (const value of result[field]) {
+        const item = parse(value);
         if (items.has(item.id)) malformed();
         items.set(item.id, item);
       }
-      const next = this.nextPage(current.link, url);
+      const next = this.nextPage(response.headers.get("link"), url);
       if (!next) {
         if (items.size !== total) malformed();
         return [...items.values()];
@@ -456,7 +401,7 @@ export class GitHubApp {
   }
 
   installations(userToken: string): Promise<InstallationInfo[]> {
-    return this.viewerPages(
+    return this.listPages(
       "/user/installations",
       userToken,
       "installations",
@@ -464,23 +409,35 @@ export class GitHubApp {
     );
   }
 
+  /** Pass `installations` when this same user token just listed them. */
   async repositories(
     userToken: string,
     installationId: number,
+    installations?: InstallationInfo[],
   ): Promise<Repo[]> {
     if (!positiveId(installationId))
       throw new FeedError(400, "Choose a valid GitHub App installation.");
-    const installation = (await this.installations(userToken)).find(
-      (item) => item.id === installationId,
-    );
+    const installation = (
+      installations ?? (await this.installations(userToken))
+    ).find((item) => item.id === installationId);
     if (!installation || installation.suspended)
       throw new FeedError(
         403,
         "You do not have an active grant for this GitHub App installation.",
       );
-    return this.viewerPages(
+    return this.listPages(
       `/user/installations/${installationId}/repositories`,
       userToken,
+      "repositories",
+      repository,
+    );
+  }
+
+  /** The installation's current repository selection, read with its own token. */
+  async installationRepositories(installationId: number): Promise<Repo[]> {
+    return this.listPages(
+      "/installation/repositories",
+      await this.installationToken(installationId),
       "repositories",
       repository,
     );
@@ -632,6 +589,14 @@ export class GitHubApp {
     installationId: number,
     repositories: Repo[],
     onEvents: (events: ActivityEvent[]) => Promise<void>,
+    options: {
+      /** Last successful import per repository ID, in epoch milliseconds. */
+      since?: Map<number, number>;
+      /** Called after a repository's events are stored, with this sync's start time. */
+      onSynced?: (repositoryId: number, syncedAt: number) => Promise<void>;
+      /** Sync start in epoch milliseconds; pass the database clock so replicas agree. */
+      startedAt?: number;
+    } = {},
   ): Promise<{ synced: number; notice: string }> {
     const unique = new Map<number, Repo>();
     for (const input of repositories) {
@@ -643,21 +608,25 @@ export class GitHubApp {
     const selected = [...unique.values()].slice(0, 20);
     let synced = 0;
     let failed = 0;
+    let resumed = 0;
     if (selected.length) {
       const token = await this.installationToken(
         installationId,
         selected.map((repo) => repo.id),
       );
-      const now = Date.now();
+      const now = options.startedAt ?? Date.now();
+      const window = now - 30 * DAY;
       for (const repo of selected) {
+        const last = options.since?.get(repo.id);
+        // A previously imported repository only needs what changed since then.
+        const cutoff =
+          last === undefined
+            ? window
+            : Math.max(window, Math.min(last, now) - SYNC_OVERLAP);
+        if (cutoff > window) resumed += 1;
         let events: ActivityEvent[];
         try {
-          events = await this.recentRepository(
-            repo,
-            token,
-            now - 30 * DAY,
-            now,
-          );
+          events = await this.recentRepository(repo, token, cutoff, now);
         } catch (error) {
           if (!(error instanceof FeedError)) throw error;
           failed += 1;
@@ -665,12 +634,14 @@ export class GitHubApp {
         }
         // Persistence failures must reach the caller, rather than looking like successful sync.
         if (events.length) await onEvents(events);
+        // Only a stored import advances the watermark; failures retry the same range.
+        await options.onSynced?.(repo.id, now);
         synced += events.length;
       }
     }
     return {
       synced,
-      notice: `Partial history for the last 30 days: scanned ${selected.length} of ${unique.size} repositories, up to 100 pull requests, 100 issues and 100 releases per repository, plus the first 100 reviews for up to 30 recently updated pull requests. Records without known actors or timestamps are omitted. Push activity starts with future webhooks.${failed ? ` ${failed} repositories could not be imported; check access and re-sync.` : ""}${selected.length < unique.size ? " Select the remaining repositories and re-sync to import them." : ""}`,
+      notice: `Partial history for the last 30 days: scanned ${selected.length} of ${unique.size} repositories, up to 100 pull requests, 100 issues and 100 releases per repository, plus the first 100 reviews for up to 30 recently updated pull requests. Records without known actors or timestamps are omitted. Push activity starts with future webhooks.${resumed ? ` ${resumed} resumed from their previous sync, importing only newer changes.` : ""}${failed ? ` ${failed} repositories could not be imported; check access and re-sync.` : ""}${selected.length < unique.size ? " Select the remaining repositories and re-sync to import them." : ""}`,
     };
   }
 }

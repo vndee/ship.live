@@ -533,6 +533,18 @@ export function useFeed() {
       throw error;
     }
   }
+  /** Re-reads installations and repository access from GitHub. */
+  async function refreshInstallations() {
+    try {
+      return await mutate<{
+        installations: InstallationChoice[];
+        installUrl: string;
+      }>("/api/github/installations/refresh", undefined, "POST", 180_000);
+    } catch (error) {
+      accessFailure(error);
+      throw error;
+    }
+  }
   async function connectInstallation(id: number) {
     const user = currentUser.current;
     const identity = identityRevision.current;
@@ -731,6 +743,7 @@ export function useFeed() {
     logout,
     connectGithub,
     installations,
+    refreshInstallations,
     connectInstallation,
     disconnectGithub,
     sync,

@@ -27,7 +27,7 @@ A private shipping journal for individual builders and a live GitHub activity wa
 - **Live activity and replay.** Follow merges, reviews, releases, pushes, issues, and journal entries. Filter by repository, type, time, or text; replay the last 24 hours, 7 days, or 30 days.
 - **Shared recognition.** Weekly contributor spotlights and team milestones celebrate outcomes and collaboration. New commits earn a small per-commit credit; personal notes earn no XP.
 - **Expiring dashboard links.** Share a read-only team dashboard without requiring sign-in. Choose from one hour through a 100-year no-expiration option; rotate or revoke your link at any time.
-- **Private by default.** Personal notes belong to their owner. GitHub events are filtered to repositories each viewer can currently access through the GitHub App.
+- **Private by default.** Personal notes belong to their owner. GitHub events are filtered to repositories each viewer could access through the GitHub App at their last sync.
 - **Self-hosted.** React, Express, and shared PostgreSQL, with bundled fonts and no analytics. One Node.js service serves the frontend and API.
 
 Keyboard navigation, reduced-motion preferences, small screens, and fullscreen displays are supported. Screenshots use fictional demo data. Demo activity is never copied into a real workspace.

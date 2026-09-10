@@ -1277,16 +1277,26 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
               {feed.session.user ? "Account and GitHub connections" : "Sign in"}
             </button>
             {!feed.demo && feed.githubConnected && (
-              <button
-                className="text-button"
-                disabled={syncing}
-                onClick={() => void syncGithub()}
-              >
-                <RefreshCw size={14} className={syncing ? "spin" : ""} />
-                {syncing
-                  ? "Importing recent activity…"
-                  : "Sync GitHub activity"}
-              </button>
+              <>
+                <button
+                  className="text-button"
+                  disabled={syncing}
+                  onClick={() => void syncGithub()}
+                >
+                  <RefreshCw size={14} className={syncing ? "spin" : ""} />
+                  {syncing
+                    ? "Importing recent activity…"
+                    : "Sync GitHub activity"}
+                </button>
+                <p className="field-hint">
+                  New activity arrives automatically. Sync re-reads your
+                  repository access, which spends your GitHub API quota shared
+                  with your other GitHub tools, and imports recent history. Use
+                  it after changing access in GitHub or if activity looks
+                  missing; repeat syncs only fetch what changed since the last
+                  one.
+                </p>
+              </>
             )}
           </section>
           <section className="settings-section">

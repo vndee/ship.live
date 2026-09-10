@@ -3,7 +3,9 @@
 ## Unreleased
 
 - Award 2 XP for each commit a branch push adds to the repository, using GitHub's distinct-commit marker so a commit is credited once. Merges into branches other than the repository default now earn 15 XP; default-branch merges keep 30 XP.
-- Stop GitHub access checks from exhausting the user's rate limit. Installation and repository listings revalidate with ETags on every read, and unchanged pages return free `304` responses. Rate-limit errors report GitHub's retry time and recognize secondary limits instead of reporting revoked access.
+- Authorize reads from each viewer's stored repository access instead of calling GitHub on every request, which exhausted the user's GitHub rate limit. Access refreshes on connect, **Refresh**, and **Sync**; installation repository webhooks narrow it immediately. Rate-limit errors report GitHub's retry time and recognize secondary limits instead of reporting revoked access.
+- Request the read-only organization Members permission and consume organization, membership, team, and member webhooks. Access removals take effect immediately and affected viewers are recomputed in the background. Existing installations must approve the new permission.
+- Resume **Sync** from each repository's last successful import instead of re-reading the full 30-day window. The Sync control now explains that it spends the user's GitHub API quota while webhooks deliver new activity automatically.
 - Add Supabase Google/GitHub login with server-only PKCE handling, HttpOnly cookies, CSRF checks, and shared PostgreSQL session revocation.
 - Introduce private personal shipping journals, owner-only manual notes, and GitHub installation workspaces for individuals and teams. Manual notes earn zero XP.
 - Connect repository activity through a read-only GitHub App, separate from Supabase's GitHub login OAuth App. Encrypt user/refresh credentials and coordinate token rotation across instances.
