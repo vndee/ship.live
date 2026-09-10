@@ -3,6 +3,10 @@ import { test } from "node:test";
 import {
   buildLatencySeries,
   latencySegments,
+  nearestLatencyPoint,
+  moveLatencyPoint,
+  clampTooltipLeft,
+  type LatencyPoint,
   type DailyLatency,
 } from "./latency-chart.ts";
 import type { HealthCheck } from "../../shared/health";
@@ -89,4 +93,89 @@ test("empty daily buckets remain missing and a lone observation produces a visib
   const lone = buildLatencySeries([], [day("2026-09-10", 0)], "daily", now);
   assert.equal(latencySegments(lone).length, 1);
   assert.equal(latencySegments(lone)[0][0].latencyMs, 0);
+});
+
+const point = (time: number): LatencyPoint => ({
+  time,
+  latencyMs: 100,
+  minLatencyMs: 100,
+  maxLatencyMs: 100,
+  checks: 1,
+});
+
+test("selects the nearest recorded point and skips missing days", () => {
+  const points = [point(100), null, point(300), point(500)];
+  assert.equal(nearestLatencyPoint(points, 360), 2);
+  assert.equal(nearestLatencyPoint(points, 490), 3);
+  assert.equal(nearestLatencyPoint([null, null], 200), null);
+  assert.equal(nearestLatencyPoint([], 200), null);
+  assert.equal(nearestLatencyPoint(points, 0), 0);
+  assert.equal(nearestLatencyPoint(points, 900), 3);
+  assert.equal(nearestLatencyPoint(points, 200), 0);
+  assert.equal(nearestLatencyPoint([null, point(300), null], 0), 1);
+});
+
+test("keyboard movement stays on recorded points and clamps at both ends", () => {
+  const points = [point(100), null, point(300)];
+  assert.equal(moveLatencyPoint(points, null, "next"), 0);
+  assert.equal(moveLatencyPoint(points, 0, "next"), 2);
+  assert.equal(moveLatencyPoint(points, 2, "next"), 2);
+  assert.equal(moveLatencyPoint(points, 2, "previous"), 0);
+  assert.equal(moveLatencyPoint(points, 0, "last"), 2);
+  assert.equal(moveLatencyPoint(points, 0, "previous"), 0);
+  assert.equal(moveLatencyPoint(points, 2, "first"), 0);
+  assert.equal(moveLatencyPoint(points, null, "last"), 2);
+  assert.equal(moveLatencyPoint(points, null, "previous"), 0);
+  assert.equal(moveLatencyPoint(points, 1, "next"), 0);
+  assert.equal(moveLatencyPoint([null, point(300), null], 1, "next"), 1);
+  assert.equal(moveLatencyPoint([null, null], null, "first"), null);
+  assert.equal(moveLatencyPoint([], null, "last"), null);
+});
+
+test("tooltip position stays inside the chart container", () => {
+  assert.equal(clampTooltipLeft(5, 120, 640), 8);
+  assert.equal(clampTooltipLeft(320, 120, 640), 260);
+  assert.equal(clampTooltipLeft(635, 120, 640), 512);
+  assert.equal(clampTooltipLeft(80, 144, 160), 8);
+  assert.equal(clampTooltipLeft(635, 120, 640, 16), 504);
+});
+
+test("recent tooltip points preserve success, HTTP failures, and timeout metadata", () => {
+  const checks: HealthCheck[] = [
+    {
+      checkedAt: "2026-09-10T01:00:00Z",
+      latencyMs: 100,
+      ok: true,
+      statusCode: 200,
+      reason: "",
+      status: "healthy",
+    },
+    {
+      checkedAt: "2026-09-10T02:00:00Z",
+      latencyMs: 200,
+      ok: false,
+      statusCode: 503,
+      reason: "HTTP 503",
+      status: "down",
+    },
+    {
+      checkedAt: "2026-09-10T03:00:00Z",
+      latencyMs: 10000,
+      ok: false,
+      statusCode: null,
+      reason: "timeout",
+      status: "down",
+    },
+  ];
+  assert.deepEqual(
+    buildLatencySeries(checks, [], "recent", Date.now()).map((p) => [
+      p?.ok,
+      p?.statusCode,
+    ]),
+    [
+      [true, 200],
+      [false, 503],
+      [false, null],
+    ],
+  );
 });
