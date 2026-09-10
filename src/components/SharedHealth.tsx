@@ -15,6 +15,7 @@ import { isEffectivelyNoExpiration } from "../../shared/shares";
 import { useSharedHealth } from "../hooks/useSharedHealth";
 import { aggregate } from "../lib/service-status-strip";
 import "./service-health.css";
+import { ThemeToggle } from "./ThemeToggle";
 
 function statusOf(probe: PublicHealthProbe, now: number): HealthStatus {
   if (!probe.enabled) return "paused";
@@ -104,6 +105,7 @@ function SharedHealthView({ token }: { token: string }) {
           {feed.data?.organization || "Shared service health"}
         </span>
         <div className="header-tools">
+          <ThemeToggle />
           <span className="read-only-badge">
             <Eye size={13} /> Read only
           </span>

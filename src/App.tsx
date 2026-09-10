@@ -60,6 +60,7 @@ import { ActivityCelebration } from "./components/ActivityCelebration";
 import { useActivityCelebration } from "./hooks/useActivityCelebration";
 import { useEngineeringWall } from "./hooks/useEngineeringWall";
 import { EngineeringWall } from "./components/EngineeringWall";
+import { ThemeToggle } from "./components/ThemeToggle";
 
 type Page =
   "dashboard" | "feed" | "team" | "milestones" | "repositories" | "health";
@@ -693,6 +694,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
               Sign in
             </button>
           )}
+          <ThemeToggle />
           <button
             className="icon-button"
             aria-label="Settings"

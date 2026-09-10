@@ -18,7 +18,7 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  color: #a6b2bd;
+  color: var(--muted);
   min-height: 22px;
 }
 .pulse-label h2 {
@@ -32,7 +32,7 @@
 .pulse-label > button {
   margin-left: auto;
   font-size: 10px;
-  color: #8f9da9;
+  color: var(--subtle);
 }
 .pulse-label > button {
   padding: 0;
@@ -52,13 +52,13 @@
 }
 .pulse-total > span {
   font-size: 12px;
-  color: #a6b2bd;
+  color: var(--muted);
 }
 .pulse-today > p {
   display: flex;
   gap: 17px;
   margin-top: 13px;
-  color: #a6b2bd;
+  color: var(--muted);
   font-size: 11px;
 }
 .pulse-today > p > span {
@@ -82,26 +82,26 @@
   height: 56px;
   display: flex;
   align-items: end;
-  border-bottom: 1px solid #38444f;
+  border-bottom: 1px solid var(--line-strong);
 }
 .rhythm-column > span {
   display: block;
   width: 100%;
   min-height: 2px;
   border-radius: 3px 3px 0 0;
-  background: #536a7c;
+  background: var(--neutral-strong);
 }
 .rhythm-chart .is-today .rhythm-column > span {
-  background: #e3ba8a;
+  background: var(--accent);
 }
 .rhythm-chart > div > span {
   display: block;
   margin-top: 7px;
   font-size: 9px;
-  color: #9ba7b3;
+  color: var(--muted);
 }
 .rhythm-chart .is-today > span {
-  color: #e3ba8a;
+  color: var(--accent);
 }
 .pulse-milestone h3 {
   font-weight: 500;
@@ -110,7 +110,7 @@
   letter-spacing: -0.3px;
 }
 .pulse-milestone > p {
-  color: #a6b2bd;
+  color: var(--muted);
   font-size: 11px;
   margin-top: 6px;
   line-height: 1.5;
@@ -127,14 +127,14 @@
   height: 3px;
 }
 .pulse-goal > span {
-  color: #e3ba8a;
+  color: var(--accent);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
 .activity-new {
-  background: #1b2b29;
-  box-shadow: inset 3px 0 #95d8bd;
-  border-top-color: #527869;
+  background: var(--success-surface);
+  box-shadow: inset 3px 0 var(--success);
+  border-top-color: var(--success-border);
 }
 .activity-new .event-select,
 .shared-event.activity-new {
@@ -142,15 +142,15 @@
   padding-right: 10px !important;
 }
 .activity-new .event-title {
-  color: #e8f3ec;
+  color: var(--text);
 }
 .with-activity-motion {
   animation: live-event-arrival 900ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .new-activity-badge {
   display: inline-block;
-  color: #a4e5c9;
-  background: #2a463b;
+  color: var(--success-strong);
+  background: var(--success-surface-strong);
   padding: 2px 5px;
   border-radius: 3px;
   margin-right: 7px;
@@ -160,11 +160,11 @@
 @keyframes live-event-arrival {
   0% {
     transform: translateY(-7px);
-    background: #34594a;
+    background: var(--success-surface-strong);
   }
   100% {
     transform: translateY(0);
-    background: #1b2b29;
+    background: var(--success-surface);
   }
 }
 .celebration-confetti {
@@ -186,10 +186,10 @@
   width: max-content;
   max-width: min(660px, calc(100vw - 32px));
   padding: 18px 22px;
-  border: 1px solid #527768;
+  border: 1px solid var(--success-border);
   border-radius: 12px;
-  background: #182820;
-  box-shadow: 0 12px 48px #0008;
+  background: var(--success-surface);
+  box-shadow: 0 12px 48px var(--shadow);
   pointer-events: none;
   z-index: 91;
 }
@@ -202,8 +202,8 @@
   width: 42px;
   height: 42px;
   border-radius: 50%;
-  background: #2a4435;
-  color: #a9dfbd;
+  background: var(--success-surface-strong);
+  color: var(--success-strong);
   flex: 0 0 auto;
 }
 .activity-celebration > div {
@@ -212,12 +212,12 @@
 .activity-celebration strong {
   display: block;
   font-weight: 550;
-  color: #e8f1e7;
+  color: var(--text);
   font-size: 13px;
   line-height: 1.5;
 }
 .activity-celebration p {
-  color: #b8c8bb;
+  color: var(--muted);
   font-size: 12px;
   margin-top: 4px;
   overflow: hidden;
@@ -225,14 +225,14 @@
   white-space: nowrap;
 }
 .celebration-xp {
-  color: #bbebc3;
+  color: var(--success-strong);
   font-size: 27px;
   font-weight: 500;
   letter-spacing: -1px;
   font-variant-numeric: tabular-nums;
   padding-left: 16px;
   margin-left: 8px;
-  border-left: 1px solid #46614c;
+  border-left: 1px solid var(--success-border);
 }
 .celebration-xp small {
   display: block;
@@ -243,16 +243,16 @@
   white-space: nowrap;
 }
 .milestone-celebration {
-  background: #30281b;
-  border-color: #917248;
+  background: var(--warning-surface);
+  border-color: var(--warning-border);
 }
 .milestone-celebration .celebration-icon {
-  color: #f0cf9b;
-  background: #4d3b22;
+  color: var(--warning);
+  background: var(--warning-surface);
 }
 .milestone-celebration .celebration-xp {
-  color: #f0cf9b;
-  border-left-color: #725833;
+  color: var(--warning);
+  border-left-color: var(--warning-border);
 }
 @keyframes celebration-arrival {
   from {
@@ -268,7 +268,7 @@
   white-space: nowrap;
 }
 .demo-activity-button svg {
-  color: #e3ba8a;
+  color: var(--accent);
 }
 .wall-mode .dashboard-pulse {
   flex-shrink: 0;

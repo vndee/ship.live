@@ -15,6 +15,7 @@ import { EVENT_META } from "../lib/activity";
 import { ActivityCelebration } from "./ActivityCelebration";
 import { useActivityCelebration } from "../hooks/useActivityCelebration";
 import type { ActivityEvent } from "../../shared/types";
+import { ThemeToggle } from "./ThemeToggle";
 import { EngineeringWall } from "./EngineeringWall";
 
 const noEvents: ActivityEvent[] = [];
@@ -66,6 +67,7 @@ export function SharedDashboard() {
           {feed.data?.organization || "Shared dashboard"}
         </span>
         <div className="header-tools">
+          <ThemeToggle />
           <button
             className="icon-button"
             aria-label="Celebrate new activity"

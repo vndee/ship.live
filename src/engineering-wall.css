@@ -1,7 +1,7 @@
 .engineering-wall {
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #0b1014;
+  background: var(--surface-inset);
   min-width: 0;
   overflow: hidden;
 }
@@ -32,12 +32,12 @@
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: #465159;
+  background: var(--neutral-strong);
 }
 .wall-toolbar nav button.active {
   width: 18px;
   border-radius: 8px;
-  background: #95d8bd;
+  background: var(--success);
 }
 .wall-attention,
 .wall-moment {
@@ -45,9 +45,9 @@
   align-items: center;
   gap: 10px;
   padding: 11px 15px;
-  border-bottom: 1px solid #683c3c;
-  background: #251719;
-  color: #f2d6d2;
+  border-bottom: 1px solid var(--danger-border);
+  background: var(--danger-surface);
+  color: var(--danger);
   text-decoration: none;
 }
 .wall-attention span {
@@ -56,12 +56,12 @@
   flex: 1;
 }
 .wall-attention small {
-  color: #c69b96;
+  color: var(--danger);
 }
 .wall-moment {
-  border-color: #355448;
-  background: #15231e;
-  color: #dff4eb;
+  border-color: var(--success-border);
+  background: var(--success-surface);
+  color: var(--text);
 }
 .wall-scene {
   min-height: 300px;
@@ -121,7 +121,7 @@
 }
 .radar-row:hover,
 .release-row:hover {
-  background: #121a20;
+  background: var(--surface-hover);
 }
 .radar-row > div,
 .release-row > div {
@@ -137,17 +137,17 @@
 }
 .radar-state {
   min-width: 68px;
-  color: #aab5bb;
+  color: var(--muted);
   font-size: 10px;
   text-transform: uppercase;
 }
 .radar-row.failing .radar-state,
 .release-row .failing {
-  color: #e29292;
+  color: var(--danger-strong);
 }
 .radar-row.ready .radar-state,
 .release-row .successful {
-  color: #95d8bd;
+  color: var(--success);
 }
 .release-scene {
   padding-bottom: 12px;
@@ -172,17 +172,17 @@
 }
 .release-row .healthy,
 .release-row .successful {
-  color: #95d8bd;
+  color: var(--success);
 }
 .release-row .degraded {
-  color: #e3ba8a;
+  color: var(--accent);
 }
 .release-row .down,
 .release-row .failing {
-  color: #e29292;
+  color: var(--danger-strong);
 }
 .wall-moment span {
-  color: #9fb9ae;
+  color: var(--success-strong);
   font-size: 11px;
 }
 @media (max-width: 700px) {

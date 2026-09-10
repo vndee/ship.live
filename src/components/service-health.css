@@ -90,23 +90,23 @@
 .health-service-block {
   min-width: 0;
   border-radius: 2px;
-  background: #252d32;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 4%);
+  background: var(--neutral-track);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 5%, transparent);
 }
 .health-service-block-healthy {
-  background: #629c79;
+  background: var(--success);
 }
 .health-service-block-degraded {
-  background: #c19954;
+  background: var(--warning);
 }
 .health-service-block-down {
-  background: #c76669;
+  background: var(--danger-strong);
 }
 .health-service-block-unknown {
-  background: #626c72;
+  background: var(--subtle);
 }
 .health-service-block-paused {
-  background: #77758b;
+  background: var(--violet);
 }
 .health-service-actions {
   padding: 0 20px 14px 48px;
@@ -126,7 +126,7 @@
   white-space: nowrap;
   font-size: 11px;
   font-weight: 600;
-  color: #a4afb6;
+  color: var(--muted);
 }
 .health-badge > span {
   width: 6px;
@@ -135,16 +135,16 @@
   background: currentColor;
 }
 .health-healthy {
-  color: #9bceae;
+  color: var(--success-strong);
 }
 .health-degraded {
-  color: #e3ba8a;
+  color: var(--accent);
 }
 .health-down {
-  color: #ef9b9b;
+  color: var(--danger-strong);
 }
 .health-paused {
-  color: #acabc4;
+  color: var(--violet);
 }
 .health-probe {
   padding: 18px 20px;
@@ -192,10 +192,10 @@
   border-radius: 2px;
 }
 .health-pass {
-  background: #69917c;
+  background: var(--success);
 }
 .health-fail {
-  background: #c67f80;
+  background: var(--danger-strong);
 }
 .health-no-history {
   color: var(--muted);
@@ -236,20 +236,20 @@
   font-size: 15px;
 }
 .health-error {
-  color: #ef9b9b;
+  color: var(--danger-strong);
   font-size: 13px;
   line-height: 1.6;
 }
 .health-notice,
 .health-change {
-  color: #b9d6c2;
+  color: var(--success-strong);
   font-size: 13px;
   line-height: 1.6;
 }
 .health-change {
   padding: 12px 16px;
   border-left: 2px solid currentColor;
-  background: #17231e;
+  background: var(--success-surface);
   animation: health-arrival 0.35s ease-out;
 }
 .health-service-form {
@@ -292,7 +292,7 @@
   width: 100%;
   color: var(--text);
   background: var(--background);
-  border: 1px solid #414b51;
+  border: 1px solid var(--line-strong);
   border-radius: 5px;
   padding: 10px 12px;
   font: inherit;
@@ -316,7 +316,7 @@
 }
 .health-confirm {
   padding: 18px 20px;
-  border: 1px solid #945b60;
+  border: 1px solid var(--danger-border);
   margin-top: 16px;
   border-radius: 8px;
   font-size: 13px;
@@ -448,7 +448,7 @@
   cursor: pointer;
 }
 .latency-chart-range button[aria-pressed="true"] {
-  background: #29343c;
+  background: var(--neutral-track);
   color: var(--text);
 }
 .latency-chart-caption {
@@ -475,13 +475,13 @@
 }
 .latency-line {
   fill: none;
-  stroke: #a4c8e5;
+  stroke: var(--info);
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
   stroke-linejoin: round;
 }
 .latency-point {
-  fill: #a4c8e5;
+  fill: var(--info);
 }
 .latency-chart-empty {
   padding: 24px 0;
