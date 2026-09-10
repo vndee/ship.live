@@ -99,18 +99,12 @@ function workspaceShareRouter(
   async function authorize(token: string | undefined) {
     const share = await shares.resolve(token);
     if (!github) throw unavailableShare();
-    let repositories: Repo[];
-    try {
-      const grant = await workspaces.withGrant(share.creator_user_id, (grant) =>
-        github.refresh(grant),
-      );
-      repositories = await github.repositories(
-        grant.accessToken,
-        Number(share.installation_id),
-      );
-    } catch {
-      throw unavailableShare();
-    }
+    // The creator's synced access, bound to the authorization the link pinned.
+    const repositories = await workspaces.repositoryAccess(
+      share.creator_user_id,
+      Number(share.installation_id),
+    );
+    if (!repositories) throw unavailableShare();
     const current = await shares.resolve(token);
     const pinned = new Set(current.repository_ids.map(Number));
     const visible = repositories.filter((repo) => pinned.has(repo.id));

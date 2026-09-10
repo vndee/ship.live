@@ -98,6 +98,12 @@ function normalize(
       action === "merged" || (action === "closed" && pr.merged === true);
     if (!merged && action !== "opened") return null;
     const at = date(merged ? pr.merged_at : pr.created_at, occurredAt);
+    const target = object(pr.base);
+    const branch = (merged && text(target.ref)) || undefined;
+    // Webhooks and pull listings name the default branch; trimmed REST events may not.
+    const defaultName =
+      text(object(target.repo).default_branch) ||
+      text(object(payload.repository).default_branch);
     return {
       ...base,
       id: `${repo.toLowerCase()}:pr:${prNumber}:${merged ? "merged" : `${action}:${at}`}`,
@@ -109,6 +115,8 @@ function normalize(
       occurredAt: at,
       additions: number(pr.additions),
       deletions: number(pr.deletions),
+      branch,
+      defaultBranch: branch && defaultName ? branch === defaultName : undefined,
     };
   }
   if (kind === "pull_request_review") {
@@ -146,12 +154,20 @@ function normalize(
     const latest = object(payload.head_commit ?? commits.at(-1));
     const branch = ref.replace(/^refs\/(heads|tags)\//, "") || "repository";
     const count = number(payload.size) ?? (commits.length || undefined);
+    // GitHub marks commits already pushed elsewhere as not distinct, so branch
+    // creation and merge commits never credit the same commit twice.
+    const added =
+      number(payload.distinct_size) ??
+      (Array.isArray(payload.commits)
+        ? commits.filter((commit) => object(commit).distinct !== false).length
+        : undefined);
     return {
       ...base,
       id: head
         ? `${repo.toLowerCase()}:push:${ref}:${head}`
         : `github:${fallbackId}`,
       type: "push",
+      commits: ref.startsWith("refs/heads/") ? added : undefined,
       title:
         text(latest.message).split("\n")[0] ||
         `Pushed${count ? ` ${count} commit${count === 1 ? "" : "s"}` : ""} to ${branch}`,

@@ -78,16 +78,16 @@ Register an App installable on the personal accounts and organizations you inten
 | Request user authorization during installation | Disabled; ship.live initiates its own browser-bound OAuth flow |
 | Device flow                                    | Not needed                                                     |
 
-Use a publicly reachable HTTPS URL for actual webhook delivery. The setup return is navigation only: a returned `installation_id` does not prove ownership. The server verifies installations and repositories using the current user's GitHub App user token. [GitHub setup URL security](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/about-the-setup-url).
+Use a publicly reachable HTTPS URL for actual webhook delivery. The setup return is navigation only: a returned `installation_id` does not prove ownership. The server verifies installations and repositories using the current user's GitHub App user token when that user connects, refreshes, or syncs; ordinary reads use the stored result. [GitHub setup URL security](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/about-the-setup-url).
 
-Grant **read-only** repository permissions: Metadata, Pull requests, Issues, Contents, Actions, Checks, Commit statuses, and Deployments. Subscribe to pull request, pull request review, issues, push, release, check run, status, workflow run, deployment, and deployment status events. Lifecycle events also drive revocation handling. Existing installations must approve added permissions before engineering-wall signals can load. No write permission, organization-membership permission, source cloning, source-file download, CI logs, or check annotations are needed by ship.live. [GitHub webhook permissions](https://docs.github.com/en/webhooks/webhook-events-and-payloads).
+Grant **read-only** repository permissions: Metadata, Pull requests, Issues, Contents, Actions, Checks, Commit statuses, and Deployments, plus the **read-only** organization permission Members. Subscribe to pull request, pull request review, issues, push, release, check run, status, workflow run, deployment, deployment status, organization, membership, team, and member events. Lifecycle and membership events drive revocation handling: organization member, team, and repository collaborator changes update each viewer's stored repository access without waiting for a sync. Existing installations must approve added permissions before engineering-wall signals and membership updates arrive; until an organization approves Members, access changes apply at each viewer's next sync. No write permission, source cloning, source-file download, CI logs, or check annotations are needed by ship.live. [GitHub webhook permissions](https://docs.github.com/en/webhooks/webhook-events-and-payloads).
 
 Generate the App's private key and populate the server variables. In ship.live:
 
 1. Sign in and choose **Connect GitHub**.
 2. Authorize the App. Install it on a personal account or organization if needed, choosing **Only select repositories** for the scope you want.
 3. Return to ship.live and choose an installation/workspace. The server lists only installations and repositories available to that GitHub user.
-4. Synchronize recent activity. New signed webhooks update authorized open dashboards.
+4. Synchronize recent activity. Sync also re-reads repository access; run it, or choose **Refresh** in account settings, after changing access in GitHub. New signed webhooks update authorized open dashboards.
 
 Manage repository selection in GitHub's installation settings. Users do not need to paste personal access tokens or shared dashboard keys.
 
@@ -95,7 +95,7 @@ Manage repository selection in GitHub's installation settings. Users do not need
 
 Every account has a private personal journal. Notes accept a title up to 200 characters and a body up to 10,000 characters; only their owner may read, create, or delete them. Notes earn zero XP.
 
-A team workspace is associated with a verified installation. Each viewer must connect GitHub. The server filters activity by immutable repository IDs that both the App and that viewer can access. Organization membership alone does not grant every private repository. Totals, repository names, search results, and live updates are derived from the permitted events.
+A team workspace is associated with a verified installation. Each viewer must connect GitHub. The server filters activity by immutable repository IDs that both the App and that viewer could access at the viewer's last sync. Installation repository selections, organization membership, team, and collaborator changes apply through webhooks; changes GitHub does not announce, such as an organization's base permission, apply at the viewer's next sync. Organization membership alone does not grant every private repository. Totals, repository names, search results, and live updates are derived from the permitted events.
 
 Authorization is rechecked during asynchronous reads and before streaming. Expired/revoked sessions, revoked repository access, suspended/deleted installations, or unavailable authorization services do not fall back to cached private responses. Removing repositories or an installation invalidates related ingestion/access state. A setup callback or webhook sender alone cannot claim a workspace.
 

@@ -12,6 +12,12 @@ export interface ActivityEvent {
   number?: number;
   additions?: number;
   deletions?: number;
+  /** The base branch a pull request merged into. */
+  branch?: string;
+  /** Whether `branch` is the repository default, when GitHub reported it. */
+  defaultBranch?: boolean;
+  /** Commits a branch push added to the repository for the first time. */
+  commits?: number;
   body?: string;
   repositoryId?: number;
 }

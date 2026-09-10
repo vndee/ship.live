@@ -4,10 +4,17 @@ import type { Workspace } from "../shared/workspaces.js";
 import { AuthError, type AuthService, type Principal } from "./auth.js";
 import type { GitHubApp, Repo } from "./github-app.js";
 import { FeedError } from "./github.js";
+import {
+  normalizeAccessWebhook,
+  type AccessChange,
+} from "./access-normalize.js";
 import { normalizeWebhook, object } from "./normalize.js";
 import type { PostgresEventStore } from "./postgres-store.js";
 import { verifyWebhookSignature } from "./security.js";
-import type { WorkspaceStore } from "./workspace-store.js";
+import type {
+  AccessibleInstallation,
+  WorkspaceStore,
+} from "./workspace-store.js";
 import { healthRouter } from "./health-app.js";
 import { dashboardShareRouter, healthShareRouter } from "./share-app.js";
 import { normalizeWallWebhook } from "./wall-normalize.js";
@@ -39,6 +46,10 @@ function installationId(value: string): number {
   return Number(value);
 }
 
+// Operational logs carry messages only: GitHub and database errors never embed tokens.
+const failure = (error: unknown) =>
+  error instanceof Error ? error.message : "Unknown error";
+
 /** Private workspace API. No organization/key-based feed routes are mounted here. */
 export function createWorkspaceApp({
   store,
@@ -64,12 +75,6 @@ export function createWorkspaceApp({
     if (!github)
       throw new AuthError(503, "GitHub App connection is not configured.");
     return github;
-  }
-  async function grant(principal: Principal) {
-    const client = githubApp();
-    return workspaces.withGrant(principal.user.id, (token) =>
-      client.refresh(token),
-    );
   }
   async function assertConnection(
     principal: Principal,
@@ -100,9 +105,11 @@ export function createWorkspaceApp({
     return notesOnly(
       principal,
       workspace.id,
-      "GitHub access could not be verified. Showing private notes only.",
+      "Sync GitHub activity to load repository access. Showing private notes only.",
     );
   }
+  // Reads authorize from the viewer's synced access snapshot and never call
+  // GitHub. Connect, refresh, sync, and access webhooks keep it current.
   async function viewer(
     principal: Principal,
     workspaceId: string,
@@ -113,41 +120,64 @@ export function createWorkspaceApp({
     if (!workspace.installationId) {
       return notesOnly(principal, workspaceId);
     }
-    const connection = await workspaces.connection(principal.user.id);
-    if (!connection && workspace.kind === "personal") {
-      return unavailable(principal, workspace);
-    }
-    if (
-      !connection ||
-      !github ||
-      !(await workspaces.installationActive(workspace.installationId))
-    )
-      return unavailable(principal, workspace);
-    let repositories: Repo[];
-    try {
-      const token = await grant(principal);
-      // This endpoint checks complete user-visible installation/repository grants.
-      // Installation tokens must never establish a viewer's repository access.
-      repositories = await github.repositories(
-        token.accessToken,
-        workspace.installationId,
-      );
-    } catch {
-      return unavailable(principal, workspace);
-    }
-    // GitHub calls can overlap a disconnect or installation suspension on any
-    // replica. Membership and the connected GitHub account must still match.
-    const current = await workspaces.get(principal.user.id, workspaceId);
-    const currentConnection = await workspaces.connection(principal.user.id);
-    if (
-      current.installationId !== workspace.installationId ||
-      currentConnection?.githubUserId !== connection.githubUserId ||
-      currentConnection?.generation !== connection.generation ||
-      !(await workspaces.installationActive(workspace.installationId))
-    )
-      return unavailable(principal, current);
+    const repositories =
+      github && (await workspaces.installationActive(workspace.installationId))
+        ? await workspaces.repositoryAccess(
+            principal.user.id,
+            workspace.installationId,
+          )
+        : undefined;
+    if (!repositories) return unavailable(principal, workspace);
     await auth.assertActive(principal);
-    return { workspace: current, repositories };
+    return { workspace, repositories };
+  }
+  /**
+   * The only read of repository access from GitHub: connect, refresh, sync, and
+   * membership webhooks. Background refreshes have no session, so no beforeSave.
+   */
+  async function syncAccess(userId: string, beforeSave?: () => Promise<void>) {
+    const client = githubApp();
+    // A webhook narrowing that commits during the GitHub reads makes this listing
+    // stale; replaceAccess rejects it and the next attempt reads GitHub again.
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const connection = await workspaces.connection(userId);
+      if (!connection) throw accessDenied();
+      const token = await workspaces.withGrant(userId, (refresh) =>
+        client.refresh(refresh),
+      );
+      const listed = await client.installations(token.accessToken);
+      const installations = [];
+      for (const item of listed) {
+        if (item.suspended) continue;
+        // User tokens establish viewer access; installation tokens never do.
+        installations.push({
+          ...item,
+          repositories: await client.repositories(
+            token.accessToken,
+            item.id,
+            listed,
+          ),
+        });
+      }
+      await beforeSave?.();
+      // Throws when a disconnect or reconnect committed during the GitHub reads.
+      if (
+        await workspaces.replaceAccess(
+          userId,
+          connection.generation,
+          connection.accessVersion,
+          installations,
+        )
+      )
+        return installations;
+    }
+    throw new AuthError(
+      409,
+      "GitHub access changed while refreshing. Try again.",
+    );
+  }
+  function refreshAccess(principal: Principal) {
+    return syncAccess(principal.user.id, () => auth.assertActive(principal));
   }
   function visible(
     events: ActivityEvent[],
@@ -162,6 +192,108 @@ export function createWorkspaceApp({
           positiveId(event.repositoryId) &&
           allowed.has(event.repositoryId),
     );
+  }
+  // Removed repositories leave every viewer's snapshot at once. GitHub's removed
+  // list can be empty when a selection changes, so prefer the installation's
+  // current selection, read with its own token rather than any user's.
+  async function narrowAccess(
+    installationId: number,
+    payload: Record<string, unknown>,
+  ) {
+    let current: Repo[] | undefined;
+    try {
+      current = await githubApp().installationRepositories(installationId);
+    } catch (error) {
+      console.error(
+        "Could not read an installation's repository selection; narrowing from the delivery.",
+        failure(error),
+      );
+    }
+    if (current) {
+      await workspaces.restrictAccess(
+        installationId,
+        current.map((repo) => repo.id),
+        true,
+      );
+      return;
+    }
+    const removed = (
+      Array.isArray(payload.repositories_removed)
+        ? payload.repositories_removed
+        : []
+    )
+      .map((repo) => object(repo).id)
+      .filter(positiveId);
+    if (removed.length) {
+      await workspaces.restrictAccess(installationId, removed, false);
+      return;
+    }
+    // Nothing names what was removed: fail closed for everyone with access to
+    // this installation, then recompute each viewer with their own token.
+    const users = await workspaces.accessUsers(installationId);
+    await workspaces.restrictAccess(installationId, [], true);
+    for (const userId of users) scheduleRefresh(userId);
+  }
+  // Membership webhooks fail closed for the affected viewers at once, then
+  // recompute their access from GitHub after the webhook response is sent.
+  async function applyAccessChange(
+    installationId: number,
+    change: AccessChange,
+  ) {
+    const users =
+      change.githubUserId === undefined
+        ? await workspaces.accessUsers(installationId)
+        : [await workspaces.connectedUser(change.githubUserId)].filter(
+            (user): user is string => Boolean(user),
+          );
+    if (change.removal) {
+      if (change.githubUserId !== undefined)
+        for (const userId of users)
+          await workspaces.dropAccess(
+            userId,
+            installationId,
+            change.repositoryId,
+          );
+      else if (change.repositoryId !== undefined)
+        await workspaces.restrictAccess(
+          installationId,
+          [change.repositoryId],
+          false,
+        );
+    }
+    for (const userId of users) scheduleRefresh(userId);
+  }
+  // Background refreshes run a few at a time per process, so one organization's
+  // burst cannot stall every other installation. Each user is queued at most once.
+  const REFRESH_WORKERS = 4;
+  const queuedRefreshes = new Set<string>();
+  const refreshBacklog: string[] = [];
+  let activeRefreshes = 0;
+  function scheduleRefresh(userId: string) {
+    if (queuedRefreshes.has(userId)) return;
+    queuedRefreshes.add(userId);
+    refreshBacklog.push(userId);
+    drainRefreshes();
+  }
+  function drainRefreshes() {
+    while (activeRefreshes < REFRESH_WORKERS && refreshBacklog.length) {
+      const userId = refreshBacklog.shift()!;
+      queuedRefreshes.delete(userId);
+      activeRefreshes += 1;
+      void syncAccess(userId)
+        .then(() => {})
+        .catch((error: unknown) => {
+          // The viewer keeps the fail-closed snapshot until their next sync.
+          console.error(
+            "Background GitHub access refresh failed.",
+            failure(error),
+          );
+        })
+        .finally(() => {
+          activeRefreshes -= 1;
+          drainRefreshes();
+        });
+    }
   }
   async function backfill(principal: Principal, workspaceId: string) {
     const client = githubApp();
@@ -181,13 +313,15 @@ export function createWorkspaceApp({
         .filter((repo) => allowed.has(repo.id));
       if (!batch.length) continue;
       const batchIds = new Set(batch.map((repo) => repo.id));
+      const installation = initial.workspace.installationId;
       const result = await client.backfill(
-        initial.workspace.installationId,
+        installation,
         batch,
         async (events) => {
           await auth.assertActive(principal);
+          // Canonical event IDs deduplicate the resume overlap and webhook deliveries.
           await store.merge(
-            `installation-${initial.workspace.installationId}`,
+            `installation-${installation}`,
             events.filter(
               (event) =>
                 positiveId(event.repositoryId) &&
@@ -195,6 +329,13 @@ export function createWorkspaceApp({
             ),
             { restricted: true, preferExisting: true },
           );
+        },
+        {
+          // Watermarks use the database clock so every replica agrees.
+          startedAt: await workspaces.clock(),
+          since: await workspaces.syncWatermarks(installation, [...batchIds]),
+          onSynced: (repositoryId, syncedAt) =>
+            workspaces.markSynced(installation, repositoryId, syncedAt),
         },
       );
       synced += result.synced;
@@ -300,11 +441,29 @@ export function createWorkspaceApp({
             installationId: installation.id,
             active: action === "unsuspend",
           });
-        if (kind === "installation_repositories")
-          await workspaces.applyLifecycle(deliveryId, {
+        if (kind === "installation_repositories") {
+          const { duplicate } = await workspaces.applyLifecycle(deliveryId, {
             kind: "repositories",
             installationId: installation.id,
           });
+          if (!duplicate) await narrowAccess(installation.id, payload);
+        }
+        response.status(202).json({ accepted: true });
+        return;
+      }
+      const change = normalizeAccessWebhook(kind, payload);
+      if (change) {
+        if (
+          !installation.suspended &&
+          change.accountId === installation.accountId
+        ) {
+          // Records the delivery once, so redeliveries do not repeat the change.
+          const { duplicate } = await workspaces.applyLifecycle(deliveryId, {
+            kind: "repositories",
+            installationId: installation.id,
+          });
+          if (!duplicate) await applyAccessChange(installation.id, change);
+        }
         response.status(202).json({ accepted: true });
         return;
       }
@@ -361,41 +520,63 @@ export function createWorkspaceApp({
   app.use(healthRouter({ auth, store, workspaces, viewer }));
   app.use(healthShareRouter({ auth, store, workspaces, github, viewer }));
 
+  // Authorizations that predate stored access, or whose first sync failed, get
+  // one automatic snapshot. Failures back off so polling cannot hammer GitHub.
+  const BOOTSTRAP_BACKOFF = 15 * 60_000;
+  const bootstrapAttempts = new Map<string, number>();
+  async function currentAccess(
+    principal: Principal,
+  ): Promise<AccessibleInstallation[] | undefined> {
+    const userId = principal.user.id;
+    const stored = await workspaces.access(userId);
+    if (stored || !github || !(await workspaces.connection(userId)))
+      return stored;
+    if (Date.now() - (bootstrapAttempts.get(userId) ?? 0) < BOOTSTRAP_BACKOFF)
+      return undefined;
+    bootstrapAttempts.set(userId, Date.now());
+    if (bootstrapAttempts.size > 2000)
+      bootstrapAttempts.delete(bootstrapAttempts.keys().next().value!);
+    try {
+      const installations = await refreshAccess(principal);
+      bootstrapAttempts.delete(userId);
+      return installations;
+    } catch (error) {
+      console.error(
+        "Automatic GitHub access snapshot failed; Refresh or Sync retries.",
+        failure(error),
+      );
+      return undefined;
+    }
+  }
+  const installationChoice = (item: AccessibleInstallation) => ({
+    id: item.id,
+    account: item.account,
+    kind: item.kind,
+    repositories: item.repositories,
+  });
+
   app.get("/api/workspaces", async (request, response) => {
     const principal = await auth.authenticate(request, response);
     await workspaces.ensurePersonal(principal.user);
-    const connection = await workspaces.connection(principal.user.id);
-    const allowed = new Set<number>();
-    if (github && connection) {
-      try {
-        const token = await grant(principal);
-        const installations = await github.installations(token.accessToken);
-        await assertConnection(principal, connection);
-        for (const installation of installations)
-          if (!installation.suspended) allowed.add(installation.id);
-      } catch {
-        /* An unavailable GitHub grant must not reveal team metadata. */
-      }
-    }
+    const allowed = new Set(
+      ((await currentAccess(principal)) ?? []).map((item) => item.id),
+    );
     const items = [];
     for (const item of await workspaces.list(principal.user.id)) {
       if (item.kind === "personal" && item.owner) items.push(item);
       else if (
+        github &&
         item.installationId &&
         allowed.has(item.installationId) &&
         (await workspaces.installationActive(item.installationId))
       )
         items.push(item);
     }
-    const currentConnection = await workspaces.connection(principal.user.id);
-    const sameConnection =
-      connection && currentConnection?.generation === connection.generation;
+    const connection = await workspaces.connection(principal.user.id);
     await auth.assertActive(principal);
     response.json({
-      workspaces: sameConnection
-        ? items
-        : items.filter((item) => item.kind === "personal" && item.owner),
-      githubConnected: Boolean(currentConnection),
+      workspaces: items,
+      githubConnected: Boolean(connection),
       githubAppConfigured: Boolean(github),
     });
   });
@@ -431,31 +612,34 @@ export function createWorkspaceApp({
       user,
       token,
     );
+    // The first access snapshot. Refresh or Sync retries if GitHub is unavailable.
+    await refreshAccess(principal).catch((error: unknown) => {
+      console.error(
+        "First GitHub access snapshot failed; Refresh or Sync retries.",
+        failure(error),
+      );
+    });
     response.redirect(new URL("/?github=connected", auth.config.appUrl).href);
   });
   app.get("/api/github/installations", async (request, response) => {
     const principal = await auth.authenticate(request, response);
     const client = githubApp();
-    const connection = await workspaces.connection(principal.user.id);
-    if (!connection) throw accessDenied();
-    const token = await grant(principal);
-    const installations = [];
-    for (const item of await client.installations(token.accessToken)) {
-      if (item.suspended) continue;
-      const repositories = await client.repositories(
-        token.accessToken,
-        item.id,
-      );
-      installations.push({
-        id: item.id,
-        account: item.account,
-        kind: item.kind,
-        repositories,
-      });
-    }
-    await assertConnection(principal, connection);
+    if (!(await workspaces.connection(principal.user.id))) throw accessDenied();
+    const installations = (await currentAccess(principal)) ?? [];
     await auth.assertActive(principal);
-    response.json({ installations, installUrl: client.installUrl() });
+    response.json({
+      installations: installations.map(installationChoice),
+      installUrl: client.installUrl(),
+    });
+  });
+  app.post("/api/github/installations/refresh", async (request, response) => {
+    const principal = await auth.requireMutation(request, response);
+    const client = githubApp();
+    const installations = await refreshAccess(principal);
+    response.json({
+      installations: installations.map(installationChoice),
+      installUrl: client.installUrl(),
+    });
   });
   app.post(
     "/api/github/installations/:id/connect",
@@ -465,12 +649,11 @@ export function createWorkspaceApp({
       const client = githubApp();
       const connection = await workspaces.connection(principal.user.id);
       if (!connection) throw accessDenied();
-      const token = await grant(principal);
-      const available = (await client.installations(token.accessToken)).find(
-        (item) => item.id === id && !item.suspended,
+      // Connecting is an explicit sync of the user's access.
+      const available = (await refreshAccess(principal)).find(
+        (item) => item.id === id,
       );
-      if (!available || !connection) throw accessDenied();
-      await client.repositories(token.accessToken, id);
+      if (!available) throw accessDenied();
       const installation = await client.installation(id);
       if (
         installation.suspended ||
@@ -497,6 +680,9 @@ export function createWorkspaceApp({
   });
   app.post("/api/workspaces/:id/sync", async (request, response) => {
     const principal = await auth.requireMutation(request, response);
+    await workspaces.get(principal.user.id, request.params.id);
+    // Sync is the explicit moment to re-read repository access from GitHub.
+    await refreshAccess(principal);
     response.json(await backfill(principal, request.params.id));
   });
   app.post("/api/workspaces/:id/notes", async (request, response) => {

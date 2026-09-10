@@ -84,6 +84,81 @@ test("REST and webhook push identities match even when the REST payload lacks co
   assert.equal(webhook?.title, "Fix retries");
 });
 
+test("pushes count only branch commits that are new to the repository", () => {
+  const push = (payload: Record<string, unknown>) =>
+    normalizeWebhook(
+      "push",
+      {
+        ref: "refs/heads/feature",
+        after: "b".repeat(40),
+        sender: actor,
+        repository,
+        ...payload,
+      },
+      "delivery",
+    );
+  assert.equal(
+    push({
+      commits: [
+        { id: "1", distinct: true },
+        { id: "2" },
+        { id: "3", distinct: false },
+      ],
+    })?.commits,
+    2,
+  );
+  assert.equal(push({ commits: [] })?.commits, 0);
+  assert.equal(
+    push({ ref: "refs/tags/v1", commits: [{ id: "1", distinct: true }] })
+      ?.commits,
+    undefined,
+  );
+  const rest = (payload: Record<string, unknown>) =>
+    normalizeRestEvent({
+      id: "9",
+      type: "PushEvent",
+      actor,
+      repo: { name: repository.full_name },
+      payload: { ref: "refs/heads/main", head: "c".repeat(40), ...payload },
+      created_at: occurredAt,
+    });
+  assert.equal(rest({ size: 4, distinct_size: 3 })?.commits, 3);
+  assert.equal(rest({ size: 4 })?.commits, undefined);
+});
+
+test("merges record their base branch and whether it is the repository default", () => {
+  const merge = (
+    base: Record<string, unknown>,
+    repo: Record<string, unknown> = repository,
+  ) =>
+    normalizeWebhook(
+      "pull_request",
+      {
+        action: "closed",
+        pull_request: { ...pull_request, base },
+        sender: actor,
+        repository: repo,
+      },
+      "delivery",
+    );
+  const main = merge({ ref: "main", repo: { default_branch: "main" } });
+  assert.equal(main?.branch, "main");
+  assert.equal(main?.defaultBranch, true);
+  const release = merge({
+    ref: "release/2.0",
+    repo: { default_branch: "main" },
+  });
+  assert.equal(release?.branch, "release/2.0");
+  assert.equal(release?.defaultBranch, false);
+  assert.equal(
+    merge({ ref: "develop" }, { ...repository, default_branch: "develop" })
+      ?.defaultBranch,
+    true,
+  );
+  assert.equal(merge({ ref: "develop" })?.defaultBranch, undefined);
+  assert.equal(merge({})?.branch, undefined);
+});
+
 test("reviews only count submitted reviews, and releases only count published releases", () => {
   const payload = {
     action: "submitted",

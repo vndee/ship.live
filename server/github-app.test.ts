@@ -3,6 +3,7 @@ import { createHash, generateKeyPairSync, verify } from "node:crypto";
 import test from "node:test";
 import type { ActivityEvent } from "../shared/types.js";
 import { GitHubApp, type GitHubAppConfig } from "./github-app.js";
+import { FeedError } from "./github.js";
 
 const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const config: GitHubAppConfig = {
@@ -505,4 +506,173 @@ test("backfill bounds repository and review work and propagates persistence fail
     }),
     /Database unavailable/,
   );
+});
+
+test("GitHub App rate limits report when to retry, including secondary limits", async () => {
+  const reset = Math.floor(Date.now() / 1000) + 600;
+  const cases: Array<[number, Record<string, string>, number]> = [
+    [
+      403,
+      { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) },
+      600,
+    ],
+    [429, { "retry-after": "120" }, 120],
+    // Secondary limits can arrive as 403s with remaining quota; this is not revoked access.
+    [403, { "retry-after": "90", "x-ratelimit-remaining": "4000" }, 90],
+  ];
+  for (const [status, headers, retryAfter] of cases) {
+    const app = new GitHubApp(
+      config,
+      mockApi(
+        () =>
+          new Response(JSON.stringify({ message: "limited" }), {
+            status,
+            headers: { "content-type": "application/json", ...headers },
+          }),
+      ),
+    );
+    await assert.rejects(
+      app.installations("ghu_one"),
+      (error: unknown) =>
+        error instanceof FeedError &&
+        error.status === 429 &&
+        Math.abs((error.retryAfter ?? 0) - retryAfter) <= 2 &&
+        new RegExp(`about ${Math.ceil(retryAfter / 60)} minutes`).test(
+          error.message,
+        ),
+    );
+  }
+});
+
+test("known installation listings skip a second user listing, and installation selections use the installation token", async () => {
+  const paths: string[] = [];
+  const app = new GitHubApp(
+    config,
+    mockApi((url, init) => {
+      const authorization = new Headers(init.headers).get("authorization");
+      paths.push(
+        `${url.pathname}:${authorization?.startsWith("Bearer ghu_") ? "user" : "app"}`,
+      );
+      if (url.pathname === "/app/installations/7") return json(installation());
+      if (url.pathname.endsWith("/access_tokens")) return installationToken();
+      return json({
+        total_count: 1,
+        repositories: [{ id: 101, full_name: "our-team/first", private: true }],
+      });
+    }),
+  );
+  const repo = { id: 101, name: "our-team/first", private: true };
+  const known = [
+    {
+      id: 7,
+      accountId: 107,
+      account: "our-team",
+      kind: "Organization" as const,
+      suspended: false,
+    },
+  ];
+  assert.deepEqual(await app.repositories("ghu_viewer", 7, known), [repo]);
+  assert.deepEqual(paths, ["/user/installations/7/repositories:user"]);
+  paths.length = 0;
+  assert.deepEqual(await app.installationRepositories(7), [repo]);
+  assert.deepEqual(paths, [
+    "/app/installations/7:app",
+    "/app/installations/7/access_tokens:app",
+    "/installation/repositories:app",
+  ]);
+});
+
+test("backfill resumes each repository after its last import and reports stored repositories", async () => {
+  const now = Date.now();
+  const iso = (ago: number) => new Date(now - ago).toISOString();
+  const reviewed: string[] = [];
+  const issuesSince = new Map<string, number>();
+  const app = new GitHubApp(
+    config,
+    mockApi((url) => {
+      if (url.pathname === "/app/installations/7") return json(installation());
+      if (url.pathname.endsWith("/access_tokens")) return installationToken();
+      const [, , , repo, , number] = url.pathname.split("/");
+      if (repo === "broken") return new Response("{}", { status: 404 });
+      if (url.pathname.endsWith("/reviews")) {
+        reviewed.push(`${repo}#${number}`);
+        return json([]);
+      }
+      if (url.pathname.endsWith("/issues"))
+        issuesSince.set(repo, Date.parse(url.searchParams.get("since")!));
+      if (url.pathname.endsWith("/pulls"))
+        return json([
+          {
+            number: 1,
+            created_at: iso(5 * 86_400_000),
+            updated_at: iso(5 * 86_400_000),
+            user: { login: "author" },
+          },
+          {
+            number: 2,
+            created_at: iso(3_600_000),
+            updated_at: iso(3_600_000),
+            user: { login: "author" },
+          },
+        ]);
+      return json([]);
+    }),
+  );
+  const lastSync = now - 86_400_000;
+  const stored: string[] = [];
+  const synced: number[] = [];
+  const result = await app.backfill(
+    7,
+    [
+      { id: 1, name: "our-team/fresh", private: false },
+      { id: 2, name: "our-team/known", private: false },
+      { id: 3, name: "our-team/broken", private: false },
+    ],
+    async (events) => {
+      stored.push(...events.map((event) => event.id));
+    },
+    {
+      since: new Map([[2, lastSync]]),
+      onSynced: async (repositoryId) => {
+        synced.push(repositoryId);
+      },
+    },
+  );
+  // A new repository reads the whole window; a known one only what changed
+  // since its last import, with a short overlap.
+  assert.deepEqual(reviewed.sort(), ["fresh#1", "fresh#2", "known#2"]);
+  assert.equal(issuesSince.get("known"), lastSync - 15 * 60_000);
+  assert.ok(issuesSince.get("fresh")! <= now - 29 * 86_400_000);
+  assert.ok(stored.some((id) => id.startsWith("our-team/fresh:pr:1:")));
+  assert.ok(stored.some((id) => id.startsWith("our-team/known:pr:2:")));
+  assert.ok(!stored.some((id) => id.startsWith("our-team/known:pr:1:")));
+  // A failed repository keeps its previous watermark.
+  assert.deepEqual(synced, [1, 2]);
+  assert.match(result.notice, /1 resumed from their previous sync/);
+  assert.match(result.notice, /1 repositories could not be imported/);
+});
+
+test("backfill watermarks use the caller's start time", async () => {
+  const app = new GitHubApp(
+    config,
+    mockApi((url) => {
+      if (url.pathname === "/app/installations/7") return json(installation());
+      if (url.pathname.endsWith("/access_tokens")) return installationToken();
+      return json([]);
+    }),
+  );
+  const startedAt = Date.parse("2026-09-10T08:00:00Z");
+  const synced: number[] = [];
+  await app.backfill(
+    7,
+    [{ id: 1, name: "our-team/repo", private: false }],
+    async () => {},
+    {
+      startedAt,
+      onSynced: async (_repositoryId, syncedAt) => {
+        synced.push(syncedAt);
+      },
+    },
+  );
+  assert.deepEqual(synced, [startedAt]);
 });

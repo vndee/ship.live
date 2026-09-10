@@ -10,9 +10,13 @@ import type { AuthUser } from "../shared/auth.js";
 import type { ActivityEvent } from "../shared/types.js";
 import type { ShipNoteInput, Workspace } from "../shared/workspaces.js";
 import { AuthError } from "./auth.js";
-import type { GitHubGrant, InstallationInfo } from "./github-app.js";
+import type { GitHubGrant, InstallationInfo, Repo } from "./github-app.js";
 import { ACTIVITY_CHANNEL } from "./postgres-notifications.js";
 import { combineEvents, FEED_LIMIT } from "./store.js";
+
+export interface AccessibleInstallation extends InstallationInfo {
+  repositories: Repo[];
+}
 
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -71,7 +75,7 @@ function grantError(error: unknown): never {
   throw error;
 }
 
-/** Server-only storage. Callers must verify live GitHub repository access before feed(). */
+/** Server-only storage. Callers pass feed() repository IDs from the viewer's synced access. */
 export class WorkspaceStore {
   private readonly key?: Buffer;
   constructor(
@@ -247,17 +251,23 @@ export class WorkspaceStore {
       await this.notify(client, `workspace-${workspaceId}`);
     });
   }
-  async connection(
-    userId: string,
-  ): Promise<
-    { githubUserId: number; login: string; generation: string } | undefined
+  async connection(userId: string): Promise<
+    | {
+        githubUserId: number;
+        login: string;
+        generation: string;
+        /** Pass to replaceAccess to reject listings read before a narrowing. */
+        accessVersion: string;
+      }
+    | undefined
   > {
     const result = await this.pool.query<{
       github_user_id: string;
       login: string;
       generation: string;
+      access_version: string;
     }>(
-      "SELECT github_user_id,login,generation FROM ship_live_github_connections WHERE user_id=$1",
+      "SELECT github_user_id,login,generation,access_version FROM ship_live_github_connections WHERE user_id=$1",
       [userId],
     );
     const row = result.rows[0];
@@ -266,6 +276,7 @@ export class WorkspaceStore {
           githubUserId: Number(row.github_user_id),
           login: row.login,
           generation: row.generation,
+          accessVersion: row.access_version,
         }
       : undefined;
   }
@@ -292,9 +303,13 @@ export class WorkspaceStore {
         [userId],
       );
     }
+    // A new authorization starts without synced repository access.
+    await client.query("DELETE FROM ship_live_github_access WHERE user_id=$1", [
+      userId,
+    ]);
     await client.query(
       `INSERT INTO ship_live_github_connections(user_id,github_user_id,login,encrypted_grant,generation) VALUES($1,$2,$3,$4,$5)
-       ON CONFLICT(user_id) DO UPDATE SET github_user_id=EXCLUDED.github_user_id,login=EXCLUDED.login,encrypted_grant=EXCLUDED.encrypted_grant,generation=EXCLUDED.generation,updated_at=now()`,
+       ON CONFLICT(user_id) DO UPDATE SET github_user_id=EXCLUDED.github_user_id,login=EXCLUDED.login,encrypted_grant=EXCLUDED.encrypted_grant,generation=EXCLUDED.generation,access_synced_at=NULL,updated_at=now()`,
       [
         userId,
         user.id,
@@ -618,6 +633,208 @@ export class WorkspaceStore {
   }
   async notifyInstallation(id: number): Promise<void> {
     await this.notify(this.pool, `installation-${id}`);
+  }
+  /**
+   * Replace the viewer's snapshot with a fresh listing for their current
+   * authorization. Returns false, writing nothing, when access was narrowed
+   * after the listing began, because that listing may predate the removal.
+   */
+  async replaceAccess(
+    userId: string,
+    generation: string,
+    accessVersion: string,
+    installations: AccessibleInstallation[],
+  ): Promise<boolean> {
+    return this.transaction(async (client) => {
+      await this.lockUser(client, userId);
+      const current = await client.query<{ access_version: string }>(
+        "SELECT access_version FROM ship_live_github_connections WHERE user_id=$1 AND generation=$2 FOR UPDATE",
+        [userId, generation],
+      );
+      if (!current.rows[0])
+        throw new AuthError(
+          403,
+          "Your GitHub connection changed. Refresh GitHub access again.",
+        );
+      if (current.rows[0].access_version !== accessVersion) return false;
+      await client.query(
+        "DELETE FROM ship_live_github_access WHERE user_id=$1",
+        [userId],
+      );
+      for (const item of installations)
+        await client.query(
+          `INSERT INTO ship_live_github_access(user_id,generation,installation_id,account_id,account_login,kind,repositories)
+          VALUES($1,$2,$3,$4,$5,$6,$7)`,
+          [
+            userId,
+            generation,
+            item.id,
+            item.accountId,
+            item.account,
+            item.kind,
+            JSON.stringify(
+              item.repositories.map((repo) => ({
+                id: repo.id,
+                name: repo.name,
+                private: repo.private,
+              })),
+            ),
+          ],
+        );
+      await client.query(
+        "UPDATE ship_live_github_connections SET access_synced_at=now() WHERE user_id=$1",
+        [userId],
+      );
+      await this.notify(client, `account-${userId}`);
+      return true;
+    });
+  }
+  /** Synced installations, or undefined when this authorization was never synced. */
+  async access(userId: string): Promise<AccessibleInstallation[] | undefined> {
+    const result = await this.pool.query<{
+      access_synced_at: Date | null;
+      installation_id: string | null;
+      account_id: string;
+      account_login: string;
+      kind: "User" | "Organization";
+      repositories: Repo[];
+    }>(
+      `SELECT c.access_synced_at,a.installation_id,a.account_id,a.account_login,a.kind,a.repositories
+      FROM ship_live_github_connections c
+      LEFT JOIN ship_live_github_access a ON a.user_id=c.user_id AND a.generation=c.generation
+      WHERE c.user_id=$1 ORDER BY a.account_login,a.installation_id`,
+      [userId],
+    );
+    if (!result.rows[0]?.access_synced_at) return undefined;
+    return result.rows
+      .filter((row) => row.installation_id)
+      .map((row) => ({
+        id: Number(row.installation_id),
+        accountId: Number(row.account_id),
+        account: row.account_login,
+        kind: row.kind,
+        suspended: false,
+        repositories: row.repositories,
+      }));
+  }
+  /** Repositories the viewer could access in an installation at their last sync. */
+  async repositoryAccess(
+    userId: string,
+    installationId: number,
+  ): Promise<Repo[] | undefined> {
+    const result = await this.pool.query<{ repositories: Repo[] }>(
+      `SELECT a.repositories FROM ship_live_github_access a
+      JOIN ship_live_github_connections c ON c.user_id=a.user_id AND c.generation=a.generation
+      WHERE a.user_id=$1 AND a.installation_id=$2`,
+      [userId, installationId],
+    );
+    return result.rows[0]?.repositories;
+  }
+  /** Narrow every viewer's snapshot: keep only, or remove, the given repository IDs. */
+  async restrictAccess(
+    installationId: number,
+    repositoryIds: number[],
+    keep: boolean,
+  ): Promise<void> {
+    await this.narrow(
+      installationId,
+      repositoryIds,
+      keep,
+      `installation-${installationId}`,
+    );
+  }
+  /** Fail closed for one viewer: drop one repository, or all, until access is recomputed. */
+  async dropAccess(
+    userId: string,
+    installationId: number,
+    repositoryId?: number,
+  ): Promise<void> {
+    // Keeping none of an empty list drops everything; removing one keeps the rest.
+    await this.narrow(
+      installationId,
+      repositoryId === undefined ? [] : [repositoryId],
+      repositoryId === undefined,
+      `account-${userId}`,
+      userId,
+    );
+  }
+  // Rewrites stored repository lists and bumps access_version for the affected
+  // viewers, so a refresh that read GitHub before this change cannot undo it.
+  private async narrow(
+    installationId: number,
+    repositoryIds: number[],
+    keep: boolean,
+    scope: string,
+    userId?: string,
+  ): Promise<void> {
+    await this.transaction(async (client) => {
+      const narrowed = await client.query<{ user_id: string }>(
+        `UPDATE ship_live_github_access SET repositories=COALESCE((
+          SELECT jsonb_agg(repo) FROM jsonb_array_elements(repositories) repo
+          WHERE ((repo->>'id')::bigint = ANY($2::bigint[])) = $3
+        ),'[]'::jsonb) WHERE installation_id=$1 AND ($4::uuid IS NULL OR user_id=$4)
+        RETURNING user_id`,
+        [installationId, repositoryIds, keep, userId ?? null],
+      );
+      await client.query(
+        "UPDATE ship_live_github_connections SET access_version=access_version+1 WHERE user_id=ANY($1::uuid[]) OR user_id=$2",
+        [narrowed.rows.map((row) => row.user_id), userId ?? null],
+      );
+      await this.notify(client, scope);
+    });
+  }
+  async connectedUser(githubUserId: number): Promise<string | undefined> {
+    const result = await this.pool.query<{ user_id: string }>(
+      "SELECT user_id FROM ship_live_github_connections WHERE github_user_id=$1",
+      [githubUserId],
+    );
+    return result.rows[0]?.user_id;
+  }
+  /** Viewers whose current authorization has synced access to an installation. */
+  async accessUsers(installationId: number): Promise<string[]> {
+    const result = await this.pool.query<{ user_id: string }>(
+      `SELECT a.user_id FROM ship_live_github_access a
+      JOIN ship_live_github_connections c ON c.user_id=a.user_id AND c.generation=a.generation
+      WHERE a.installation_id=$1`,
+      [installationId],
+    );
+    return result.rows.map((row) => row.user_id);
+  }
+  /** The database clock, shared by every replica. */
+  async clock(): Promise<number> {
+    const result = await this.pool.query<{ now: Date }>("SELECT now()");
+    return result.rows[0].now.getTime();
+  }
+  /** When each repository's history was last imported, in epoch milliseconds. */
+  async syncWatermarks(
+    installationId: number,
+    repositoryIds: number[],
+  ): Promise<Map<number, number>> {
+    const result = await this.pool.query<{
+      repository_id: string;
+      synced_at: Date;
+    }>(
+      "SELECT repository_id,synced_at FROM ship_live_repository_sync WHERE installation_id=$1 AND repository_id=ANY($2::bigint[])",
+      [installationId, repositoryIds],
+    );
+    return new Map(
+      result.rows.map((row) => [
+        Number(row.repository_id),
+        row.synced_at.getTime(),
+      ]),
+    );
+  }
+  /** Watermarks only move forward, even when overlapping syncs finish out of order. */
+  async markSynced(
+    installationId: number,
+    repositoryId: number,
+    syncedAt: number,
+  ): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO ship_live_repository_sync(installation_id,repository_id,synced_at) VALUES($1,$2,$3)
+      ON CONFLICT(installation_id,repository_id) DO UPDATE SET synced_at=GREATEST(ship_live_repository_sync.synced_at,EXCLUDED.synced_at)`,
+      [installationId, repositoryId, new Date(syncedAt)],
+    );
   }
   async feed(
     userId: string,

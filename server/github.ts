@@ -21,6 +21,20 @@ export class FeedError extends Error {
   }
 }
 
+/** Seconds until GitHub accepts requests again, bounded to one minute through one hour. */
+export function rateLimitRetryAfter(headers: Headers, now: number): number {
+  const reset = Number(headers.get("x-ratelimit-reset")) * 1000;
+  return Math.min(
+    3600,
+    Math.max(
+      60,
+      Number(headers.get("retry-after")) ||
+        Math.ceil((reset - now) / 1000) ||
+        60,
+    ),
+  );
+}
+
 export function githubHeaders(
   organization: string,
   config: GitHubConfig,
@@ -117,21 +131,12 @@ export class GitHubFeed {
           404,
           "GitHub organization not found. Check the organization name.",
         );
-      const reset = Number(response.headers.get("x-ratelimit-reset")) * 1000;
       const limited =
         response.status === 429 ||
         response.headers.get("x-ratelimit-remaining") === "0" ||
         response.headers.has("retry-after");
       if (limited) {
-        const retryAfter = Math.min(
-          3600,
-          Math.max(
-            60,
-            Number(response.headers.get("retry-after")) ||
-              Math.ceil((reset - this.now()) / 1000) ||
-              60,
-          ),
-        );
+        const retryAfter = rateLimitRetryAfter(response.headers, this.now());
         throw new FeedError(
           429,
           "GitHub rate limit reached. The feed will retry automatically; a server token can increase the allowance.",

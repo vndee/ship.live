@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ActivityEvent } from "../../shared/types";
 import {
+  basePoints,
+  BRANCH_MERGE_POINTS,
+  COMMIT_POINTS,
+  EVENT_META,
   getAchievements,
   getDailyActivity,
   getLeaderboard,
@@ -92,7 +96,27 @@ test("review credit is capped per person, repository, pull request and UTC day",
   assert.equal(leaders[0].reviews, 7);
 });
 
-test("leaderboard gives shared work credit, stable ranks and no credit for push volume", () => {
+test("each new commit earns 2 XP and merges outside the default branch earn less", () => {
+  const events = [
+    event("push-3", "push", { commits: 3 }),
+    event("push-uncounted", "push"),
+    event("merge-main", "merge", { branch: "main", defaultBranch: true }),
+    event("merge-branch", "merge", {
+      branch: "release/2.0",
+      defaultBranch: false,
+    }),
+    event("merge-unknown-target", "merge"),
+  ];
+  assert.deepEqual(events.map(basePoints), [6, 0, 30, 15, 30]);
+  assert.ok(BRANCH_MERGE_POINTS < EVENT_META.merge.points);
+  assert.equal(COMMIT_POINTS, 2);
+  const metrics = getMetrics(events, NOW);
+  assert.equal(metrics.xp, 81);
+  assert.equal(metrics.merges, 3);
+  assert.equal(getLeaderboard(events, NOW)[0].xp, 81);
+});
+
+test("leaderboard gives shared work credit and stable ranks", () => {
   const events = [
     event("merge-1", "merge"),
     event("review-1", "review", {
