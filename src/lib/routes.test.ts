@@ -44,11 +44,21 @@ test("filters apply only to the feed, and defaults stay out of the URL", () => {
   });
 });
 
+test("search text round-trips exactly as typed, even a leading space", () => {
+  for (const query of [" ", "  fix ", "a&b=c"]) {
+    const url = new URL(
+      routeHref({ page: "feed", query }),
+      "https://ship.example.test",
+    );
+    assert.equal(parseRoute(url.pathname, url.search).query, query);
+  }
+});
+
 test("malformed parameters are ignored", () => {
   assert.deepEqual(
     parseRoute(
       "/feed",
-      `?type=deploy&period=90d&q=%20%20&repo=${"x".repeat(201)}&person=<script>`,
+      `?type=deploy&period=90d&repo=${"x".repeat(201)}&person=<script>`,
     ),
     { page: "feed" },
   );

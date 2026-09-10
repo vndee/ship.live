@@ -31,6 +31,12 @@ export function navigate(route: Route, options: NavigateOptions = {}) {
   window.dispatchEvent(new Event(NAVIGATED));
 }
 
+/** Keeps the page but drops filters and profiles, which describe one workspace. */
+export function resetRouteDetails() {
+  const current = parseRoute(window.location.pathname, window.location.search);
+  navigate({ page: current.page }, { replace: true });
+}
+
 /** Closes an overlay the app opened with Back, or removes one opened by a link. */
 export function closeOverlay(route: Route) {
   if ((window.history.state as { overlay?: boolean } | null)?.overlay)

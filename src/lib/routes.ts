@@ -63,8 +63,10 @@ export function parseRoute(pathname: string, search: string): Route {
     if (repo && repo.length <= 200) route.repo = repo;
     const kind = oneOf(KINDS, params.get("type"));
     if (kind) route.kind = kind;
+    // Kept as typed, spaces included, so the controlled search box never
+    // drops a keystroke; filtering trims it.
     const query = params.get("q")?.slice(0, 200);
-    if (query?.trim()) route.query = query;
+    if (query) route.query = query;
     const period = oneOf(PERIODS, params.get("period"));
     if (period && period !== "24h") route.period = period;
   }
