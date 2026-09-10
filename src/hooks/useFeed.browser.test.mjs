@@ -287,3 +287,75 @@ for (const change of ["account change", "account A-B-A", "logout", "unmount"]) {
     assert.equal(state.saved, personal.id);
   });
 }
+
+test("a transient feed failure hides private activity and recovers without a manual retry", async (t) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  t.after(async () => {
+    await context.close();
+    assert.deepEqual(errors, []);
+  });
+  await page.route("**/*", (route) =>
+    route.fulfill({ contentType: "text/html", body: '<div id="root"></div>' }),
+  );
+  await page.goto("http://workspace.test/");
+  await page.evaluate((team) => {
+    localStorage.setItem("ship-live-workspace:user-a", team.id);
+    window.fixture = { feedHealthy: false };
+    const response = (data, status = 200) =>
+      new Response(JSON.stringify(data), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    window.fetch = async (path) => {
+      if (path === "/api/session")
+        return response({
+          user: { id: "user-a", name: "user-a", email: "a@example.invalid" },
+          providers: { google: false, github: false },
+          configured: true,
+          csrfToken: "synthetic-token",
+        });
+      if (path === "/api/workspaces")
+        return response({
+          workspaces: [team],
+          githubConnected: true,
+          githubAppConfigured: true,
+        });
+      if (path.endsWith("/feed"))
+        return window.fixture.feedHealthy
+          ? response({
+              events: [
+                {
+                  id: "private-1",
+                  type: "merge",
+                  actor: { login: "builder" },
+                  repo: "team/alpha",
+                  title: "Private improvement",
+                  occurredAt: "2026-09-10T00:00:00Z",
+                },
+              ],
+              updatedAt: "2026-09-10T00:00:01Z",
+            })
+          : response({ error: "Bad gateway" }, 502);
+      if (path.endsWith("/events")) return new Response("");
+      if (path.endsWith("/sync")) return response({ run: null });
+      throw new Error(`Unexpected fixture request: ${path}`);
+    };
+  }, team);
+  await page.addScriptTag({ content: bundle });
+  await page.waitForFunction(() =>
+    /could not be verified/.test(window.feed?.error || ""),
+  );
+  assert.equal(await page.evaluate(() => window.feed.events.length), 0);
+  await page.evaluate(() => {
+    window.fixture.feedHealthy = true;
+  });
+  // No manual retry: the live stream's reconnect or the poll verifies again.
+  await page.waitForFunction(
+    () => window.feed.error === "" && window.feed.events.length === 1,
+    undefined,
+    { timeout: 15_000 },
+  );
+});

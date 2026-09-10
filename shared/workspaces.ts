@@ -20,6 +20,16 @@ export interface InstallationChoice {
   repositories: { id: number; name: string; private: boolean }[];
 }
 
+/** A background history sync; clients poll it until it leaves "running". */
+export interface SyncRun {
+  id: string;
+  status: "running" | "succeeded" | "failed";
+  startedAt: string;
+  finishedAt?: string;
+  synced?: number;
+  message?: string;
+}
+
 export interface ShipNoteInput {
   title: string;
   body: string;

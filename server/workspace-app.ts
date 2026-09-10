@@ -295,6 +295,56 @@ export function createWorkspaceApp({
         });
     }
   }
+  // Sync continues after its request returns, so it can outlast browser and
+  // proxy timeouts. Its outcome is stored for clients to poll.
+  async function runSync(
+    principal: Principal,
+    workspaceId: string,
+    runId: string,
+    refresh: boolean,
+  ) {
+    try {
+      // Sync is the explicit moment to re-read repository access from GitHub.
+      if (refresh) await refreshAccess(principal);
+      const result = await backfill(principal, workspaceId);
+      await workspaces.finishSync(workspaceId, runId, {
+        status: "succeeded",
+        synced: result.synced,
+        message: result.notice,
+      });
+    } catch (error) {
+      const known = error instanceof AuthError || error instanceof FeedError;
+      if (!known)
+        console.error("Background GitHub sync failed.", failure(error));
+      await workspaces
+        .finishSync(workspaceId, runId, {
+          status: "failed",
+          message:
+            error instanceof AuthError || error instanceof FeedError
+              ? error.message
+              : "The sync could not be completed. Try again.",
+        })
+        .catch((recordError: unknown) =>
+          console.error(
+            "Could not record a sync result.",
+            failure(recordError),
+          ),
+        );
+    }
+  }
+  /** Starts a background sync, or returns the one already running. */
+  async function startSync(
+    principal: Principal,
+    workspaceId: string,
+    refresh: boolean,
+  ) {
+    const { run, started } = await workspaces.startSync(
+      workspaceId,
+      principal.user.id,
+    );
+    if (started) void runSync(principal, workspaceId, run.id, refresh);
+    return run;
+  }
   async function backfill(principal: Principal, workspaceId: string) {
     const client = githubApp();
     const initial = await viewer(principal, workspaceId);
@@ -669,8 +719,9 @@ export function createWorkspaceApp({
         connection.githubUserId,
         connection.generation,
       );
-      const result = await backfill(principal, workspace.id);
-      response.json({ workspace, notice: result.notice });
+      // Access was just refreshed; history imports in the background.
+      const run = await startSync(principal, workspace.id, false);
+      response.json({ workspace, run });
     },
   );
   app.post("/api/github/disconnect", async (request, response) => {
@@ -680,10 +731,21 @@ export function createWorkspaceApp({
   });
   app.post("/api/workspaces/:id/sync", async (request, response) => {
     const principal = await auth.requireMutation(request, response);
+    const workspace = await workspaces.get(
+      principal.user.id,
+      request.params.id,
+    );
+    githubApp();
+    if (!workspace.installationId)
+      throw new AuthError(400, "Connect a GitHub installation before syncing.");
+    response.status(202).json(await startSync(principal, workspace.id, true));
+  });
+  app.get("/api/workspaces/:id/sync", async (request, response) => {
+    const principal = await auth.authenticate(request, response);
     await workspaces.get(principal.user.id, request.params.id);
-    // Sync is the explicit moment to re-read repository access from GitHub.
-    await refreshAccess(principal);
-    response.json(await backfill(principal, request.params.id));
+    const run = await workspaces.syncRun(request.params.id);
+    await auth.assertActive(principal);
+    response.json({ run: run ?? null });
   });
   app.post("/api/workspaces/:id/notes", async (request, response) => {
     const principal = await auth.requireMutation(request, response);
