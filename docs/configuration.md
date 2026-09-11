@@ -38,6 +38,11 @@ The demo uses fictional events and needs no external credentials. Real journals 
 | `GITHUB_APP_SLUG`          | App slug from its installation URL.                                                                                                                                   |
 | `GITHUB_WEBHOOK_SECRET`    | Random secret configured on the GitHub App webhook.                                                                                                                   |
 | `TOKEN_ENCRYPTION_KEY`     | Exactly 64 hexadecimal characters representing 32 random bytes. Encrypts GitHub user and refresh tokens in PostgreSQL.                                                |
+| `LOG_FORMAT`               | `json` (one JSON object per line, the production default) or `text` (the development default).                                                                        |
+| `LOG_LEVEL`                | `debug`, `info` (default), `warn`, or `error`. `debug` also logs every API request.                                                                                   |
+| `METRICS_TOKEN`            | Enables `/metrics` for scrapers that send `Authorization: Bearer <token>`. At least 24 characters. Without it, `/metrics` returns 404.                                |
+| `EVENT_RETENTION_DAYS`     | Days to keep GitHub activity and wall signals. `0` (default) keeps them indefinitely; otherwise 31–36500. Open pull requests and journal notes are never removed.     |
+| `DELIVERY_RETENTION_DAYS`  | Days to keep accepted webhook delivery IDs, which only deduplicate redeliveries. Default `30`; `0` keeps them; otherwise 7–36500.                                     |
 | `TEST_DATABASE_URL`        | Dedicated test administration connection with `CREATE DATABASE` permission. Never use production for tests.                                                           |
 
 Configure all GitHub App fields and `TOKEN_ENCRYPTION_KEY` together, or leave the integration unconfigured. Partial credentials fail startup; there is no personal-token or shared-dashboard-key fallback. None of these variables belong in `VITE_*` or frontend source. The frontend does not receive provider tokens or database credentials.
@@ -99,13 +104,13 @@ A team workspace is associated with a verified installation. Each viewer must co
 
 Authorization is rechecked during asynchronous reads and before streaming. Expired/revoked sessions, revoked repository access, suspended/deleted installations, or unavailable authorization services do not fall back to cached private responses. Removing repositories or an installation invalidates related ingestion/access state. A setup callback or webhook sender alone cannot claim a workspace.
 
-Disconnecting GitHub removes your stored user grant and workspace associations; it preserves your journal notes. It does not uninstall the GitHub App or erase stored event history. An installed App can continue delivering webhooks for other connected viewers. To stop delivery for an installation, uninstall or suspend the App in GitHub. Historical data follows the host operator's retention policy.
+Disconnecting GitHub removes your stored user grant and workspace associations; it preserves your journal notes. It does not uninstall the GitHub App or erase stored event history. An installed App can continue delivering webhooks for other connected viewers. To stop delivery for an installation, uninstall or suspend the App in GitHub. Historical data follows the host's `EVENT_RETENTION_DAYS` setting.
 
 ## History and live updates
 
 Synchronization imports a bounded part of the last 30 days: up to 100 PRs, 100 closed issues, and 100 releases per repository, plus the first 100 reviews for up to 30 recently updated PRs. The server processes selected repositories in batches of at most 20 and reads four repositories at a time within a batch. When the sync finishes, the UI shows one summary for all batches: repositories synced, how many resumed from their last sync, records found, and any repositories that failed or were not scanned. Push activity begins with received webhooks; synchronization is not a complete archive.
 
-Signatures are checked against the raw webhook body before parsing. Supported events are normalized and reconciled by event identity, with delivery deduplication in PostgreSQL. Stored history does not expire automatically; the API/UI expose up to 2,000 latest events per workspace. Upstream limits and permission changes can affect metrics.
+Signatures are checked against the raw webhook body before parsing. Supported events are normalized and reconciled by event identity, with delivery deduplication in PostgreSQL. Stored history is kept until `EVENT_RETENTION_DAYS` is set, and delivery IDs expire after `DELIVERY_RETENTION_DAYS`. The API/UI expose up to 2,000 latest events per workspace. Upstream limits and permission changes can affect metrics.
 
 PostgreSQL `LISTEN`/`NOTIFY` distributes event references between replicas. Instances read stored events and authorize their viewers before emitting SSE data. Notifications do not include private event titles. Browser polling reconciles missed notifications. Pausing a browser's live updates does not stop webhook ingestion.
 
@@ -125,7 +130,25 @@ For Supabase PostgreSQL, disable the unused **Data API**. Migrations enable RLS 
 
 Startup applies migrations under a PostgreSQL advisory lock. To apply them separately, run `npm run db:migrate`. Database or migration failure prevents startup. Replicas need the same Auth, GitHub App, encryption key, and public-origin configuration. `/api/health` checks PostgreSQL; it does not prove provider registration or webhook configuration.
 
-Process-local limits are not shared quotas. Protect runtime secrets, database access, and backups. Event text and notes are not end-to-end encrypted; provider-token encryption does not prevent trusted operators from reading application data.
+Each client IP gets 120 API requests and 600 webhook deliveries per minute, counted in PostgreSQL so replicas share them; `/api/health` is exempt. Live-stream limits are per process. Protect runtime secrets, database access, and backups. Event text and notes are not end-to-end encrypted; provider-token encryption does not prevent trusted operators from reading application data.
+
+### Logs, metrics, and retention
+
+Logs go to stdout and stderr, as one JSON object per line in production. Every response carries an `X-Request-Id` header, which also appears in the log line of a failed request. Set `LOG_LEVEL=debug` to log every API request.
+
+With `METRICS_TOKEN` set, `/metrics` serves Prometheus text to requests that send the token: request counts and latency by route pattern (such as `/api/workspaces/:id/feed`, never an ID), rate-limited requests, open live streams, database pool connections, health checks, rows removed by retention, and process memory and event loop delay. For example:
+
+```yaml
+scrape_configs:
+  - job_name: ship-live
+    scheme: https
+    authorization:
+      credentials: <METRICS_TOKEN>
+    static_configs:
+      - targets: [ship.example.com]
+```
+
+An hourly job removes expired request counters, delivery IDs older than `DELIVERY_RETENTION_DAYS`, and, when `EVENT_RETENTION_DAYS` is set, activity and wall signals older than that. Open pull requests stay on Review Radar however long they are idle, and journal notes never expire. Replicas take turns through an advisory lock, and each run deletes in batches.
 
 ## Upgrading an existing installation
 

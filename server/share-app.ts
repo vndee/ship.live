@@ -9,6 +9,7 @@ import type { PostgresEventStore } from "./postgres-store.js";
 import { DashboardShareStore, unavailableShare } from "./share-store.js";
 import type { WorkspaceStore } from "./workspace-store.js";
 import { WallStore } from "./wall-store.js";
+import { liveConnections } from "./metrics.js";
 
 function workspaceShareRouter(
   {
@@ -192,6 +193,7 @@ function workspaceShareRouter(
         "Live connection limit reached. Try again shortly.",
       );
     connections++;
+    liveConnections.inc({ kind: "share" });
     let closed = false;
     let pending = false;
     let dirty = false;
@@ -205,6 +207,7 @@ function workspaceShareRouter(
       clearTimeout(expiry);
       unsubscribe();
       connections--;
+      liveConnections.dec({ kind: "share" });
     };
     const write = (frame: string) => {
       if (closed || response.writableEnded) return;

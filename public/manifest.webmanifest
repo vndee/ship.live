@@ -1,0 +1,32 @@
+{
+  "name": "ship.live",
+  "short_name": "ship.live",
+  "description": "Private ship journals and live GitHub activity for individual builders and teams.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#090c10",
+  "theme_color": "#090c10",
+  "icons": [
+    {
+      "src": "/branding/orbit-pulse-app-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/branding/orbit-pulse-app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/branding/orbit-pulse-app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "shortcuts": [
+    { "name": "Service Health", "url": "/health" },
+    { "name": "Live feed", "url": "/feed" }
+  ]
+}

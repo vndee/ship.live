@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { Pool, type PoolClient } from "pg";
 import type { ActivityEvent } from "../shared/types.js";
 import type { LegacyImportData, LegacyImportResult } from "./legacy-import.js";
+import { log } from "./logger.js";
 import {
   ACTIVITY_CHANNEL,
   PostgresNotifications,
@@ -35,7 +36,7 @@ export class PostgresEventStore implements EventStore {
       fallback_application_name: "ship.live",
     });
     this.pool.on("error", () => {
-      console.error(
+      log.error(
         "An idle PostgreSQL connection failed; the pool will reconnect on demand.",
       );
     });
@@ -89,6 +90,7 @@ export class PostgresEventStore implements EventStore {
         "011_github_access.sql",
         "012_repository_sync.sql",
         "013_sync_runs.sql",
+        "014_rate_limits_retention.sql",
       ].map((file) =>
         readFile(new URL(`./migrations/${file}`, import.meta.url), "utf8"),
       ),

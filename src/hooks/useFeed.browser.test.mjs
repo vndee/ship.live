@@ -359,3 +359,57 @@ test("a transient feed failure hides private activity and recovers without a man
     { timeout: 15_000 },
   );
 });
+
+test("a shared link survives restoring the saved workspace, but choosing another drops its filters and profile", async (t) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  t.after(async () => {
+    await context.close();
+    assert.deepEqual(errors, []);
+  });
+  await page.route("**/*", (route) =>
+    route.fulfill({ contentType: "text/html", body: '<div id="root"></div>' }),
+  );
+  await page.goto("http://workspace.test/feed?repo=team/alpha&person=builder");
+  await page.evaluate(
+    ({ team, another }) => {
+      localStorage.setItem("ship-live-workspace:user-a", team.id);
+      const response = (data, status = 200) =>
+        new Response(JSON.stringify(data), {
+          status,
+          headers: { "content-type": "application/json" },
+        });
+      window.fetch = async (path) => {
+        if (path === "/api/session")
+          return response({
+            user: { id: "user-a", name: "user-a", email: "a@example.invalid" },
+            providers: { google: false, github: false },
+            configured: true,
+            csrfToken: "synthetic-token",
+          });
+        if (path === "/api/workspaces")
+          return response({
+            workspaces: [team, another],
+            githubConnected: true,
+            githubAppConfigured: true,
+          });
+        if (path.endsWith("/feed"))
+          return response({ events: [], updatedAt: "2026-09-10T00:00:00Z" });
+        if (path.endsWith("/events")) return new Response("");
+        if (path.endsWith("/sync")) return response({ run: null });
+        throw new Error(`Unexpected fixture request: ${path}`);
+      };
+    },
+    { team, another },
+  );
+  await page.addScriptTag({ content: bundle });
+  await page.waitForFunction(() => window.feed?.workspace?.id === "team-a");
+  const location = () =>
+    page.evaluate(() => window.location.pathname + window.location.search);
+  assert.equal(await location(), "/feed?repo=team/alpha&person=builder");
+  await page.evaluate((next) => window.feed.selectWorkspace(next), another);
+  await page.waitForFunction(() => window.feed.workspace?.id === "team-other");
+  assert.equal(await location(), "/feed");
+});

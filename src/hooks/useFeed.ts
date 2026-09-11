@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { resetRouteDetails } from "./useRoute";
 import type { ActivityEvent, FeedResponse } from "../../shared/types";
 import type { SessionResponse } from "../../shared/auth";
 import type {
@@ -158,6 +159,9 @@ export function useFeed() {
         : null;
       if (next && (!user || !authorized)) return;
       if (!applyWorkspace(authorized ?? null)) return;
+      // Filters and profiles in the URL belong to the previous workspace. The
+      // first restore does not come through here, so a shared link survives it.
+      resetRouteDetails();
       selectionRevision.current += 1;
       if (user && authorized)
         saveWorkspacePreference(user, authorized.id, (key, value) =>

@@ -4,20 +4,33 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AuthService, authConfigFromEnv } from "./auth.js";
 import { GitHubApp } from "./github-app.js";
+import { log } from "./logger.js";
+import { startRetention } from "./maintenance.js";
+import { metrics, startProcessMetrics } from "./metrics.js";
 import { PostgresEventStore } from "./postgres-store.js";
+import { PostgresRateLimiter } from "./rate-limit.js";
 import {
   githubAppConfigFromEnv,
+  metricsTokenFromEnv,
+  retentionFromEnv,
   trustProxyHopsFromEnv,
 } from "./runtime-config.js";
+import { SECURITY_HEADERS } from "./security.js";
 import { createWorkspaceApp } from "./workspace-app.js";
 import { HealthStore } from "./health-store.js";
 import { startHealthWorker } from "./health-worker.js";
 import { WorkspaceStore } from "./workspace-store.js";
 
+const poolConnections = metrics.gauge(
+  "ship_live_db_pool_connections",
+  "PostgreSQL pool connections in this process by state.",
+  ["state"],
+);
+
 async function main(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
-    console.error(
+    log.error(
       "Set DATABASE_URL to a PostgreSQL database before starting ship.live.",
     );
     process.exitCode = 1;
@@ -25,7 +38,7 @@ async function main(): Promise<void> {
   }
   const port = Number(process.env.PORT || 3001);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
-    console.error("PORT must be a valid TCP port.");
+    log.error("PORT must be a valid TCP port.");
     process.exitCode = 1;
     return;
   }
@@ -33,15 +46,17 @@ async function main(): Promise<void> {
   try {
     store = await PostgresEventStore.open(databaseUrl);
   } catch {
-    console.error(
+    log.error(
       "Could not initialize PostgreSQL. Check DATABASE_URL, database permissions, and schema compatibility.",
     );
     process.exitCode = 1;
     return;
   }
   try {
+    const production = process.env.NODE_ENV === "production";
     const authConfig = authConfigFromEnv();
     const githubConfig = githubAppConfigFromEnv(authConfig);
+    const retention = retentionFromEnv();
     const auth = new AuthService(authConfig, store.pool);
     const workspaces = new WorkspaceStore(
       store.pool,
@@ -54,19 +69,17 @@ async function main(): Promise<void> {
       github: githubConfig ? new GitHubApp(githubConfig) : undefined,
       webhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim(),
       trustProxyHops: trustProxyHopsFromEnv(),
+      metricsToken: metricsTokenFromEnv(),
+      responseHeaders: production ? SECURITY_HEADERS : undefined,
+      rateLimiter: new PostgresRateLimiter(store.pool, (error) =>
+        log.warn(
+          "Shared request limits are unavailable; limiting per process.",
+          { error },
+        ),
+      ),
     });
-    if (process.env.NODE_ENV === "production") {
+    if (production) {
       const dist = fileURLToPath(new URL("../dist/", import.meta.url));
-      app.use((_request, response, next) => {
-        response.set({
-          "Content-Security-Policy":
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://avatars.githubusercontent.com https://*.googleusercontent.com; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
-          "X-Content-Type-Options": "nosniff",
-          "Referrer-Policy": "no-referrer",
-          "X-Frame-Options": "DENY",
-        });
-        next();
-      });
       // Vite fingerprints assets; only these files can be cached across deploys.
       app.use(
         "/assets",
@@ -76,13 +89,25 @@ async function main(): Promise<void> {
         }),
       );
       app.use(express.static(dist));
+      // Page routes such as /health and /feed all load the same application.
+      // A root keeps send's dotfile check off the install path's own folders.
       app.get(/.*/, (_request, response) =>
-        response.sendFile(resolve(dist, "index.html")),
+        response.sendFile("index.html", { root: dist }),
       );
     }
+    const stopProcessMetrics = startProcessMetrics();
+    const stopPoolMetrics = metrics.collect(() => {
+      poolConnections.set({ state: "total" }, store.pool.totalCount);
+      poolConnections.set({ state: "idle" }, store.pool.idleCount);
+      poolConnections.set({ state: "waiting" }, store.pool.waitingCount);
+    });
     const stopHealth = startHealthWorker(new HealthStore(store.pool));
+    const stopRetention = startRetention(store.pool, retention);
     const server = app.listen(port, () =>
-      console.log(`ship.live listening on http://localhost:${port}`),
+      log.info(`ship.live listening on http://localhost:${port}`, {
+        eventRetentionDays: retention.eventDays || "indefinite",
+        deliveryRetentionDays: retention.deliveryDays || "indefinite",
+      }),
     );
     let stopping = false;
     const stop = async (exitCode: number) => {
@@ -95,23 +120,28 @@ async function main(): Promise<void> {
         server.close(() => done());
         server.closeAllConnections();
       });
+      stopProcessMetrics();
+      stopPoolMetrics();
       await stopHealth();
+      await stopRetention();
       await store.close();
       clearTimeout(timeout);
       process.exitCode = exitCode;
     };
     server.once("error", () => {
-      console.error(
+      log.error(
         "Could not start the HTTP server. Check PORT and whether it is already in use.",
       );
       void stop(1);
     });
     for (const signal of ["SIGTERM", "SIGINT"] as const)
       process.once(signal, () => void stop(0));
-  } catch {
+  } catch (error) {
     await store.close();
-    console.error(
+    // Configuration errors name the setting to fix and never include its value.
+    log.error(
       "Could not initialize ship.live. Check the Supabase, GitHub App, and database configuration.",
+      { error },
     );
     process.exitCode = 1;
   }

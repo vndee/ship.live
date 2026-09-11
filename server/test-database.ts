@@ -44,6 +44,18 @@ export async function createTestDatabase(t: TestContext): Promise<string> {
 
   t.after(async () => {
     try {
+      // pg's Pool.end() resolves before its sockets close. Let those sessions
+      // exit on their own first: terminating one makes its already-closed pool
+      // emit an error that fails whichever test is running.
+      // Up to three seconds, for busy CI runners; an idle database skips it.
+      for (let attempt = 0; attempt < 150; attempt += 1) {
+        const { rows } = await admin.query<{ open: number }>(
+          "SELECT count(*)::int AS open FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
+          [database],
+        );
+        if (!rows[0].open) break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
       await admin.query(
         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
         [database],

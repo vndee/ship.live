@@ -59,7 +59,7 @@ Review Radar derives attention from open non-draft pull requests, latest checks,
 
 Reads intersect pinned repository IDs with the creator’s synced repository access, checking the persisted capability again after the data read. Newly granted repositories never widen a distributed link. Disconnect, changed authorization generation, removed membership, installation suspension, expiry, rotation, or revocation deny access. No session impersonation is used: links intentionally outlive the creator’s login session until their own expiry or revocation.
 
-Rotation replaces the token atomically and notifies all replicas through PostgreSQL. Shared SSE streams send only refresh/revocation signals, revalidate access, and close at expiry. The client clears data on revocation, expiry, or failed verification and ignores in-flight stale responses. Polling revalidates every 15 seconds if live updates disconnect. Revocation prevents further access; it cannot recall content a viewer has already copied. Request and stream limits remain per process.
+Rotation replaces the token atomically and notifies all replicas through PostgreSQL. Shared SSE streams send only refresh/revocation signals, revalidate access, and close at expiry. The client clears data on revocation, expiry, or failed verification and ignores in-flight stale responses. Polling revalidates every 15 seconds if live updates disconnect. Revocation prevents further access; it cannot recall content a viewer has already copied. Request limits are shared across replicas; stream limits remain per process.
 
 ## GitHub ingestion
 
@@ -79,13 +79,17 @@ Application tables have RLS enabled and `PUBLIC`, `anon`, and `authenticated` gr
 
 Each app process has a query pool and a dedicated session for PostgreSQL `LISTEN`. Committed webhook updates notify other instances using event references, not private titles. Each instance reads canonical records and authorizes its own stream clients. Notifications are transient; listener reconnects and browser polling recover from missed messages. There is no historical SSE replay cursor.
 
-Use a direct connection or session pooler. A transaction pooler cannot preserve the listener session. Stored events and accepted deliveries do not expire automatically; the API/browser show a bounded latest-event view of up to 2,000 events per workspace. Retention, backups, and restore testing belong to the operator.
+Use a direct connection or session pooler. A transaction pooler cannot preserve the listener session. Accepted delivery IDs expire after `DELIVERY_RETENTION_DAYS` (30 by default), and activity and wall signals after `EVENT_RETENTION_DAYS` once an operator sets it; open pull requests and journal notes never expire. An hourly job deletes expired rows in batches, on one replica at a time under an advisory lock. The API/browser show a bounded latest-event view of up to 2,000 events per workspace. Backups and restore testing belong to the operator.
+
+Request limits are fixed one-minute windows counted in an unlogged PostgreSQL table on the database clock, keyed by a hash of the client address, so every replica enforces the same limit. If the database is unreachable, each process falls back to its own counts. Every response carries an `X-Request-Id`. Logs go to stdout/stderr as JSON lines in production and carry request IDs, route patterns, statuses, durations, and error messages, never bodies, headers, or query strings. With `METRICS_TOKEN` set, `/metrics` serves Prometheus text labeled by route pattern.
 
 ## Browser and visualization
 
 `useFeed` loads the app session and authorized workspaces, polls the active feed, and reconciles SSE updates by event identity. Credentials and private records are not saved to localStorage. Changing account/workspace or losing authorization clears stale data; abort/generation checks prevent older requests from replacing the current view. Fictional demo activity stays separate.
 
-The dashboard shows the complete current UTC week’s XP leaderboard beside recent activity. Rank changes animate by stable contributor identity, XP counts interpolate, and new awards are highlighted. Reduced-motion preferences and a motion toggle suppress animation. Search, repository filters, and replay remain in the Live feed page and do not change weekly recognition. Pausing the browser does not stop server ingestion.
+The dashboard shows the complete current UTC week’s XP leaderboard beside recent activity. Rank changes animate by stable contributor identity, XP counts interpolate, and new awards are highlighted. Reduced-motion preferences and a motion toggle suppress animation. Search, repository filters, and replay remain in the Live feed page and do not change weekly recognition.
+
+Each page has a URL: `/` for Pulse, `/health`, `/feed`, `/team`, and `/milestones`. The Live feed keeps `repo`, `type`, `q`, and `period` in its query string, and `?person=<login>` opens a contributor profile over any page. Opening a page or profile adds a history entry, so Back closes a profile; filter and search changes replace the current entry. Links carry no private data: a recipient sees only what their own access allows. The production server answers every non-API path with the app, and `src/lib/routes.ts` ignores unknown paths and malformed parameters. Pausing the browser does not stop server ingestion.
 
 The dashboard and shared view also show today’s UTC contribution count, a seven-day activity chart, and the closest incomplete weekly milestone. These insights use the same bot exclusion and deduplication rules as recognition; personal notes are excluded.
 
@@ -114,4 +118,4 @@ The legacy `server/app.ts`, public-organization feed adapter, and JSON importer 
 
 ## Hosting
 
-One Node service and PostgreSQL are sufficient. Supabase can provide both Auth and the database, with Railway hosting Node. Shared state supports replicas, while request counters and concurrent-stream limits remain process-local. An HTTPS origin, consistent secrets, database connection capacity, and access-controlled backups are operational requirements. [Configuration](configuration.md) and [Railway deployment](railway.md) describe setup and free-plan limitations.
+One Node service and PostgreSQL are sufficient. Supabase can provide both Auth and the database, with Railway hosting Node. Shared state, including request limits, supports replicas; concurrent-stream limits remain process-local. An HTTPS origin, consistent secrets, database connection capacity, and access-controlled backups are operational requirements. [Configuration](configuration.md) and [Railway deployment](railway.md) describe setup and free-plan limitations.

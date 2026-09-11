@@ -1,4 +1,10 @@
-import express, { type ErrorRequestHandler, type Express } from "express";
+import { randomUUID } from "node:crypto";
+import express, {
+  type ErrorRequestHandler,
+  type Express,
+  type Request,
+  type Response,
+} from "express";
 import type { ActivityEvent, FeedResponse } from "../shared/types.js";
 import type { Workspace } from "../shared/workspaces.js";
 import { AuthError, type AuthService, type Principal } from "./auth.js";
@@ -15,7 +21,16 @@ import {
 } from "./access-normalize.js";
 import { normalizeWebhook, object } from "./normalize.js";
 import type { PostgresEventStore } from "./postgres-store.js";
-import { verifyWebhookSignature } from "./security.js";
+import { verifyAccessKey, verifyWebhookSignature } from "./security.js";
+import { log } from "./logger.js";
+import {
+  httpDuration,
+  httpRequests,
+  liveConnections,
+  metrics,
+  rateLimited,
+} from "./metrics.js";
+import { MemoryRateLimiter, type RateLimiter } from "./rate-limit.js";
 import type {
   AccessibleInstallation,
   WorkspaceStore,
@@ -32,6 +47,14 @@ interface WorkspaceAppOptions {
   github?: GitHubApp;
   webhookSecret?: string;
   trustProxyHops?: number;
+  /** Shared limits across replicas; defaults to this process only. */
+  rateLimiter?: RateLimiter;
+  /** Requests per client per minute. */
+  rateLimits?: { api?: number; webhook?: number };
+  /** Bearer token for /metrics; the endpoint is absent without one. */
+  metricsToken?: string;
+  /** Headers added to every response, such as the production security policy. */
+  responseHeaders?: Readonly<Record<string, string>>;
 }
 interface Viewer {
   workspace: Workspace;
@@ -54,6 +77,13 @@ function installationId(value: string): number {
 // Operational logs carry messages only: GitHub and database errors never embed tokens.
 const failure = (error: unknown) =>
   error instanceof Error ? error.message : "Unknown error";
+const METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]);
+/** Route patterns, never raw paths, so metrics and logs carry no IDs or tokens. */
+function routeLabel(request: Request): string {
+  const path: unknown = request.route?.path;
+  if (typeof path === "string") return `${request.baseUrl}${path}`;
+  return request.originalUrl.startsWith("/api/") ? "/api/*" : "static";
+}
 
 /** Private workspace API. No organization/key-based feed routes are mounted here. */
 export function createWorkspaceApp({
@@ -63,6 +93,10 @@ export function createWorkspaceApp({
   github,
   webhookSecret,
   trustProxyHops = 0,
+  rateLimiter,
+  rateLimits,
+  metricsToken,
+  responseHeaders,
 }: WorkspaceAppOptions): Express {
   if (
     !Number.isSafeInteger(trustProxyHops) ||
@@ -74,8 +108,72 @@ export function createWorkspaceApp({
   const wall = new WallStore(store.pool);
   app.disable("x-powered-by");
   if (trustProxyHops > 0) app.set("trust proxy", trustProxyHops);
+  app.use((request, response, next) => {
+    const started = performance.now();
+    const requestId = randomUUID();
+    response.locals.requestId = requestId;
+    response.set({ ...responseHeaders, "X-Request-Id": requestId });
+    let recorded = false;
+    const record = () => {
+      if (recorded) return;
+      recorded = true;
+      const seconds = (performance.now() - started) / 1000;
+      const method = METHODS.has(request.method) ? request.method : "OTHER";
+      const route = routeLabel(request);
+      // 499: the client left before any response was sent.
+      const status = response.headersSent ? response.statusCode : 499;
+      httpRequests.inc({ method, route, status: String(status) });
+      httpDuration.observe({ method, route }, seconds);
+      const fields = {
+        requestId,
+        method,
+        route,
+        status,
+        ms: Math.round(seconds * 1000),
+      };
+      const stream = response
+        .get("Content-Type")
+        ?.startsWith("text/event-stream");
+      if (status >= 500) log.error("Request failed.", fields);
+      else if (seconds > 2 && !stream) log.warn("Slow request.", fields);
+      else log.debug("Request.", fields);
+    };
+    response.once("finish", record);
+    response.once("close", record);
+    next();
+  });
   let connections = 0;
-  const attempts = new Map<string, { count: number; reset: number }>();
+  const limiter = rateLimiter ?? new MemoryRateLimiter();
+  const limits = {
+    api: rateLimits?.api ?? 120,
+    webhook: rateLimits?.webhook ?? 600,
+    metrics: 30,
+  };
+  /** Counts a request against its client's limit; answers 429 and returns false when over. */
+  async function withinLimit(
+    request: Request,
+    response: Response,
+    scope: keyof typeof limits,
+  ): Promise<boolean> {
+    const result = await limiter.hit(
+      `${scope}:${request.ip || "unknown"}`,
+      limits[scope],
+      60,
+    );
+    const reset = Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000));
+    response.set({
+      "RateLimit-Limit": String(result.limit),
+      "RateLimit-Remaining": String(result.remaining),
+      "RateLimit-Reset": String(reset),
+    });
+    if (result.allowed) return true;
+    rateLimited.inc({ scope });
+    response
+      .set("Retry-After", String(reset))
+      .status(429)
+      .json({ error: "Too many requests. Try again in a minute." });
+    return false;
+  }
   function githubApp(): GitHubApp {
     if (!github)
       throw new AuthError(503, "GitHub App connection is not configured.");
@@ -209,9 +307,9 @@ export function createWorkspaceApp({
     try {
       current = await githubApp().installationRepositories(installationId);
     } catch (error) {
-      console.error(
+      log.error(
         "Could not read an installation's repository selection; narrowing from the delivery.",
-        failure(error),
+        { error: failure(error) },
       );
     }
     if (current) {
@@ -289,10 +387,9 @@ export function createWorkspaceApp({
         .then(() => {})
         .catch((error: unknown) => {
           // The viewer keeps the fail-closed snapshot until their next sync.
-          console.error(
-            "Background GitHub access refresh failed.",
-            failure(error),
-          );
+          log.error("Background GitHub access refresh failed.", {
+            error: failure(error),
+          });
         })
         .finally(() => {
           activeRefreshes -= 1;
@@ -320,7 +417,7 @@ export function createWorkspaceApp({
     } catch (error) {
       const known = error instanceof AuthError || error instanceof FeedError;
       if (!known)
-        console.error("Background GitHub sync failed.", failure(error));
+        log.error("Background GitHub sync failed.", { error: failure(error) });
       await workspaces
         .finishSync(workspaceId, runId, {
           status: "failed",
@@ -330,10 +427,9 @@ export function createWorkspaceApp({
               : "The sync could not be completed. Try again.",
         })
         .catch((recordError: unknown) =>
-          console.error(
-            "Could not record a sync result.",
-            failure(recordError),
-          ),
+          log.error("Could not record a sync result.", {
+            error: failure(recordError),
+          }),
         );
     }
   }
@@ -405,7 +501,29 @@ export function createWorkspaceApp({
     return { synced: totals.synced, notice: backfillNotice(totals) };
   }
 
-  app.use("/api", (request, response, next) => {
+  app.get("/metrics", async (request, response) => {
+    response.set("Cache-Control", "no-store");
+    if (!metricsToken) {
+      response.status(404).type("text/plain").send("Not found.");
+      return;
+    }
+    if (!(await withinLimit(request, response, "metrics"))) return;
+    const authorization = request.get("authorization") || "";
+    if (
+      !authorization.startsWith("Bearer ") ||
+      !verifyAccessKey(authorization.slice(7), metricsToken)
+    ) {
+      response
+        .set("WWW-Authenticate", 'Bearer realm="metrics"')
+        .status(401)
+        .type("text/plain")
+        .send("Unauthorized.");
+      return;
+    }
+    response.type("text/plain; version=0.0.4").send(metrics.render());
+  });
+
+  app.use("/api", async (request, response, next) => {
     response.set({
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
@@ -416,23 +534,8 @@ export function createWorkspaceApp({
       return;
     }
     const webhook = request.path === "/webhooks/github";
-    const key = `${webhook ? "webhook" : "api"}:${request.ip || "unknown"}`;
-    const previous = attempts.get(key);
-    const current =
-      previous && previous.reset > Date.now()
-        ? previous
-        : { count: 0, reset: Date.now() + 60_000 };
-    current.count += 1;
-    attempts.set(key, current);
-    if (attempts.size > 2000) attempts.delete(attempts.keys().next().value!);
-    if (current.count > (webhook ? 600 : 120)) {
-      response
-        .set("Retry-After", "60")
-        .status(429)
-        .json({ error: "Too many requests. Try again in a minute." });
-      return;
-    }
-    next();
+    if (await withinLimit(request, response, webhook ? "webhook" : "api"))
+      next();
   });
 
   app.get("/api/health", async (_request, response) => {
@@ -596,9 +699,9 @@ export function createWorkspaceApp({
       bootstrapAttempts.delete(userId);
       return installations;
     } catch (error) {
-      console.error(
+      log.error(
         "Automatic GitHub access snapshot failed; Refresh or Sync retries.",
-        failure(error),
+        { error: failure(error) },
       );
       return undefined;
     }
@@ -669,9 +772,9 @@ export function createWorkspaceApp({
     );
     // The first access snapshot. Refresh or Sync retries if GitHub is unavailable.
     await refreshAccess(principal).catch((error: unknown) => {
-      console.error(
+      log.error(
         "First GitHub access snapshot failed; Refresh or Sync retries.",
-        failure(error),
+        { error: failure(error) },
       );
     });
     response.redirect(new URL("/?github=connected", auth.config.appUrl).href);
@@ -830,6 +933,7 @@ export function createWorkspaceApp({
         "Live connection limit reached. Try again shortly.",
       );
     connections += 1;
+    liveConnections.inc({ kind: "workspace" });
     let closed = false;
     let queued = 0;
     let pending = Promise.resolve();
@@ -841,6 +945,7 @@ export function createWorkspaceApp({
       if (heartbeat) clearInterval(heartbeat);
       unsubscribe();
       connections -= 1;
+      liveConnections.dec({ kind: "workspace" });
     }
     function write(frame: string) {
       if (closed || response.writableEnded) return;
@@ -957,6 +1062,11 @@ export function createWorkspaceApp({
         : error?.type === "entity.parse.failed"
           ? 400
           : 500;
+    if (status === 500)
+      log.error("A request could not be completed.", {
+        requestId: response.locals.requestId,
+        error: failure(error),
+      });
     response.status(status).json({
       error:
         status === 413

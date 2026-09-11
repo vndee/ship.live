@@ -44,7 +44,8 @@ Checks for the public HTTP APIs your team depends on, run from the server even w
 - **Shared recognition.** Weekly contributor spotlights and team milestones celebrate outcomes and collaboration. New commits earn a small per-commit credit; personal notes earn no XP.
 - **Expiring share links.** Share a read-only Pulse or Service Health page without requiring sign-in. Choose from one hour through a 100-year no-expiration option; rotate or revoke your link at any time.
 - **Private by default.** Personal notes belong to their owner. GitHub events are filtered to repositories each viewer could access through the GitHub App at their last sync.
-- **Self-hosted.** React, Express, and shared PostgreSQL, with bundled fonts and no analytics. One Node.js service serves the frontend and API.
+- **A link for every view.** Pulse, Service Health, the Live feed with its filters, and contributor profiles each have a URL to bookmark or share with teammates who have access. Install ship.live from the browser for its own window.
+- **Self-hosted.** React, Express, and shared PostgreSQL, with bundled fonts and no analytics. One Node.js service serves the frontend and API, writes structured logs, and can expose Prometheus metrics.
 
 Keyboard navigation, reduced-motion preferences, small screens, and fullscreen displays are supported. Screenshots use fictional demo data from the signed-out demo, which also includes a read-only Service Health page. Demo activity is never copied into a real workspace.
 
@@ -98,7 +99,7 @@ npm run build
 npm start
 ```
 
-Production serves the built UI and API together on `PORT` (default `3001`). Set your public HTTPS origin as `APP_URL`, configure authentication, and point `DATABASE_URL` at persistent PostgreSQL. Startup applies SQL migrations; there is no JSON or memory fallback.
+Production serves the built UI and API together on `PORT` (default `3001`). Set your public HTTPS origin as `APP_URL`, configure authentication, and point `DATABASE_URL` at persistent PostgreSQL. Startup applies SQL migrations; there is no JSON or memory fallback. Logs are JSON lines; set `METRICS_TOKEN` to serve Prometheus metrics at `/metrics`, and `EVENT_RETENTION_DAYS` to expire old activity. See [configuration](docs/configuration.md#logs-metrics-and-retention).
 
 For a physical Linux machine, the [Docker self-host guide](docs/self-host-docker.md) provides a production image and Compose stack with PostgreSQL, automatic Caddy HTTPS, persistent volumes, healthchecks, backup, restore, and upgrade commands.
 
@@ -127,7 +128,7 @@ The database suite creates and removes isolated test databases. Use a dedicated 
 
 Personal journals remain private. Team members can explicitly share a read-only Pulse or Service Health page through an expiring link. Each member manages one link of each kind per workspace; rotating it immediately invalidates their previous link. Sharing pins the creator’s current repository IDs and rechecks their live GitHub permissions on reads. Notes are never shared. Newly accessible repositories require a new link. Public profiles and journal publishing are not implemented.
 
-GitHub connection imports a bounded recent activity history, not a complete archive. Subsequent signed webhooks supply live activity plus current pull-request, check, workflow, commit-status, and deployment signals; push history begins with those webhooks. CI/CD providers appear through the states they publish back to GitHub, so ship.live requires no provider-specific integration. The UI displays at most 2,000 activity events per workspace and bounds each wall signal category in snapshots. Stored events and accepted delivery IDs do not expire automatically, so operators must plan retention and backups. Request counters and live-connection limits remain per process.
+GitHub connection imports a bounded recent activity history, not a complete archive. Subsequent signed webhooks supply live activity plus current pull-request, check, workflow, commit-status, and deployment signals; push history begins with those webhooks. CI/CD providers appear through the states they publish back to GitHub, so ship.live requires no provider-specific integration. The UI displays at most 2,000 activity events per workspace and bounds each wall signal category in snapshots. Accepted webhook delivery IDs expire after 30 days by default (`DELIVERY_RETENTION_DAYS`); activity is kept until an operator sets `EVENT_RETENTION_DAYS`, so plan retention and backups. Request limits are shared across replicas through PostgreSQL; live-connection limits remain per process.
 
 The old organization-name/shared-key routes are not mounted by the current server. Legacy events remain in their original database namespaces and are not automatically assigned to a newly signed-in user. See [upgrade notes](docs/configuration.md#upgrading-an-existing-installation).
 

@@ -1,175 +1,59 @@
-import { useEffect, useMemo, useRef, useState, type ElementType } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity,
-  ArrowDown,
   ArrowLeft,
-  ArrowUpRight,
-  Check,
-  CheckCheck,
-  ChevronDown,
-  CircleHelp,
-  ExternalLink,
-  FolderGit2,
-  GitCommitHorizontal,
-  GitMerge,
-  GitPullRequest,
-  Github,
   BookOpen,
-  LockKeyhole,
-  NotebookPen,
+  Check,
   Plus,
-  Trash2,
-  Maximize2,
-  MessageSquare,
-  Minimize2,
-  Pause,
-  Play,
   RefreshCw,
-  Rocket,
   Search,
-  Settings2,
   Share2,
   Sparkles,
-  Users,
-  X,
 } from "lucide-react";
-import type { ActivityEvent } from "../shared/types";
-import {
-  basePoints,
-  EVENT_META,
-  getAchievements,
-  getLeaderboard,
-  getMetrics,
-  SCORING_RULES,
-} from "./lib/activity";
+import type { CreatedDashboardShare } from "../shared/shares";
+import { getAchievements, getLeaderboard, getMetrics } from "./lib/activity";
 import {
   filterEvents,
   getTimelineCutoff,
   getTimelineRange,
   getWindowEvents,
 } from "./lib/feedView";
+import { ago, PERIOD_NAMES, personName } from "./lib/format";
+import { PAGE_TITLES, type Period, type Route } from "./lib/routes";
+import { createDemoHealth, demoSignals } from "./lib/demo-wall";
 import { useFeed, type FeedController } from "./hooks/useFeed";
-import { HealthSharePanel } from "./components/HealthSharePanel";
-import { SharedHealth } from "./components/SharedHealth";
-import { ServiceHealth } from "./components/ServiceHealth";
-import { AccountPanel } from "./components/AccountPanel";
-import { ShipNoteComposer } from "./components/ShipNoteComposer";
-import { Modal } from "./components/Modal";
-import { LiveLeaderboard } from "./components/LiveLeaderboard";
-import { SharePanel } from "./components/SharePanel";
-import { SharedDashboard } from "./components/SharedDashboard";
-import type { CreatedDashboardShare } from "../shared/shares";
-import { DashboardPulse } from "./components/DashboardPulse";
-import { ActivityCelebration } from "./components/ActivityCelebration";
+import { closeOverlay, navigate, useRoute } from "./hooks/useRoute";
 import { useActivityCelebration } from "./hooks/useActivityCelebration";
 import { useEngineeringWall } from "./hooks/useEngineeringWall";
-import { EngineeringWall } from "./components/EngineeringWall";
-import { createDemoHealth, demoSignals } from "./lib/demo-wall";
-import { PublicHealthList } from "./components/PublicHealthList";
+import { AccountPanel } from "./components/AccountPanel";
+import { ActivityCelebration } from "./components/ActivityCelebration";
+import { AppHeader } from "./components/AppHeader";
 import { ContributorProfile } from "./components/ContributorProfile";
+import { EngineeringWall } from "./components/EngineeringWall";
+import { EventDetail } from "./components/EventDetail";
+import type { Kind } from "./components/event-kinds";
+import { HealthSharePanel } from "./components/HealthSharePanel";
+import { LiveLeaderboard } from "./components/LiveLeaderboard";
+import { Modal } from "./components/Modal";
 import { RepositoryList } from "./components/RepositoryList";
-import { ThemeToggle } from "./components/ThemeToggle";
-import { BrandMark } from "./components/BrandMark";
+import { RouteLink } from "./components/RouteLink";
+import { ScoringRules } from "./components/ScoringRules";
+import { ServiceHealth } from "./components/ServiceHealth";
+import { SettingsPanel } from "./components/SettingsPanel";
+import { SharedDashboard } from "./components/SharedDashboard";
+import { SharedHealth } from "./components/SharedHealth";
+import { SharePanel } from "./components/SharePanel";
+import { ShipNoteComposer } from "./components/ShipNoteComposer";
+import { ActivityFeed, type ActivityFeedProps } from "./pages/ActivityFeed";
+import { DemoHealthPage } from "./pages/DemoHealthPage";
+import { FeedTimeline } from "./pages/FeedTimeline";
+import { MilestonesPage } from "./pages/MilestonesPage";
+import { TeamPage } from "./pages/TeamPage";
 
-type Page = "dashboard" | "feed" | "team" | "milestones" | "health";
-type Kind = ActivityEvent["type"];
-type Period = "24h" | "7d" | "30d";
-const icons: Record<Kind, ElementType> = {
-  merge: GitMerge,
-  review: MessageSquare,
-  push: GitCommitHorizontal,
-  issue: CheckCheck,
-  release: Rocket,
-  pr: GitPullRequest,
-  note: NotebookPen,
-};
-const verbs: Record<Kind, string> = {
-  merge: "merged",
-  review: "reviewed",
-  push: "pushed",
-  issue: "closed",
-  release: "released",
-  pr: "opened",
-  note: "shipped",
-};
-const names: Record<string, string> = {
-  alexchen: "Alex Chen",
-  sarahpark: "Sarah Park",
-  minhnguyen: "Minh Nguyen",
-  emmarivera: "Emma Rivera",
-  jordanlee: "Jordan Lee",
-  leowang: "Leo Wang",
-};
-const periodNames: Record<Period, string> = {
-  "24h": "Last 24 hours",
-  "7d": "Last 7 days",
-  "30d": "Last 30 days",
-};
+const DEFAULT_TITLE = "ship.live — Great work. Shared momentum.";
 const REPOSITORY_NOTE =
   "Activity from repositories your GitHub account can see. Sync imports part of the last 30 days; new pushes arrive through webhooks.";
 const SOURCES_NOTE =
   "Your private journal notes and activity from repositories your GitHub account can see. Sync imports part of the last 30 days; new pushes arrive through webhooks.";
-const shortRepo = (repo: string) =>
-  repo === "journal/notes" ? "Ship notes" : repo.split("/").pop() || repo;
-function safeUrl(url?: string) {
-  try {
-    const parsed = new URL(url || "");
-    return parsed.protocol === "https:" && parsed.hostname === "github.com"
-      ? parsed.href
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-function ago(timestamp: string, now = Date.now()) {
-  const minutes = Math.max(
-    0,
-    Math.floor((now - Date.parse(timestamp)) / 60000),
-  );
-  return minutes < 1
-    ? "just now"
-    : minutes < 60
-      ? `${minutes}m ago`
-      : minutes < 1440
-        ? `${Math.floor(minutes / 60)}h ago`
-        : `${Math.floor(minutes / 1440)}d ago`;
-}
-function clock(timestamp: number, period: Period) {
-  return new Date(timestamp).toLocaleString(
-    undefined,
-    period === "24h"
-      ? { hour: "2-digit", minute: "2-digit" }
-      : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" },
-  );
-}
-function Avatar({
-  login,
-  url,
-  demo,
-}: {
-  login: string;
-  url?: string;
-  demo: boolean;
-}) {
-  const [failed, setFailed] = useState(false);
-  const display = demo ? names[login] || login : login;
-  const initials = display.includes(" ")
-    ? display
-        .split(" ")
-        .map((n) => n[0])
-        .slice(0, 2)
-        .join("")
-    : display.slice(0, 2);
-  return (
-    <span className="avatar" aria-label={display}>
-      {url?.startsWith("https://avatars.githubusercontent.com/") && !failed ? (
-        <img src={url} alt="" onError={() => setFailed(true)} />
-      ) : (
-        initials.toUpperCase()
-      )}
-    </span>
-  );
-}
 
 export default function App() {
   if (window.location.pathname.replace(/\/$/, "") === "/share/health")
@@ -187,18 +71,24 @@ function PrivateApp() {
 }
 
 function WorkspaceView({ feed }: { feed: FeedController }) {
+  const route = useRoute();
+  const page = route.page;
   const personal = feed.workspace?.kind === "personal";
-  const canWriteNote =
-    personal && feed.workspace?.owner && feed.operation?.status !== "pending";
-  const [page, setPage] = useState<Page>("dashboard");
+  const canWriteNote = Boolean(
+    personal && feed.workspace?.owner && feed.operation?.status !== "pending",
+  );
   const engineering = useEngineeringWall(
     feed.workspace?.kind === "team" ? feed.workspace.id : undefined,
-    page === "dashboard",
+    page === "pulse",
   );
-  const [query, setQuery] = useState("");
-  const [kind, setKind] = useState<Kind | "">("");
-  const [repo, setRepo] = useState("");
-  const [period, setPeriod] = useState<Period>("24h");
+  // Pulse's activity list keeps its own type filter; the Live feed's filters
+  // live in the URL, so a filtered feed can be bookmarked and shared.
+  const [pulseKind, setPulseKind] = useState<Kind | "">("");
+  const onFeed = page === "feed";
+  const kind = onFeed ? (route.kind ?? "") : pulseKind;
+  const repo = onFeed ? (route.repo ?? "") : "";
+  const query = onFeed ? (route.query ?? "") : "";
+  const period: Period = onFeed ? (route.period ?? "24h") : "24h";
   const [replay, setReplay] = useState<{ end: number; percent: number } | null>(
     null,
   );
@@ -233,7 +123,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     }
   }, [feed.session.user?.id, feed.workspace?.id]);
   const [detailId, setDetailId] = useState<string | null>(null);
-  const [profileLogin, setProfileLogin] = useState<string | null>(null);
+  const profileLogin = route.person;
   const detail = feed.events.find((event) => event.id === detailId) || null;
   const [actionError, setActionError] = useState("");
   const syncing = feed.syncRun?.status === "running";
@@ -242,7 +132,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     ready: feed.demo || (feed.hasSnapshot && !feed.error),
     enabled:
       celebrations &&
-      page === "dashboard" &&
+      page === "pulse" &&
       !feed.paused &&
       !replay &&
       !syncing &&
@@ -288,9 +178,9 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   const activeFilters = Boolean(query || kind || repo);
   const selected = visible.find((e) => e.id === selectedId);
   const shownEvents =
-    page === "dashboard" && selected
+    page === "pulse" && selected
       ? [selected, ...visible.filter((e) => e.id !== selected.id)].slice(0, 5)
-      : visible.slice(0, page === "dashboard" ? 5 : limit);
+      : visible.slice(0, page === "pulse" ? 5 : limit);
   // The signed-out demo shows no connection label.
   const status = feed.demo
     ? ""
@@ -303,15 +193,30 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
           : feed.streaming
             ? "Connected"
             : "Polling";
-  const displayName = (login: string) =>
-    feed.demo ? names[login] || login : login;
+  const displayName = (login: string) => personName(login, feed.demo);
+  /** Live feed filters replace the current history entry instead of adding one. */
+  function updateFeed(changes: Partial<Route>) {
+    navigate({ ...route, ...changes, page: "feed" }, { replace: true });
+  }
+  function setKind(next: Kind | "") {
+    if (onFeed) updateFeed({ kind: next || undefined });
+    else setPulseKind(next);
+  }
+  function clearFilters() {
+    if (onFeed)
+      updateFeed({ kind: undefined, repo: undefined, query: undefined });
+    else setPulseKind("");
+    setSelectedId(null);
+  }
   // A repository chosen in Pulse opens its activity in the Live feed.
   function focusRepository(repository: string) {
-    clearFilters();
-    setRepo(repository);
-    setPeriod("30d");
     setReplay(null);
-    setPage("feed");
+    setSelectedId(null);
+    navigate({ page: "feed", repo: repository, period: "30d" });
+  }
+  // Profiles are part of the URL; Back closes one opened here.
+  function openProfile(login: string) {
+    navigate({ ...route, person: login }, { overlay: true });
   }
   // Demo checks stay current: a probe reads as unknown after two missed intervals.
   const demoMinute = Math.floor(now / 60_000);
@@ -319,6 +224,20 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     () => (feed.demo ? createDemoHealth(demoMinute * 60_000) : null),
     [feed.demo, demoMinute],
   );
+  // Personal journals have no Service Health; a link to it shows Pulse.
+  useEffect(() => {
+    if (
+      page === "health" &&
+      !feed.demo &&
+      feed.workspace &&
+      feed.workspace.kind !== "team"
+    )
+      navigate({ page: "pulse" }, { replace: true });
+  }, [page, feed.demo, feed.workspace]);
+  useEffect(() => {
+    document.title =
+      page === "pulse" ? DEFAULT_TITLE : `${PAGE_TITLES[page]} · ship.live`;
+  }, [page]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 15_000);
@@ -350,18 +269,25 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   useEffect(() => {
     setLimit(30);
   }, [query, kind, repo, period, page]);
+  // Replay belongs to the Live feed visit that started it.
+  useEffect(() => {
+    setReplay(null);
+  }, [page]);
   useEffect(() => {
     if (selectedId && !visible.some((e) => e.id === selectedId))
       setSelectedId(null);
   }, [visible, selectedId]);
   useEffect(() => {
-    setRepo("");
-    setKind("");
-    setQuery("");
+    setPulseKind("");
     setReplay(null);
     setSelectedId(null);
     setDetailId(null);
   }, [feed.organization]);
+  const onFeedRef = useRef(onFeed);
+  // Updated after commit, so the key listener never sees a discarded render.
+  useLayoutEffect(() => {
+    onFeedRef.current = onFeed;
+  }, [onFeed]);
   useEffect(() => {
     const reduced = matchMedia("(prefers-reduced-motion: reduce)");
     const onReduced = () => {
@@ -370,7 +296,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
-        setPage("feed");
+        if (!onFeedRef.current) navigate({ page: "feed" });
         requestAnimationFrame(() => searchRef.current?.focus());
       }
       if (e.key === "Escape") setWall(false);
@@ -387,12 +313,6 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
       document.removeEventListener("fullscreenchange", onFullscreen);
     };
   }, []);
-  function clearFilters() {
-    setQuery("");
-    setKind("");
-    setRepo("");
-    setSelectedId(null);
-  }
   function openConnect() {
     setModal("connect");
   }
@@ -424,7 +344,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   async function toggleWall() {
     const next = !wall;
     setWall(next);
-    if (next && page !== "health") setPage("dashboard");
+    if (next && page !== "health") navigate({ page: "pulse" });
     try {
       if (next) await document.documentElement.requestFullscreen?.();
       else if (document.fullscreenElement) await document.exitFullscreen();
@@ -432,333 +352,57 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
       /* The display layout also works without browser fullscreen. */
     }
   }
-  function selectEvent(event: ActivityEvent) {
-    setSelectedId(event.id);
-  }
 
-  function renderFeed(full = false) {
-    return (
-      <section
-        className={`activity-feed ${full ? "full-feed" : ""}`}
-        aria-label="Shipping activity feed"
-      >
-        <div className="section-heading">
-          <h2>
-            {replay ? "Activity replay" : "Live activity"}
-            <span className="section-count">{visible.length}</span>
-          </h2>
-          <div className="small-actions">
-            <button
-              className="icon-button"
-              aria-label={feed.paused ? "Resume updates" : "Pause updates"}
-              title={feed.paused ? "Resume updates" : "Pause updates"}
-              onClick={() => feed.setPaused(!feed.paused)}
-            >
-              {feed.paused ? <Play size={15} /> : <Pause size={15} />}
-            </button>
-            {!full && (
-              <button
-                className="icon-button"
-                onClick={() => setPage("feed")}
-                aria-label="View all activity"
-                title="View all activity"
-              >
-                <ArrowUpRight size={17} />
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="feed-filter-row">
-          <label>
-            <span className="sr-only">Activity type</span>
-            <select
-              aria-label="Activity type"
-              value={kind}
-              onChange={(e) => setKind(e.target.value as Kind | "")}
-            >
-              <option value="">All activity</option>
-              {(Object.keys(EVENT_META) as Kind[]).map((k) => (
-                <option key={k} value={k}>
-                  {EVENT_META[k].label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {full && (
-            <label>
-              <span className="sr-only">Filter repository</span>
-              <select
-                aria-label="Filter repository"
-                value={repo}
-                onChange={(e) => setRepo(e.target.value)}
-              >
-                <option value="">
-                  {personal ? "All sources" : "All repositories"}
-                </option>
-                {allRepositories.map((r) => (
-                  <option key={r} value={r}>
-                    {shortRepo(r)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {(activeFilters || replay) && (
-            <button
-              className="text-button clear-filter"
-              onClick={() => {
-                clearFilters();
-                setReplay(null);
-              }}
-            >
-              <X size={12} />
-              Reset
-            </button>
-          )}
-        </div>
-        {feed.paused && (
-          <p className="feed-pause-note">
-            Live stream paused. Access is still checked.
-          </p>
-        )}
-        <div className="event-list">
-          {shownEvents.map((event) => {
-            const Icon = icons[event.type];
-            const isSelected = selectedId === event.id;
-            return (
-              <article
-                key={event.id}
-                className={`event-row ${isSelected ? "selected" : ""} ${liveEffects.highlightedIds.has(event.id) ? `activity-new ${moving ? "with-activity-motion" : ""}` : ""}`}
-              >
-                <button
-                  className="event-select"
-                  aria-pressed={isSelected}
-                  onClick={() => selectEvent(event)}
-                >
-                  <span className="event-topline">
-                    <Icon size={14} className={`event-icon ${event.type}`} />
-                    <span className="event-actor">
-                      {displayName(event.actor.login)}{" "}
-                      <span>{verbs[event.type]}</span>
-                    </span>
-                    <time
-                      dateTime={event.occurredAt}
-                      title={new Date(event.occurredAt).toLocaleString()}
-                    >
-                      {ago(event.occurredAt, replay ? cutoff : now)}
-                    </time>
-                  </span>
-                  <span className="event-title">{event.title}</span>
-                  <span className="event-metadata">
-                    <span>
-                      {event.type === "note"
-                        ? "Private journal"
-                        : shortRepo(event.repo)}
-                      {event.number ? ` / #${event.number}` : ""}
-                    </span>
-                    <span>
-                      {liveEffects.highlightedIds.has(event.id) && (
-                        <span className="new-activity-badge">New</span>
-                      )}
-                      {EVENT_META[event.type].label}
-                    </span>
-                  </span>
-                </button>
-                {isSelected && (
-                  <div className="event-expanded">
-                    <button
-                      className="text-button"
-                      onClick={() => setDetailId(event.id)}
-                    >
-                      Event details <ArrowUpRight size={13} />
-                    </button>
-                    {!feed.demo && safeUrl(event.url) && (
-                      <a
-                        className="text-button"
-                        href={safeUrl(event.url)}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        GitHub <ExternalLink size={12} />
-                      </a>
-                    )}
-                  </div>
-                )}
-              </article>
-            );
-          })}
-        </div>
-        {!visible.length && (
-          <div className="empty-state">
-            <h3>
-              {feed.loading
-                ? "Loading activity…"
-                : activeFilters
-                  ? "No matching activity"
-                  : replay
-                    ? "No activity at this point"
-                    : personal
-                      ? "Your journal starts with one ship"
-                      : "Waiting for the first signal"}
-            </h3>
-            <p>
-              {activeFilters
-                ? "Try another repository, activity type, or search."
-                : replay
-                  ? "Move the timeline forward to see later events."
-                  : personal
-                    ? "Add a ship note, or connect GitHub to bring your work into your dashboard."
-                    : "Received GitHub events will appear here and on the leaderboard."}
-            </p>
-            {activeFilters ? (
-              <button className="button secondary" onClick={clearFilters}>
-                Clear filters
-              </button>
-            ) : replay ? (
-              <button
-                className="button secondary"
-                onClick={() => setReplay(null)}
-              >
-                Return to now
-              </button>
-            ) : canWriteNote ? (
-              <button
-                className="button secondary"
-                onClick={() => setModal("note")}
-              >
-                <Plus size={14} /> Add a ship note
-              </button>
-            ) : !feed.demo ? (
-              <button className="text-button" onClick={openConnect}>
-                Manage connection <ArrowUpRight size={13} />
-              </button>
-            ) : null}
-          </div>
-        )}
-        {visible.length > shownEvents.length && (
-          <button
-            className="feed-more"
-            onClick={() => (full ? setLimit(limit + 30) : setPage("feed"))}
-          >
-            {full ? "Show more activity" : `View all ${visible.length} events`}
-            <ArrowDown size={14} />
-          </button>
-        )}
-        {!full && personal && (
-          <div className="shared-goal journal-reflection">
-            <div className="goal-label">
-              <span>
-                <LockKeyhole size={12} /> Private journal
-              </span>
-              <span>
-                {visible.filter((event) => event.type === "note").length} ship
-                notes
-              </span>
-            </div>
-            <h3>The story behind the work.</h3>
-            <p>Small wins, experiments, and lessons belong here too.</p>
-            {canWriteNote && (
-              <button className="text-button" onClick={() => setModal("note")}>
-                <Plus size={13} /> Add a ship note
-              </button>
-            )}
-          </div>
-        )}
-      </section>
-    );
-  }
+  const feedProps: ActivityFeedProps = {
+    feed,
+    personal,
+    canWriteNote,
+    replaying: Boolean(replay),
+    visible,
+    shown: shownEvents,
+    timeNow: replay ? cutoff : now,
+    kind,
+    onKind: setKind,
+    repo,
+    onRepo: (next) => updateFeed({ repo: next || undefined }),
+    repositories: allRepositories,
+    activeFilters,
+    onClearFilters: clearFilters,
+    onReturnToNow: () => setReplay(null),
+    selectedId,
+    onSelect: setSelectedId,
+    onDetail: setDetailId,
+    highlightedIds: liveEffects.highlightedIds,
+    moving,
+    displayName,
+    // The Live feed opens with Pulse's activity type still applied.
+    onViewAll: () => navigate({ page: "feed", kind: pulseKind || undefined }),
+    onShowMore: () => setLimit(limit + 30),
+    onAddNote: () => setModal("note"),
+    onConnect: openConnect,
+  };
 
   return (
     <div className={`app-shell ${wall ? "wall-mode" : ""}`}>
-      <header className="app-header">
-        <a
-          className="brand"
-          href="#"
-          onClick={(e) => {
-            e.preventDefault();
-            setPage("dashboard");
-          }}
-        >
-          <BrandMark />
-          <span className="brand-name">
-            ship<span>.live</span>
-          </span>
-        </a>
-        <button className="organization-switch" onClick={openConnect}>
-          {!feed.demo && <LockKeyhole size={12} />}
-          <span>{feed.demo ? "Acme Team" : feed.organization}</span>
-          <ChevronDown size={13} />
-        </button>
-        <nav aria-label="Main navigation">
-          {(
-            [
-              ["dashboard", "Pulse"],
-              ["health", "Service Health"],
-            ] as const
-          )
-            .filter(
-              ([id]) =>
-                id !== "health" || feed.demo || feed.workspace?.kind === "team",
-            )
-            .map(([id, label]) => (
-              <button
-                key={id}
-                // Pages opened from Pulse (feed, team, milestones) keep Pulse current.
-                aria-current={
-                  (id === "health") === (page === "health") ? "page" : undefined
-                }
-                onClick={() => setPage(id)}
-              >
-                {label}
-              </button>
-            ))}
-        </nav>
-        <div className="header-tools">
-          {page !== "health" && status && (
-            <span
-              className={`connection-status ${feed.error ? "has-error" : ""}`}
-            >
-              <span />
-              {status}
-            </span>
-          )}
-          {!feed.session.user && (
-            <button
-              className="text-button sign-in-button"
-              onClick={openConnect}
-            >
-              Sign in
-            </button>
-          )}
-          <ThemeToggle />
-          <button
-            className="icon-button"
-            aria-label="Settings"
-            title="Settings"
-            onClick={() => setModal("settings")}
-          >
-            <Settings2 size={17} />
-          </button>
-          <button
-            className="icon-button"
-            aria-label={wall ? "Exit wall display" : "Open wall display"}
-            title={wall ? "Exit wall display" : "Open wall display"}
-            onClick={() => void toggleWall()}
-          >
-            {wall ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
-          </button>
-        </div>
-      </header>
+      <AppHeader
+        feed={feed}
+        page={page}
+        status={status}
+        wall={wall}
+        onConnect={openConnect}
+        onSettings={() => setModal("settings")}
+        onToggleWall={() => void toggleWall()}
+      />
       <main>
         <div className="page-heading">
           <div>
             {page === "feed" || page === "team" || page === "milestones" ? (
-              <button
+              <RouteLink
                 className="text-button page-back"
-                onClick={() => setPage("dashboard")}
+                to={{ page: "pulse" }}
               >
                 <ArrowLeft size={14} /> Pulse
-              </button>
+              </RouteLink>
             ) : (
               <p className="date-line">
                 {new Date(now).toLocaleDateString(undefined, {
@@ -771,7 +415,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             <h1>
               {
                 {
-                  dashboard: personal
+                  pulse: personal
                     ? "Your week, in motion."
                     : "Great work. Shared momentum.",
                   feed: personal
@@ -785,7 +429,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             </h1>
           </div>
           <div className="page-tools">
-            {feed.demo && page === "dashboard" && (
+            {feed.demo && page === "pulse" && (
               <button
                 className="button secondary demo-activity-button"
                 onClick={feed.simulateActivity}
@@ -806,7 +450,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                 {page === "health" ? "Share service health" : "Share Pulse"}
               </button>
             )}
-            {page === "feed" && (
+            {onFeed && (
               <>
                 <label className="search-box">
                   <Search size={15} />
@@ -816,7 +460,9 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                     aria-label="Search activity"
                     placeholder="Search activity"
                     value={query}
-                    onChange={(e) => setQuery(e.target.value)}
+                    onChange={(e) =>
+                      updateFeed({ query: e.target.value || undefined })
+                    }
                   />
                   <kbd>⌘ K</kbd>
                 </label>
@@ -824,14 +470,14 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                   aria-label="Activity time period"
                   value={period}
                   onChange={(e) => {
-                    setPeriod(e.target.value as Period);
+                    updateFeed({ period: e.target.value as Period });
                     setReplay(null);
                     setSelectedId(null);
                   }}
                 >
-                  {(Object.keys(periodNames) as Period[]).map((p) => (
+                  {(Object.keys(PERIOD_NAMES) as Period[]).map((p) => (
                     <option key={p} value={p}>
-                      {periodNames[p]}
+                      {PERIOD_NAMES[p]}
                     </option>
                   ))}
                 </select>
@@ -918,124 +564,90 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             <span>{feed.notice}</span>
           </div>
         )}
-        {(page === "dashboard" || page === "feed") && (
-          <>
-            {page === "dashboard" ? (
-              <div className="dashboard-layout">
-                {!personal ? (
-                  <EngineeringWall
-                    snapshot={
-                      feed.demo ? demoSignals().snapshot : engineering.data
-                    }
-                    health={
-                      feed.demo ? demoSignals().health : engineering.health
-                    }
-                    events={feed.events}
-                    now={now}
-                    demo={feed.demo}
-                    displayName={displayName}
-                    preferencesKey={feed.demo ? "demo" : feed.workspace?.id}
-                    moving={moving}
-                    // Signed-out visitors and the wall display slide by default.
-                    autoplayDefault={(!feed.session.user || wall) && moving}
-                    loading={feed.loading || engineering.loading}
-                    onToggleMotion={() => setMoving(!moving)}
-                    onRules={() => setModal("rules")}
-                    onMilestones={() => setPage("milestones")}
-                    onOpenHealth={
-                      feed.demo ? undefined : () => setPage("health")
-                    }
-                    onSelectPerson={setProfileLogin}
-                    onOpenTeam={() => setPage("team")}
-                    onSelectRepository={focusRepository}
-                    repositoryNote={feed.demo ? undefined : REPOSITORY_NOTE}
-                    status={
-                      feed.demo
-                        ? ""
-                        : feed.paused
-                          ? "Paused"
-                          : feed.streaming
-                            ? "Live"
-                            : feed.loading
-                              ? "Syncing"
-                              : "Polling"
-                    }
-                  />
-                ) : (
-                  <div className="dashboard-main">
-                    <LiveLeaderboard
-                      events={feed.events}
-                      now={now}
-                      demo={feed.demo}
-                      onSelect={setProfileLogin}
-                      moving={moving}
-                      loading={feed.loading}
-                      onToggleMotion={() => setMoving(!moving)}
-                      onRules={() => setModal("rules")}
-                      status={status}
-                    />
-                    <RepositoryList
-                      events={feed.events}
-                      now={now}
-                      title="Sources"
-                      framed
-                      note={feed.demo ? undefined : SOURCES_NOTE}
-                      onSelect={focusRepository}
-                    />
-                  </div>
-                )}
-                <aside className="dashboard-sidebar">{renderFeed()}</aside>
-              </div>
+        {page === "pulse" && (
+          <div className="dashboard-layout">
+            {!personal ? (
+              <EngineeringWall
+                snapshot={feed.demo ? demoSignals().snapshot : engineering.data}
+                health={feed.demo ? demoSignals().health : engineering.health}
+                events={feed.events}
+                now={now}
+                demo={feed.demo}
+                displayName={displayName}
+                preferencesKey={feed.demo ? "demo" : feed.workspace?.id}
+                moving={moving}
+                // Signed-out visitors and the wall display slide by default.
+                autoplayDefault={(!feed.session.user || wall) && moving}
+                loading={feed.loading || engineering.loading}
+                onToggleMotion={() => setMoving(!moving)}
+                onRules={() => setModal("rules")}
+                onMilestones={() => navigate({ page: "milestones" })}
+                onOpenHealth={
+                  feed.demo ? undefined : () => navigate({ page: "health" })
+                }
+                onSelectPerson={openProfile}
+                onOpenTeam={() => navigate({ page: "team" })}
+                onSelectRepository={focusRepository}
+                repositoryNote={feed.demo ? undefined : REPOSITORY_NOTE}
+                status={
+                  feed.demo
+                    ? ""
+                    : feed.paused
+                      ? "Paused"
+                      : feed.streaming
+                        ? "Live"
+                        : feed.loading
+                          ? "Syncing"
+                          : "Polling"
+                }
+              />
             ) : (
-              <div className="feed-page">{renderFeed(true)}</div>
-            )}
-            {page === "feed" && (
-              <div className="timeline">
-                <div className="timeline-track">
-                  <label className="sr-only" htmlFor="activity-timeline">
-                    Activity timeline
-                  </label>
-                  <input
-                    id="activity-timeline"
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="0.1"
-                    value={replay?.percent ?? 100}
-                    aria-valuetext={clock(cutoff, "7d")}
-                    onChange={(e) => {
-                      const percent = Number(e.target.value);
-                      setReplay(
-                        percent === 100
-                          ? null
-                          : { end: replay?.end ?? now, percent },
-                      );
-                    }}
-                  />
-                  <div className="timeline-labels">
-                    {[0, 0.25, 0.5, 0.75, 1].map((fraction, i) => (
-                      <span
-                        key={fraction}
-                        className={i % 2 ? "minor-tick" : ""}
-                      >
-                        {clock(
-                          range.start + (range.end - range.start) * fraction,
-                          period,
-                        )}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <button
-                  className={`timeline-now ${!replay ? "is-live" : ""}`}
-                  onClick={() => setReplay(null)}
-                  aria-label="Return to latest activity"
-                >
-                  <span />
-                  Now
-                </button>
+              <div className="dashboard-main">
+                <LiveLeaderboard
+                  events={feed.events}
+                  now={now}
+                  demo={feed.demo}
+                  onSelect={openProfile}
+                  moving={moving}
+                  loading={feed.loading}
+                  onToggleMotion={() => setMoving(!moving)}
+                  onRules={() => setModal("rules")}
+                  status={status}
+                />
+                <RepositoryList
+                  events={feed.events}
+                  now={now}
+                  title="Sources"
+                  framed
+                  note={feed.demo ? undefined : SOURCES_NOTE}
+                  onSelect={focusRepository}
+                />
               </div>
             )}
+            <aside className="dashboard-sidebar">
+              <ActivityFeed {...feedProps} />
+            </aside>
+          </div>
+        )}
+        {onFeed && (
+          <>
+            <div className="feed-page">
+              <ActivityFeed {...feedProps} full />
+            </div>
+            <FeedTimeline
+              start={range.start}
+              end={range.end}
+              period={period}
+              percent={replay?.percent ?? 100}
+              cutoff={cutoff}
+              live={!replay}
+              onScrub={(percent) =>
+                setReplay(
+                  percent === 100 ? null : { end: replay?.end ?? now, percent },
+                )
+              }
+              onNow={() => setReplay(null)}
+            />
           </>
         )}
         {page === "health" &&
@@ -1048,137 +660,19 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             />
           )}
         {page === "health" && demoHealth && (
-          <section
-            className="service-health"
-            aria-labelledby="service-health-title"
-          >
-            <div className="section-heading health-heading">
-              <h2 id="service-health-title">
-                <Activity size={19} /> Service Health{" "}
-                <span className="section-count">
-                  {demoHealth.services.length}
-                </span>
-              </h2>
-            </div>
-            <p className="health-intro">
-              Sample services with fictional checks. Sign in and connect a team
-              to monitor your own endpoints.
-            </p>
-            <PublicHealthList services={demoHealth.services} now={now} />
-          </section>
+          <DemoHealthPage services={demoHealth.services} now={now} />
         )}
         {page === "team" && (
-          <section className="team-page">
-            <div className="section-heading">
-              <h2>Team spotlight</h2>
-              <span className="period-note">This week · UTC</span>
-            </div>
-            <div className="team-summary">
-              <p>
-                <strong>{metrics.contributors}</strong> people building.{" "}
-                <strong>{metrics.xp.toLocaleString()}</strong> shared XP.
-              </p>
-              <button className="text-button" onClick={() => setModal("rules")}>
-                How recognition works <CircleHelp size={14} />
-              </button>
-            </div>
-            <div className="team-table">
-              <div className="team-table-head">
-                <span>Contributor</span>
-                <span>Merges</span>
-                <span>Reviews</span>
-                <span>Weekly XP</span>
-              </div>
-              {people.map((person) => (
-                <div className="team-row" key={person.login}>
-                  <div className="team-person">
-                    <span className="rank">
-                      {String(person.rank).padStart(2, "0")}
-                    </span>
-                    <Avatar
-                      login={person.login}
-                      url={person.avatarUrl}
-                      demo={feed.demo}
-                    />
-                    <span>
-                      <strong>{displayName(person.login)}</strong>
-                      <small>@{person.login}</small>
-                    </span>
-                  </div>
-                  <span>{person.merges}</span>
-                  <span>{person.reviews}</span>
-                  <strong className="team-xp">
-                    {person.xp.toLocaleString()}
-                    <small> XP</small>
-                  </strong>
-                  <button
-                    type="button"
-                    className="row-select"
-                    aria-label={`Open ${displayName(person.login)}'s profile`}
-                    onClick={() => setProfileLogin(person.login)}
-                  />
-                </div>
-              ))}
-            </div>
-            {!people.length && (
-              <div className="empty-state">
-                <Users size={24} />
-                <h3>No contributions received this week</h3>
-                <p>Contributors appear as activity arrives.</p>
-              </div>
-            )}
-            <p className="recognition-note">
-              Reviews, releases, merges, and new commits all count. Weekly
-              recognition excludes bot accounts and resets Monday at 00:00 UTC.
-            </p>
-          </section>
+          <TeamPage
+            people={people}
+            metrics={metrics}
+            displayName={displayName}
+            onRules={() => setModal("rules")}
+            onSelectPerson={openProfile}
+          />
         )}
         {page === "milestones" && (
-          <section className="milestones-page">
-            <div className="section-heading">
-              <h2>Shared milestones</h2>
-              <span className="period-note">This week · UTC</span>
-            </div>
-            <div className="milestone-list">
-              {achievements.map((a) => {
-                const Icon = icons[a.kind];
-                return (
-                  <article className="milestone" key={a.id}>
-                    <Icon size={24} strokeWidth={1.2} />
-                    <div>
-                      <span
-                        className={`milestone-state ${a.unlocked ? "complete" : ""}`}
-                      >
-                        {a.unlocked ? "Reached together" : "In progress"}
-                      </span>
-                      <h2>{a.title}</h2>
-                      <p>{a.description}</p>
-                      <div
-                        className="goal-track"
-                        role="progressbar"
-                        aria-label={a.title}
-                        aria-valuemin={0}
-                        aria-valuemax={a.target}
-                        aria-valuenow={a.progress}
-                      >
-                        <span
-                          style={{ width: `${(a.progress / a.target) * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                    <strong className="milestone-number">
-                      {a.progress}
-                      <small> / {a.target}</small>
-                    </strong>
-                  </article>
-                );
-              })}
-            </div>
-            <p className="recognition-note">
-              Everyone moves these goals forward. Milestones reflect received
-              activity, with a fresh start each Monday.
-            </p>
-          </section>
+          <MilestonesPage achievements={achievements} />
         )}
         <footer className="app-footer">
           <span>
@@ -1271,124 +765,33 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
       )}
       {modal === "rules" && (
         <Modal title="Good work, recognized" onClose={() => setModal(null)}>
-          <p className="modal-description">
-            Weekly XP celebrates visible contributions. It is a conversation
-            starter, never a performance score.
-          </p>
-          <div className="scoring-rules">
-            {SCORING_RULES.map((rule) => {
-              const Icon = icons[rule.type];
-              return (
-                <div key={rule.verb}>
-                  <Icon size={17} />
-                  <span>{rule.verb}</span>
-                  <strong>
-                    {rule.points} <small>XP{rule.each ? " each" : ""}</small>
-                  </strong>
-                </div>
-              );
-            })}
-          </div>
-          <p className="field-hint">
-            Bot accounts and duplicate events are excluded. Review XP counts
-            once per reviewer, pull request, and UTC day. Commit XP counts only
-            commits new to the repository, so each commit is credited once.
-            Weeks start Monday at 00:00 UTC. Public history can be incomplete;
-            totals reflect received activity.
-          </p>
+          <ScoringRules />
         </Modal>
       )}
       {modal === "settings" && (
         <Modal title="Workspace settings" onClose={() => setModal(null)}>
-          <section className="settings-section">
-            <h3>
-              {feed.session.user ? feed.session.user.name : "Your account"}
-            </h3>
-            <p>
-              {feed.demo
-                ? "You’re exploring fictional sample activity."
-                : personal
-                  ? "Your journal is private and visible only to you."
-                  : `Viewing ${feed.organization}. Repository access is checked for your account.`}
-            </p>
-            <button className="button primary" onClick={openConnect}>
-              {feed.session.user ? "Account and GitHub connections" : "Sign in"}
-            </button>
-            {!feed.demo && feed.githubConnected && (
-              <>
-                <button
-                  className="text-button"
-                  disabled={syncing}
-                  onClick={() => void syncGithub()}
-                >
-                  <RefreshCw size={14} className={syncing ? "spin" : ""} />
-                  {syncing
-                    ? "Syncing in the background…"
-                    : "Sync GitHub activity"}
-                </button>
-                <p className="field-hint">
-                  New activity arrives automatically. Sync re-reads your
-                  repository access, which spends your GitHub API quota shared
-                  with your other GitHub tools, and imports recent history. Use
-                  it after changing access in GitHub or if activity looks
-                  missing; repeat syncs only fetch what changed since the last
-                  one.
-                </p>
-              </>
-            )}
-          </section>
-          <section className="settings-section">
-            <h3>Motion and live updates</h3>
-            <label className="settings-toggle">
-              <span>Highlight and celebrate new activity</span>
-              <input
-                type="checkbox"
-                checked={celebrations}
-                onChange={(e) => setCelebrations(e.target.checked)}
-              />
-            </label>
-            <label className="settings-toggle">
-              <span>Animate Pulse</span>
-              <input
-                type="checkbox"
-                checked={moving}
-                onChange={(e) => setMoving(e.target.checked)}
-              />
-            </label>
-            <label className="settings-toggle">
-              <span>Receive live updates</span>
-              <input
-                type="checkbox"
-                checked={!feed.paused}
-                onChange={(e) => feed.setPaused(!e.target.checked)}
-              />
-            </label>
-            <button
-              className="button secondary"
-              onClick={() => {
-                setModal(null);
-                void toggleWall();
-              }}
-            >
-              <Maximize2 size={15} />
-              {wall ? "Exit wall display" : "Open wall display"}
-            </button>
-          </section>
-          <section className="settings-section">
-            <h3>A journal for what you build</h3>
-            <p>
-              Keep a personal ship journal or follow your team’s work. GitHub
-              connections use the repositories you choose in the GitHub App
-              installation.
-            </p>
-            <span className="version">ship.live / 0.1.0</span>
-          </section>
+          <SettingsPanel
+            feed={feed}
+            personal={personal}
+            syncing={syncing}
+            onSync={() => void syncGithub()}
+            onConnect={openConnect}
+            celebrations={celebrations}
+            onCelebrations={setCelebrations}
+            moving={moving}
+            onMoving={setMoving}
+            wall={wall}
+            onToggleWall={() => {
+              setModal(null);
+              void toggleWall();
+            }}
+          />
         </Modal>
       )}
       {profileLogin && (
         <Modal
           title={displayName(profileLogin)}
-          onClose={() => setProfileLogin(null)}
+          onClose={() => closeOverlay({ ...route, person: undefined })}
         >
           <ContributorProfile
             events={feed.events}
@@ -1401,76 +804,14 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
       )}
       {detail && (
         <Modal title="Activity details" onClose={() => setDetailId(null)}>
-          <div className="detail-person">
-            <Avatar
-              login={detail.actor.login}
-              url={detail.actor.avatarUrl}
-              demo={feed.demo}
-            />
-            <div>
-              <strong>{displayName(detail.actor.login)}</strong>
-              <span>{EVENT_META[detail.type].verb}</span>
-            </div>
-          </div>
-          <h3 className="detail-title">{detail.title}</h3>
-          <p className="detail-repo">
-            <FolderGit2 size={15} />
-            {detail.type === "note" ? "Private journal" : detail.repo}
-            {detail.number ? ` #${detail.number}` : ""}
-            {detail.type === "merge" && detail.branch
-              ? ` into ${detail.branch}`
-              : ""}
-          </p>
-          <p className="detail-date">
-            {new Date(detail.occurredAt).toLocaleString()}
-          </p>
-          {detail.additions !== undefined && (
-            <p className="diff-stat">
-              +{detail.additions} additions{" "}
-              <span>−{detail.deletions ?? 0} deletions</span>
-            </p>
-          )}
-          {detail.body && <p className="note-body">{detail.body}</p>}
-          {!personal && detail.type !== "note" && (
-            <p className="field-hint">
-              Base recognition: {basePoints(detail)} XP
-              {detail.type === "push" && detail.commits !== undefined
-                ? ` for ${detail.commits} new commit${detail.commits === 1 ? "" : "s"}`
-                : ""}
-              . The weekly board applies duplicate and review limits.
-            </p>
-          )}
-          {detail.type === "note" && (
-            <p className="privacy-note">
-              <LockKeyhole size={14} /> Only you can see this ship note.
-            </p>
-          )}
-          {!feed.demo && safeUrl(detail.url) ? (
-            <a
-              className="button primary full-width"
-              href={safeUrl(detail.url)}
-              target="_blank"
-              rel="noreferrer"
-            >
-              View on GitHub <ExternalLink size={15} />
-            </a>
-          ) : (
-            detail.type !== "note" && (
-              <p className="field-hint">
-                {feed.demo
-                  ? "This is fictional sample activity."
-                  : "No GitHub link was supplied for this event."}
-              </p>
-            )
-          )}
-          {detail.type === "note" && canWriteNote && (
-            <button
-              className="text-button danger-button"
-              onClick={() => void deleteNote(detail.id)}
-            >
-              <Trash2 size={14} /> Delete ship note
-            </button>
-          )}
+          <EventDetail
+            event={detail}
+            demo={feed.demo}
+            personal={personal}
+            canDelete={detail.type === "note" && canWriteNote}
+            displayName={displayName}
+            onDelete={() => void deleteNote(detail.id)}
+          />
         </Modal>
       )}
     </div>
