@@ -158,7 +158,7 @@ test("with no data every figure is empty", () => {
   });
 });
 
-test("deployments GitHub later marked inactive count as successes when they succeeded", () => {
+test("deployments GitHub later marked inactive count only when their success was recorded", () => {
   const inactive: EngineeringWallSnapshot = {
     updatedAt: ago(0),
     repositories: [
@@ -179,15 +179,15 @@ test("deployments GitHub later marked inactive count as successes when they succ
             succeededAt: ago(2),
           },
           deployment("4", "staging", "successful", ago(1)),
-          // Without a known success time, it counts when it went inactive.
+          // Without a recorded success time, it is left out.
           deployment("5", "staging", "inactive", ago(20)),
         ],
       },
     ],
   };
   const { current } = deliveryMetrics(inactive, undefined, now);
-  assert.equal(current.deployments, 4);
-  assert.equal(current.changeFailureRate, 0.2);
+  assert.equal(current.deployments, 3);
+  assert.equal(current.changeFailureRate, 0.25);
   // Failed 2 d 1 h ago; the next success, since marked inactive, 2 d ago.
   assert.equal(current.timeToRestoreMs, 3_600_000);
 });

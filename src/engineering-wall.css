@@ -672,6 +672,12 @@ button.scene-row:hover {
     display: none;
   }
 }
+/* Delivery content lines up with the scene header's text. */
+.delivery-body {
+  display: grid;
+  gap: 18px;
+  padding: 0 24px 22px;
+}
 .delivery-figures {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -705,7 +711,6 @@ button.scene-row:hover {
 .delivery-weeks {
   display: grid;
   gap: 10px;
-  margin-top: 18px;
 }
 .delivery-weeks-legend {
   display: flex;
@@ -761,7 +766,7 @@ button.scene-row:hover {
   white-space: nowrap;
 }
 .delivery-note {
-  margin: 14px 0 0;
+  margin: 0;
   font-size: 13px;
   color: var(--muted);
 }
@@ -787,6 +792,9 @@ button.scene-row:hover {
 @media (max-width: 520px) {
   .delivery-figures {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .delivery-body {
+    padding: 0 16px 16px;
   }
   .delivery-weeks-bars {
     gap: 6px;

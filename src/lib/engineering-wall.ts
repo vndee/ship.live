@@ -322,8 +322,12 @@ export function getAvailableScenes(
   if (
     snapshot.repositories.some(
       (repository) =>
-        repository.deployments.some((deployment) =>
-          ["successful", "failing", "inactive"].includes(deployment.status),
+        repository.deployments.some(
+          (deployment) =>
+            deployment.status === "successful" ||
+            deployment.status === "failing" ||
+            (deployment.status === "inactive" &&
+              deployment.succeededAt !== undefined),
         ) || repository.pullRequests.some((pull) => pull.state === "merged"),
     )
   )

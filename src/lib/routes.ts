@@ -1,3 +1,4 @@
+import { isTag } from "./journal";
 import type { ActivityEvent } from "../../shared/types";
 
 export type Page =
@@ -68,8 +69,8 @@ export function parseRoute(pathname: string, search: string): Route {
     if (repo && repo.length <= 200) route.repo = repo;
     const kind = oneOf(KINDS, params.get("type"));
     if (kind) route.kind = kind;
-    const tag = params.get("tag")?.toLowerCase();
-    if (tag && /^[\p{L}\p{N}][\p{L}\p{N}_-]{0,39}$/u.test(tag)) route.tag = tag;
+    const tag = params.get("tag")?.toLowerCase().normalize("NFC");
+    if (tag && isTag(tag)) route.tag = tag;
     // Kept as typed, spaces included, so the controlled search box never
     // drops a keystroke; filtering trims it.
     const query = params.get("q")?.slice(0, 200);

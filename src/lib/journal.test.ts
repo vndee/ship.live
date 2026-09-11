@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ActivityEvent } from "../../shared/types";
-import { journalMarkdown, journalTags, noteTags, withTag } from "./journal";
+import {
+  isTag,
+  journalMarkdown,
+  journalTags,
+  noteTags,
+  withTag,
+} from "./journal";
 
 const note = (
   id: string,
@@ -47,6 +53,17 @@ test("tags stop at 40 characters, and suggestions add a tag only once", () => {
   assert.equal(withTag("Ship #deploy", "Done", "deploy"), "Done");
   assert.equal(withTag("", "Done\n", "launch"), "Done\n#launch");
   assert.equal(withTag("", "", "launch"), "#launch");
+});
+
+test("tags whose lowercase adds combining marks stay usable in URLs", () => {
+  const istanbul = "İstanbul".toLowerCase();
+  assert.deepEqual(
+    noteTags(note("n3", "Offsite #İstanbul", "", "2026-09-10T08:00:00Z")),
+    [istanbul],
+  );
+  assert.equal(isTag(istanbul), true);
+  assert.equal(isTag("bad tag"), false);
+  assert.equal(isTag("-leading"), false);
 });
 
 test("journal tags are counted and ordered by use", () => {

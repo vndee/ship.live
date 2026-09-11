@@ -77,5 +77,12 @@ test("a journal tag filters the Live feed and survives the URL", () => {
     tag: "tiếng-việt",
   });
   assert.deepEqual(parseRoute("/feed", "?tag=%23bad%20tag"), { page: "feed" });
+  assert.deepEqual(
+    parseRoute("/feed", `?tag=${encodeURIComponent("İstanbul")}`),
+    {
+      page: "feed",
+      tag: "İstanbul".toLowerCase(),
+    },
+  );
   assert.deepEqual(parseRoute("/team", "?tag=launch"), { page: "team" });
 });

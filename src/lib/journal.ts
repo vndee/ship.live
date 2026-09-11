@@ -3,7 +3,18 @@ import type { ActivityEvent } from "../../shared/types";
 // A # that starts a word: not inside a URL, an HTML entity, or "C#".
 // Words longer than 40 characters are not tags.
 const TAG =
-  /(?:^|[^\p{L}\p{N}_&#/])#([\p{L}\p{N}][\p{L}\p{N}_-]{0,39})(?![\p{L}\p{N}_-])/gu;
+  /(?:^|[^\p{L}\p{N}_&#/])#([\p{L}\p{N}][\p{L}\p{M}\p{N}_-]{0,39})(?![\p{L}\p{M}\p{N}_-])/gu;
+
+/** A tag's single form: lowercased and composed, so notes and URLs agree. */
+const normalizeTag = (value: string) => value.toLowerCase().normalize("NFC");
+
+/** Whether a URL value is a tag in the form noteTags returns. */
+export function isTag(value: string): boolean {
+  // Lowercasing can add combining marks (İ becomes i and a dot above).
+  return (
+    /^[\p{L}\p{N}][\p{L}\p{M}\p{N}_-]*$/u.test(value) && [...value].length <= 80
+  );
+}
 
 /** A note's hashtags, lowercased, in order of first use. */
 export function noteTags(
@@ -11,8 +22,10 @@ export function noteTags(
 ): string[] {
   if (event.type !== "note") return [];
   const tags: string[] = [];
-  for (const match of `${event.title}\n${event.body ?? ""}`.matchAll(TAG)) {
-    const tag = match[1].toLowerCase();
+  for (const match of `${event.title}\n${event.body ?? ""}`
+    .normalize("NFC")
+    .matchAll(TAG)) {
+    const tag = normalizeTag(match[1]);
     if (!tags.includes(tag)) tags.push(tag);
   }
   return tags;

@@ -74,20 +74,17 @@ export function deliveryMetrics(
   now: number,
   chosen?: string,
 ): DeliveryMetrics {
-  // GitHub marks earlier successful deployments inactive. They count as
-  // successes, at the time they succeeded when that is known.
+  // GitHub marks earlier successful deployments inactive. One counts as a
+  // success only when ship.live recorded when it succeeded; others are left out.
   const deployments = snapshot.repositories.flatMap((repository) =>
     repository.deployments.map((deployment) => {
-      const inactive = deployment.status === "inactive";
+      const succeededAt =
+        deployment.status === "inactive" ? deployment.succeededAt : undefined;
       return {
         ...deployment,
-        status: inactive ? "successful" : deployment.status,
+        status: succeededAt ? "successful" : deployment.status,
         repository: repository.repository,
-        time: Date.parse(
-          inactive
-            ? (deployment.succeededAt ?? deployment.updatedAt)
-            : deployment.updatedAt,
-        ),
+        time: Date.parse(succeededAt ?? deployment.updatedAt),
       };
     }),
   );

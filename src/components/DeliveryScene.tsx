@@ -111,76 +111,82 @@ export function DeliveryScene({
           </label>
         )}
       </SceneHeader>
-      <div className="delivery-figures">
-        {figures.map((figure) => (
-          <div className="delivery-figure" key={figure.label}>
-            <span>{figure.label}</span>
-            <strong>{figure.value}</strong>
-            <small>{figure.detail}</small>
-            {figure.before !== null && (
-              <small className="delivery-before">
-                {figure.before} in the 30 days before
-              </small>
-            )}
-          </div>
-        ))}
-      </div>
-      {environment && (
-        <div className="delivery-weeks">
-          <div className="delivery-weeks-legend">
-            <span>
-              <i className="delivery-successful" aria-hidden="true" />
-              Deployments
-            </span>
-            <span>
-              <i className="delivery-failing" aria-hidden="true" />
-              Failed
-            </span>
-            <span className="delivery-weeks-scope">{environment}, by week</span>
-          </div>
-          <div
-            className="delivery-weeks-bars"
-            role="img"
-            aria-label={`Deployments to ${environment} by week, oldest first: ${metrics.weeks
-              .map(
-                (week) =>
-                  `week of ${week.start}, ${week.deployments} successful and ${week.failures} failed`,
-              )
-              .join("; ")}`}
-          >
-            {metrics.weeks.map((week) => (
-              <div
-                className="delivery-week"
-                key={week.start}
-                title={`Week of ${weekLabel(week.start)}: ${week.deployments} successful, ${week.failures} failed`}
-              >
-                <div className="delivery-week-stack">
-                  {week.deployments > 0 && (
-                    <span
-                      className="delivery-successful"
-                      style={{ height: `${(week.deployments / peak) * 100}%` }}
-                    />
-                  )}
-                  {week.failures > 0 && (
-                    <span
-                      className="delivery-failing"
-                      style={{ height: `${(week.failures / peak) * 100}%` }}
-                    />
-                  )}
-                </div>
-                <small>{weekLabel(week.start)}</small>
-              </div>
-            ))}
-          </div>
+      <div className="delivery-body">
+        <div className="delivery-figures">
+          {figures.map((figure) => (
+            <div className="delivery-figure" key={figure.label}>
+              <span>{figure.label}</span>
+              <strong>{figure.value}</strong>
+              <small>{figure.detail}</small>
+              {figure.before !== null && (
+                <small className="delivery-before">
+                  {figure.before} in the 30 days before
+                </small>
+              )}
+            </div>
+          ))}
         </div>
-      )}
-      <p className="delivery-note">
-        {current.incidents > 0 &&
-          `Service Health had ${metrics.incidentsCapped ? "at least " : ""}${current.incidents} ${current.incidents === 1 ? "incident" : "incidents"}${current.incidentRestoreMs === null ? "" : `, restored in ${formatDuration(current.incidentRestoreMs)} at the median`}. `}
-        Lead time is shown as time to merge: GitHub does not link a deployment
-        to the pull requests it ships. These figures describe the team, never a
-        person.
-      </p>
+        {environment && (
+          <div className="delivery-weeks">
+            <div className="delivery-weeks-legend">
+              <span>
+                <i className="delivery-successful" aria-hidden="true" />
+                Deployments
+              </span>
+              <span>
+                <i className="delivery-failing" aria-hidden="true" />
+                Failed
+              </span>
+              <span className="delivery-weeks-scope">
+                {environment}, by week
+              </span>
+            </div>
+            <div
+              className="delivery-weeks-bars"
+              role="img"
+              aria-label={`Deployments to ${environment} by week, oldest first: ${metrics.weeks
+                .map(
+                  (week) =>
+                    `week of ${week.start}, ${week.deployments} successful and ${week.failures} failed`,
+                )
+                .join("; ")}`}
+            >
+              {metrics.weeks.map((week) => (
+                <div
+                  className="delivery-week"
+                  key={week.start}
+                  title={`Week of ${weekLabel(week.start)}: ${week.deployments} successful, ${week.failures} failed`}
+                >
+                  <div className="delivery-week-stack">
+                    {week.deployments > 0 && (
+                      <span
+                        className="delivery-successful"
+                        style={{
+                          height: `${(week.deployments / peak) * 100}%`,
+                        }}
+                      />
+                    )}
+                    {week.failures > 0 && (
+                      <span
+                        className="delivery-failing"
+                        style={{ height: `${(week.failures / peak) * 100}%` }}
+                      />
+                    )}
+                  </div>
+                  <small>{weekLabel(week.start)}</small>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        <p className="delivery-note">
+          {current.incidents > 0 &&
+            `Service Health had ${metrics.incidentsCapped ? "at least " : ""}${current.incidents} ${current.incidents === 1 ? "incident" : "incidents"}${current.incidentRestoreMs === null ? "" : `, restored in ${formatDuration(current.incidentRestoreMs)} at the median`}. `}
+          Lead time is shown as time to merge: GitHub does not link a deployment
+          to the pull requests it ships. These figures describe the team, never
+          a person.
+        </p>
+      </div>
     </>
   );
 }
