@@ -200,6 +200,14 @@ test("the editor previews presets live, signs Lark bodies, and blocks invalid te
   const dialog = await page.locator("dialog.modal[open]").boundingBox();
   assert.ok(dialog.width > 900, `the editor is ${dialog.width}px wide`);
   await shot(page, "webhook-editor", page.locator("dialog.modal[open]"));
+  await page
+    .getByRole("heading", { name: "Body template" })
+    .scrollIntoViewIfNeeded();
+  await shot(
+    page,
+    "webhook-editor-template",
+    page.locator("dialog.modal[open]"),
+  );
   const preview = page.getByLabel("Rendered body");
   assert.match(await preview.textContent(), /"blocks"/);
   await page.getByLabel("Preset").selectOption("lark");

@@ -171,6 +171,8 @@
 }
 .webhook-event-group {
   display: grid;
+  /* Groups share a row's height; their options stay together at the top. */
+  align-content: start;
   gap: 8px;
   margin: 0;
   padding: 12px 14px;
