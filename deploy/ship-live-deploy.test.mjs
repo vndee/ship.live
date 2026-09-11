@@ -73,7 +73,7 @@ else if (name === 'timeout') {
 else if (name === 'sleep') process.exit(0);
 else if (name === 'date') out('2026-09-11T00:00:00Z');
 else if (name === 'docker-compose') {
-  const cmd = a[4];
+  const cmd = a.find(arg => ['config', 'up', 'ps', 'logs', 'stop'].includes(arg));
   if (cmd === 'config') { out('DO_NOT_PRINT=fixture-secret'); process.exit(o.configFail ? 1 : 0); }
   if (cmd === 'up') { writeFileSync(activePath, process.env.APP_IMAGE); process.exit((o.upFail && process.env.APP_IMAGE === o.target) || (o.rollbackUpFail && process.env.APP_IMAGE === o.old) ? 1 : 0); }
   if (cmd === 'ps') out(o.noContainer ? '' : 'container-id');
@@ -82,6 +82,7 @@ else if (name === 'docker-compose') {
 } else if (name === 'docker') {
   if (a[0] === 'pull') process.exit(o.pullFail ? 1 : 0);
   if (a[0] === 'image' && a[1] === 'inspect') {
+    if (a.includes('{{.Id}}')) { out(o.old); process.exit(0); }
     if (o.inspectFail || (a.at(-1) === o.old && o.priorInspectFail)) process.exit(1);
     const value = a.at(-1) === o.target ? o.metadata : o.priorMetadata;
     if (a[3] === '{{json .Config.Labels}}') {
@@ -92,6 +93,7 @@ else if (name === 'docker-compose') {
     } else out(value + (a[3].endsWith('|END') ? '|END' : ''));
   }
   if (a[0] === 'inspect') {
+    if (a.includes('{{.Image}}')) { out(active); process.exit(0); }
     const countPath = join(root, 'polls');
     const count = existsSync(countPath) ? Number(readFileSync(countPath)) : 0;
     writeFileSync(countPath, String(count+1));
@@ -138,8 +140,18 @@ else if (name === 'docker-compose') {
     symlinkSync(fake, join(bin, name));
   const copy = (name) => {
     const file = resolve("deploy", name);
-    assert.ok(existsSync(file), `${name} implementation does not exist`);
-    let script = readFileSync(file, "utf8");
+    if (name !== "bootstrap-restore")
+      assert.ok(existsSync(file), `${name} implementation does not exist`);
+    let script =
+      name === "bootstrap-restore"
+        ? readFileSync(resolve("docs/self-host-docker.md"), "utf8").match(
+            /<!-- bootstrap-restore:start -->\s*```sh\n([\s\S]*?)\n```\s*<!-- bootstrap-restore:end -->/,
+          )?.[1]
+        : readFileSync(file, "utf8");
+    assert.ok(
+      script,
+      "The executable first-bootstrap restoration procedure is missing",
+    );
     for (const [from, to] of [
       [
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -164,8 +176,9 @@ else if (name === 'docker-compose') {
       );
     if (options.advanceAfterPs)
       script = script.replace(
-        "[[ $container =~",
-        `SECONDS=$((SECONDS + ${options.advanceAfterPs === true ? 120 : options.advanceAfterPs})); [[ $container =~`,
+        /\[\[ "?\$container"? =~/,
+        (match) =>
+          `SECONDS=$((SECONDS + ${options.advanceAfterPs === true ? 120 : options.advanceAfterPs})); ${match}`,
       );
     const dest = join(root, name);
     writeFileSync(dest, script, { mode: 0o755 });
@@ -195,6 +208,13 @@ else if (name === 'docker-compose') {
     },
     data,
     root,
+    restore(env) {
+      return spawnSync("/bin/bash", [copy("bootstrap-restore")], {
+        encoding: "utf8",
+        timeout: 15000,
+        env: { PATH: "/usr/bin:/bin", ...env },
+      });
+    },
   };
 }
 const upCommands = (f) =>
@@ -206,6 +226,16 @@ const failed = (r) => {
   assert.equal(r.error, undefined);
   assert.notEqual(r.status, 0, r.stdout + r.stderr);
 };
+function bootstrapBackup(f, legacy, approvedTarget = target) {
+  const backup = join(f.root, "bootstrap");
+  mkdirSync(backup);
+  writeFileSync(join(backup, "image-id"), `${legacy}\n`);
+  writeFileSync(join(backup, "schema-safe"), `${approvedTarget}\n${legacy}\n`);
+  writeFileSync(join(backup, "working.compose.yml"), "services: {}\n");
+  writeFileSync(join(backup, "fallback-image.yml"), "services: {}\n");
+  writeFileSync(join(backup, ".env.production"), "SYNTHETIC=true\n");
+  return backup;
+}
 
 test("rejects tags, flags, extra arguments, uppercase digests, and alternate images", (t) => {
   for (const args of [
@@ -367,6 +397,65 @@ test("bootstrap succeeds without previous state and cleans up temporary files", 
   assert.equal(r.status, 0, r.stderr);
   assert.equal(f.read("previous"), null);
   assert.ok(f.read("current").includes(target));
+});
+
+test("failed first replacement has no automatic rollback and the documented fallback restores only the retained image", (t) => {
+  const legacy = `sha256:${"e".repeat(64)}`;
+  const f = fixture(t, {
+    bootstrap: true,
+    old: legacy,
+    health: "exited|unhealthy|0",
+  });
+  failed(f.run());
+  assert.equal(f.read("current"), null);
+  assert.equal(f.read("previous"), null);
+  assert.equal(upCommands(f).length, 1);
+  const backup = bootstrapBackup(f, legacy);
+  const result = f.restore({ BOOTSTRAP_DIR: backup, TARGET_IMAGE: target });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(
+    upCommands(f).map((c) => c.image),
+    [target, legacy],
+  );
+  assert.ok(upCommands(f)[1].args.includes("--no-build"));
+  assert.ok(upCommands(f)[1].args.includes("--no-deps"));
+  assert.equal(upCommands(f)[1].args.at(-1), "app");
+  assert.ok(f.commands().some((c) => c.name === "curl" && c.active === legacy));
+  assert.equal(f.read("current"), null);
+  assert.ok(f.read("last-failure"));
+});
+
+test("documented bootstrap recovery rejects mismatched schema evidence and existing committed state before mutation", (t) => {
+  const legacy = `sha256:${"e".repeat(64)}`;
+  for (const committed of [false, true]) {
+    const f = fixture(t, { bootstrap: !committed, old: legacy });
+    const backup = bootstrapBackup(f, legacy, committed ? target : stale);
+    failed(f.restore({ BOOTSTRAP_DIR: backup, TARGET_IMAGE: target }));
+    notMutated(f);
+  }
+});
+
+test("documented bootstrap recovery enforces bounded Docker and byte-exact public health", (t) => {
+  const legacy = `sha256:${"e".repeat(64)}`;
+  for (const options of [
+    { rollbackHealth: "running|healthy|3" },
+    { rollbackHealth: "running|unhealthy|0" },
+    { rollbackBody: '{"status":"ok"}\n' },
+    { rollbackCode: 201 },
+    { advanceAfterPs: true },
+    { timeoutPs: true },
+  ]) {
+    const f = fixture(t, { bootstrap: true, old: legacy, ...options });
+    const backup = bootstrapBackup(f, legacy);
+    const result = f.restore({ BOOTSTRAP_DIR: backup, TARGET_IMAGE: target });
+    failed(result);
+    assert.doesNotMatch(result.stdout, /restored and healthy/);
+    assert.equal(f.read("current"), null);
+    assert.equal(upCommands(f).length, 1);
+    const boundedCalls = f.commands().filter((c) => c.name === "timeout");
+    assert.ok(boundedCalls.length >= 3);
+    assert.ok(boundedCalls.every((c) => c.args.includes("--kill-after=1")));
+  }
 });
 test("config failure does not recreate app or render environment values", (t) => {
   const f = fixture(t, { configFail: true });

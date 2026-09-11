@@ -230,3 +230,34 @@ test("the CLI rejects a tag whose commit is not in main history", (t) => {
   assert.notEqual(result.status, 0);
   assert.equal(result.stdout, "");
 });
+
+test("the CLI rejects malformed, duplicate, missing and secret-like options with generic stderr", (t) => {
+  const repository = createReleaseRepository();
+  t.after(() => rmSync(repository.cwd, { recursive: true, force: true }));
+  const valid = [
+    "--tag",
+    "v1.4.2",
+    "--target",
+    "main",
+    "--release-sha",
+    repository.releaseSha,
+    "--main-ref",
+    "main",
+    "--package-version",
+    "1.4.2",
+  ];
+  for (const args of [
+    valid.map((value) => (value === repository.releaseSha ? "abc123" : value)),
+    [...valid, "--tag", "v1.4.2"],
+    valid.slice(0, -2),
+    [
+      ...valid.slice(0, -1),
+      "postgres://fixture:do-not-log@example.test/production",
+    ],
+  ]) {
+    const result = runPolicy(repository.cwd, args);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "Release validation failed\n");
+  }
+});

@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -87,9 +88,17 @@ if (command === 'skopeo') {
     }
   } else process.exit(93);
 } else if (command === 'docker') {
+  if (args.includes('manifest') && scenario === 'anonymous-auth') {
+    const config = args[args.indexOf('--config') + 1];
+    if (process.env.DOCKER_AUTH_CONFIG !== undefined) process.exit(96);
+    if (!fs.existsSync(path.join(config, 'config.json'))) process.exit(97);
+    if (JSON.stringify(JSON.parse(fs.readFileSync(path.join(config, 'config.json')))) !== '{"auths":{"ghcr.io":{}}}') process.exit(98);
+    if ((fs.statSync(config).mode & 0o777) !== 0o700 || (fs.statSync(path.join(config, 'config.json')).mode & 0o777) !== 0o600) process.exit(99);
+  }
   if (args.includes('manifest') && scenario === 'private-image') process.exit(1);
   if (args[0] === 'run' && scenario === 'current-migration-failed' && args.includes(process.env.LOCAL_IMAGE)) process.exit(1);
   if (args[0] === 'run' && scenario === 'previous-migration-failed' && args.some(arg => arg.startsWith('ship-live-previous:'))) process.exit(1);
+  if (args[0] === 'run' && scenario === 'previous-probe-failed' && args.at(-1) === 'verify') process.exit(1);
 } else if (command === 'git') {
   if (args[0] === 'rev-parse') console.log(scenario === 'moved-previous-tag' ? 'd'.repeat(40) : process.env.PREVIOUS_REVISION);
 } else if (command === 'ssh') {
@@ -203,11 +212,12 @@ test("first-release compatibility allows only deployment-disabled bootstrap", ()
   }
 });
 
-test("compatibility runs new then previous migrations and propagates either failure", () => {
+test("compatibility seeds previous data, migrates current, then probes previous operations", () => {
   for (const scenario of [
     "missing",
     "current-migration-failed",
     "previous-migration-failed",
+    "previous-probe-failed",
   ]) {
     const result = runWorkflowStep("publish", "compatibility", scenario);
     assert.equal(result.status, scenario === "missing" ? 0 : 1, result.stderr);
@@ -216,11 +226,27 @@ test("compatibility runs new then previous migrations and propagates either fail
     );
     assert.equal(
       migrations.length,
-      scenario === "current-migration-failed" ? 1 : 2,
+      scenario === "previous-migration-failed"
+        ? 1
+        : scenario === "current-migration-failed"
+          ? 2
+          : 3,
     );
-    assert.ok(migrations[0].includes("ship-live-release:fixture"));
-    if (migrations.length === 2)
-      assert.ok(migrations[1].includes(`ship-live-previous:${"a".repeat(40)}`));
+    assert.ok(migrations[0].includes(`ship-live-previous:${"a".repeat(40)}`));
+    assert.equal(migrations[0].at(-1), "seed");
+    if (migrations.length >= 2)
+      assert.ok(migrations[1].includes("ship-live-release:fixture"));
+    if (migrations.length === 3) {
+      assert.ok(migrations[2].includes(`ship-live-previous:${"a".repeat(40)}`));
+      assert.equal(migrations[2].at(-1), "verify");
+      assert.ok(
+        migrations[2].some((arg) =>
+          arg.endsWith(
+            "/deploy/previous-store-probe.mjs,target=/app/previous-store-probe.mjs,readonly",
+          ),
+        ),
+      );
+    }
   }
 });
 
@@ -317,9 +343,10 @@ test("production concurrency retains pending releases instead of replacing them"
   assert.match(concurrency, /^  queue: max$/m);
 });
 
-test("validation binds the event commit to the checked-out tag and main ancestry", () => {
+test("validation binds the event tag using trusted workflow code and main ancestry", () => {
   const validate = job(release(), "validate");
-  assert.match(validate, /ref: \$\{\{ github\.event\.release\.tag_name \}\}/);
+  assert.match(validate, /ref: \$\{\{ github\.workflow_sha \}\}/);
+  assert.doesNotMatch(validate, /^\s*(?:- run: )?npm\s|node-version-file:/m);
   assert.match(validate, /fetch-depth: 0/);
   assert.match(
     validate,
@@ -340,6 +367,89 @@ test("validation binds the event commit to the checked-out tag and main ancestry
     validate,
     /previous_tag: \$\{\{ steps\.release\.outputs\.previous_tag \}\}/,
   );
+});
+
+test("a replaced validator on an unmerged tag cannot pass the publication prerequisite", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "release-provenance-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const git = (...args) => {
+    const result = spawnSync("git", args, { cwd: directory, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git("init", "--initial-branch=main");
+  git("config", "user.email", "fixture@example.test");
+  git("config", "user.name", "Fixture");
+  mkdirSync(join(directory, "deploy"));
+  writeFileSync(
+    join(directory, "deploy/release-policy.mjs"),
+    read("deploy/release-policy.mjs"),
+  );
+  writeFileSync(join(directory, "package.json"), '{"version":"1.4.2"}');
+  git("add", ".");
+  git("commit", "-m", "trusted release");
+  const tagged = git("rev-parse", "HEAD");
+  git("tag", "v1.4.2");
+  writeFileSync(join(directory, "package.json"), '{"version":"1.4.3"}');
+  git("commit", "-am", "main advances");
+  const trusted = git("rev-parse", "HEAD");
+  git("switch", "-c", "unmerged");
+  writeFileSync(
+    join(directory, "deploy/release-policy.mjs"),
+    "import { writeFileSync } from 'node:fs'; writeFileSync('attacker-ran', 'yes'); console.log(JSON.stringify({tag:'v1.4.3',revision:process.env.RELEASE_SHA}));",
+  );
+  git("commit", "-am", "replace validator");
+  const unmerged = git("rev-parse", "HEAD");
+  git("tag", "v1.4.3");
+  git("remote", "add", "origin", directory);
+  const validate = job(release(), "validate");
+  const script = step(validate, "release")
+    .split("        run: |\n")[1]
+    .replace(/^          /gm, "");
+  for (const [tag, revision, workflowSha, success] of [
+    ["v1.4.3", unmerged, trusted, false],
+    ["v1.4.3", unmerged, unmerged, false],
+    ["v1.4.2", tagged, trusted, true],
+  ]) {
+    git(
+      "checkout",
+      "--detach",
+      validate.includes("ref: ${{ github.workflow_sha }}") ? workflowSha : tag,
+    );
+    const output = join(directory, "outputs");
+    writeFileSync(output, "");
+    const result = spawnSync("bash", ["-euo", "pipefail", "-c", script], {
+      cwd: directory,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        WORKFLOW_SHA: workflowSha,
+        RELEASE_TAG: tag,
+        RELEASE_SHA: revision,
+        RELEASE_TARGET: "main",
+        RUNNER_TEMP: directory,
+        GITHUB_OUTPUT: output,
+      },
+    });
+    assert.equal(result.status === 0, success, `${tag}: ${result.stderr}`);
+    assert.equal(existsSync(join(directory, "attacker-ran")), false);
+    const values = readFileSync(output, "utf8");
+    if (success) assert.match(values, new RegExp(`revision=${tagged}`));
+    else
+      assert.equal(
+        values,
+        "",
+        "A failed prerequisite must not grant publication outputs",
+      );
+  }
+});
+
+test("anonymous image check cannot inherit registry credentials or credential helpers", () => {
+  const result = runWorkflowStep("deploy", "deploy", "anonymous-auth", {
+    DOCKER_AUTH_CONFIG: '{"auths":{"ghcr.io":{"auth":"synthetic"}}}',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.calls.some((call) => call[0] === "ssh"));
 });
 
 test("all checks use the validated SHA and block publishing and deployment", () => {
@@ -460,11 +570,13 @@ test("the exact previous tag opens the new schema, with fail-closed bootstrap", 
   );
   assert.match(
     compatibility,
-    /docker run --rm --network host -e DATABASE_URL "\$previous_image" npm run db:migrate/,
+    /"\$previous_image" --import tsx \/app\/previous-store-probe.mjs verify/,
   );
   assert.ok(
     compatibility.indexOf('"$LOCAL_IMAGE" npm run db:migrate') <
-      compatibility.indexOf('"$previous_image" npm run db:migrate'),
+      compatibility.indexOf(
+        '"$previous_image" --import tsx /app/previous-store-probe.mjs verify',
+      ),
   );
 });
 

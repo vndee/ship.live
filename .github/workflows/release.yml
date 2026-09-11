@@ -30,26 +30,39 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version-file: .nvmrc
+          node-version: "24"
       - name: Bind release tag to event commit and main history
         id: release
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_TARGET: ${{ github.event.release.target_commitish }}
           RELEASE_SHA: ${{ github.sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
           git fetch --force origin '+refs/heads/main:refs/remotes/origin/main' --tags
-          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          # No tag-controlled code or npm lifecycle runs before these checks.
+          # The validator itself must come from a workflow revision in main.
+          [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          test "$(git rev-parse HEAD)" = "$WORKFLOW_SHA"
+          git merge-base --is-ancestor "$WORKFLOW_SHA" origin/main
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 1
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          tagged_release="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          test "$tagged_release" = "$RELEASE_SHA"
+          git merge-base --is-ancestor "$tagged_release" origin/main
+          # Read package metadata as JSON bytes; never import release files.
+          git show "$tagged_release:package.json" > "$RUNNER_TEMP/release-package.json"
+          package_version="$(node -e 'const fs = require("node:fs"); const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (typeof p.version !== "string") process.exit(1); process.stdout.write(p.version)' "$RUNNER_TEMP/release-package.json")"
           node deploy/release-policy.mjs \
             --tag "$RELEASE_TAG" --target "$RELEASE_TARGET" \
             --release-sha "$RELEASE_SHA" --main-ref origin/main \
-            --package-version "$(node -p 'require("./package.json").version')" \
+            --package-version "$package_version" \
             > "$RUNNER_TEMP/release.json"
           node --input-type=module <<'NODE'
           import { appendFileSync, readFileSync } from 'node:fs';
@@ -199,7 +212,7 @@ jobs:
       - name: Smoke-test the loaded current image
         id: smoke
         run: SHIP_LIVE_TEST_IMAGE="$LOCAL_IMAGE" npm run test:docker
-      - name: Prove the previous release can open the migrated database
+      - name: Prove previous-release reads and writes survive the migrated database
         id: compatibility
         env:
           DATABASE_URL: postgres://ship_live_test:ship_live_test@127.0.0.1:5432/ship_live_compatibility
@@ -219,8 +232,13 @@ jobs:
           git worktree add --detach "$previous_source" "refs/tags/$PREVIOUS_TAG"
           docker buildx build --load --platform linux/amd64 --target runtime \
             --tag "$previous_image" "$previous_source"
+          docker run --rm --network host -e DATABASE_URL --entrypoint node \
+            --mount "type=bind,source=$PWD/deploy/previous-store-probe.mjs,target=/app/previous-store-probe.mjs,readonly" \
+            "$previous_image" --import tsx /app/previous-store-probe.mjs seed
           docker run --rm --network host -e DATABASE_URL "$LOCAL_IMAGE" npm run db:migrate
-          docker run --rm --network host -e DATABASE_URL "$previous_image" npm run db:migrate
+          docker run --rm --network host -e DATABASE_URL --entrypoint node \
+            --mount "type=bind,source=$PWD/deploy/previous-store-probe.mjs,target=/app/previous-store-probe.mjs,readonly" \
+            "$previous_image" --import tsx /app/previous-store-probe.mjs verify
       - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
           registry: ghcr.io
@@ -288,10 +306,11 @@ jobs:
           [[ "$APP_IMAGE" =~ ^ghcr\.io/vndee/ship\.live@sha256:[0-9a-f]{64}$ ]] || exit 1
           [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || exit 1
           [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || exit 1
-          anonymous_config="$(mktemp -d "$RUNNER_TEMP/anonymous-registry.XXXXXX")"
-          docker --config "$anonymous_config" manifest inspect "$APP_IMAGE" > /dev/null
           umask 077
-          trap 'rm -f "$RUNNER_TEMP/deploy_key" "$RUNNER_TEMP/known_hosts"' EXIT
+          anonymous_config="$(mktemp -d "$RUNNER_TEMP/anonymous-registry.XXXXXX")"
+          trap 'rm -f "$RUNNER_TEMP/deploy_key" "$RUNNER_TEMP/known_hosts" "$anonymous_config/config.json"; rmdir "$anonymous_config"' EXIT
+          printf '%s\n' '{"auths":{"ghcr.io":{}}}' > "$anonymous_config/config.json"
+          env -u DOCKER_AUTH_CONFIG docker --config "$anonymous_config" manifest inspect "$APP_IMAGE" > /dev/null
           printf '%s\n' "$DEPLOY_SSH_KEY" > "$RUNNER_TEMP/deploy_key"
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
           chmod 0600 "$RUNNER_TEMP/deploy_key" "$RUNNER_TEMP/known_hosts"

@@ -3,6 +3,10 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { metadata } from "./image-metadata.mjs";
+import {
+  SCHEMA_VERSION,
+  MAX_SUPPORTED_SCHEMA_VERSION,
+} from "../server/migrations.ts";
 
 test("metadata accepts a stable release and full revision", () => {
   assert.deepEqual(metadata("v1.4.2", "a".repeat(40), 18, 19), {
@@ -36,6 +40,6 @@ test("the metadata command prints GitHub-output-safe scalar lines", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(
     result.stdout,
-    `VERSION=v1.4.2\nREVISION=${"a".repeat(40)}\nSCHEMA_VERSION=18\nMAX_SCHEMA_VERSION=19\n`,
+    `VERSION=v1.4.2\nREVISION=${"a".repeat(40)}\nSCHEMA_VERSION=${SCHEMA_VERSION}\nMAX_SCHEMA_VERSION=${MAX_SUPPORTED_SCHEMA_VERSION}\n`,
   );
 });

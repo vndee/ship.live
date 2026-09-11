@@ -197,8 +197,9 @@ Install the reviewed files at these fixed root-owned locations and modes:
 | `/var/lib/ship-live-deploy`                | `root:root`, `0700` | Lock and durable `current`, `previous`, and `last-failure` state. |
 | `/etc/sudoers.d/ship-live-deploy`          | `root:root`, `0440` | Narrow sudo permission for the deploy account.                    |
 
-Preserve a timestamped, root-readable backup of any existing untracked
-`compose.external.yml` before installing the reviewed file. Install the Caddy
+Complete the one-time fallback capture and compatibility rehearsal below
+**before** overwriting the existing `compose.external.yml` or replacing the app.
+Install the Caddy
 configuration and Supabase CA file at the paths referenced by that Compose
 file, set `APP_DOMAIN` and the rest of `.env.production`, and render it with a
 published digest before touching the running app:
@@ -253,7 +254,7 @@ sudo /usr/local/sbin/ship-live-deploy \
 The transaction pulls the image, checks the required source, version,
 revision, and schema-range labels, validates Compose, recreates only `app`,
 and waits up to 120 seconds. Success requires a running, Docker-healthy app
-with restart count `0`, plus HTTPS `https://ship.duy.dev/api/health` returning
+with restart count `0`, `1`, or `2`, plus HTTPS `https://ship.duy.dev/api/health` returning
 HTTP `200` with the exact body `{"status":"ok"}`. It commits state only after
 those checks pass.
 
@@ -261,12 +262,23 @@ Inspect the result and bounded operational logs with the exact state files and
 Compose project:
 
 ```sh
-sudo docker inspect --format '{{.Image}} {{.State.Health.Status}} {{.RestartCount}}' ship-live_app_1
+sudo bash
+set -euo pipefail
+cd /opt/apps/ship-live
+export COMPOSE_PROJECT_NAME=ship-live
+APP_IMAGE="$(sed -n 's/^IMAGE=//p' /var/lib/ship-live-deploy/current)"
+[[ "$APP_IMAGE" =~ ^ghcr\.io/vndee/ship\.live@sha256:[0-9a-f]{64}$ ]]
+export APP_IMAGE
+container="$(docker-compose --env-file .env.production -f compose.external.yml ps -q app)"
+[[ "$container" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]
+test "$(docker inspect --format '{{.Config.Image}}' "$container")" = "$APP_IMAGE"
+image_id="$(docker inspect --format '{{.Image}}' "$container")"
+docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image_id" | grep -Fx -- "$APP_IMAGE"
+docker inspect --format '{{.Config.Image}} {{.State.Health.Status}} {{.RestartCount}}' "$container"
 curl --fail --silent --show-error https://ship.duy.dev/api/health
-sudo cat /var/lib/ship-live-deploy/current
-sudo cat /var/lib/ship-live-deploy/previous
-sudo cat /var/lib/ship-live-deploy/last-failure
-sudo sh -c 'cd /opt/apps/ship-live && APP_IMAGE=ghcr.io/vndee/ship.live@sha256:<verified-digest> docker-compose --env-file .env.production -f compose.external.yml logs --no-color --tail=100 app'
+cat /var/lib/ship-live-deploy/current
+docker-compose --env-file .env.production -f compose.external.yml logs --no-color --tail=100 app
+exit
 ```
 
 `previous` or `last-failure` may not exist on the first run. The state records
@@ -275,6 +287,219 @@ compare them to the image labels and workflow digest. Only after this manual
 check should an operator set `PRODUCTION_DEPLOY_ENABLED=true` and publish the
 next stable GitHub Release. The workflow sends only the verified digest through
 the forced SSH boundary.
+
+### One-time fallback before the first digest replacement
+
+With empty `current` state, the deployment transaction cannot automatically
+roll back. It stops a failed first app and records `last-failure`. Keep
+`PRODUCTION_DEPLOY_ENABLED` disabled throughout bootstrap. The existing app
+image and its working Compose configuration are the operator's fallback.
+
+Run the following in a root Bash session on the host **before installing the
+new Compose file**. Set `TARGET_IMAGE` to the verified first GHCR digest and
+`PROBE_FILE` to the absolute path of the reviewed `deploy/previous-store-probe.mjs`.
+Do not use a production database URL for the rehearsal. This deliberately
+requires byte-identical migration sets for the first transition; a schema
+change needs a separately reviewed database recovery plan before bootstrap.
+
+```sh
+set -euo pipefail
+umask 077
+cd /opt/apps/ship-live
+export COMPOSE_PROJECT_NAME=ship-live
+TARGET_IMAGE=ghcr.io/vndee/ship.live@sha256:<verified-digest>
+PROBE_FILE=/absolute/path/to/reviewed/deploy/previous-store-probe.mjs
+[[ "$TARGET_IMAGE" =~ ^ghcr\.io/vndee/ship\.live@sha256:[0-9a-f]{64}$ ]]
+install -d -o root -g root -m 0700 /var/lib/ship-live-deploy
+test ! -e /var/lib/ship-live-deploy/current
+test ! -e /var/lib/ship-live-deploy/previous
+exec 9>/var/lib/ship-live-deploy/lock
+flock -n 9
+BOOTSTRAP_DIR="$(mktemp -d /var/lib/ship-live-deploy/bootstrap.XXXXXXXX)"
+container="$(docker-compose --env-file .env.production -f compose.external.yml ps -q app)"
+[[ "$container" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]
+test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container")" = ship-live
+test "$(docker inspect --format '{{.State.Status}}|{{.State.Health.Status}}' "$container")" = 'running|healthy'
+docker inspect "$container" > "$BOOTSTRAP_DIR/container.json"
+docker exec "$container" node --input-type=module -e '
+  import pg from "pg";
+  const pool = new pg.Pool({connectionString: process.env.DATABASE_URL});
+  try {
+    const result = await pool.query("SELECT version FROM ship_live_schema_migrations ORDER BY version");
+    console.log(JSON.stringify(result.rows.map(row => row.version)));
+  } finally { await pool.end(); }
+' > "$BOOTSTRAP_DIR/applied-schema.json"
+legacy_image="$(docker inspect --format '{{.Image}}' "$container")"
+[[ "$legacy_image" =~ ^sha256:[0-9a-f]{64}$ ]]
+printf '%s\n' "$legacy_image" > "$BOOTSTRAP_DIR/image-id"
+cp -p compose.external.yml "$BOOTSTRAP_DIR/original.compose.yml"
+cp -p .env.production "$BOOTSTRAP_DIR/.env.production"
+docker-compose --env-file .env.production -f compose.external.yml config > "$BOOTSTRAP_DIR/working.compose.yml"
+printf 'version: "2.4"\nservices:\n  app:\n    image: %s\n' "$legacy_image" > "$BOOTSTRAP_DIR/fallback-image.yml"
+retained_tag="ship-live-bootstrap:$(basename "$BOOTSTRAP_DIR")"
+docker image tag "$legacy_image" "$retained_tag"
+docker image save --output "$BOOTSTRAP_DIR/legacy-image.tar" "$retained_tag"
+chmod 0600 "$BOOTSTRAP_DIR"/* "$BOOTSTRAP_DIR/.env.production"
+```
+
+The archive retains the exact image even if Compose removes the old container.
+`container.json` retains that container's identity and configuration. The
+rendered Compose file contains secrets and absolute bind-mount paths: keep it
+root-readable only, retain the referenced Caddy/CA files, and never upload it.
+Keep the retained image tag and archive until a later healthy digest release
+and rollback rehearsal establish the normal `current`/`previous` pair.
+
+In the same session, run this isolated rehearsal. The temporary database has
+synthetic credentials, no host port, and an internal Docker network. No
+production environment or certificate is mounted into it.
+
+```sh
+migration_manifest='const fs=require("node:fs"),crypto=require("node:crypto"); for(const f of fs.readdirSync("server/migrations").filter(f=>/^[0-9]+_.*\.sql$/.test(f)).sort()) console.log(f+" "+crypto.createHash("sha256").update(fs.readFileSync("server/migrations/"+f)).digest("hex"))'
+docker run --rm --network none --entrypoint node "$legacy_image" -e "$migration_manifest" > "$BOOTSTRAP_DIR/legacy-migrations"
+docker run --rm --network none --entrypoint node "$TARGET_IMAGE" -e "$migration_manifest" > "$BOOTSTRAP_DIR/target-migrations"
+test -s "$BOOTSTRAP_DIR/legacy-migrations"
+cmp "$BOOTSTRAP_DIR/legacy-migrations" "$BOOTSTRAP_DIR/target-migrations"
+python3 -I - "$BOOTSTRAP_DIR" <<'PY'
+import json, pathlib, sys
+backup = pathlib.Path(sys.argv[1])
+expected = [int(line.split('_', 1)[0]) for line in (backup / 'legacy-migrations').read_text().splitlines()]
+assert json.loads((backup / 'applied-schema.json').read_text()) == expected, 'Live schema must match the retained migration set'
+PY
+bootstrap_network="ship-live-$(basename "$BOOTSTRAP_DIR")"
+bootstrap_database="$bootstrap_network-db"
+docker network create --internal "$bootstrap_network" > /dev/null
+trap 'docker rm -fv "$bootstrap_database" >/dev/null 2>&1 || true; docker network rm "$bootstrap_network" >/dev/null 2>&1 || true' EXIT
+docker run -d --name "$bootstrap_database" --network "$bootstrap_network" \
+  -e POSTGRES_USER=ship_live_test -e POSTGRES_PASSWORD=ship_live_test \
+  -e POSTGRES_DB=ship_live_compatibility postgres:18-alpine > /dev/null
+for attempt in {1..30}; do
+  if docker exec "$bootstrap_database" pg_isready -U ship_live_test -d ship_live_compatibility > /dev/null; then break; fi
+  sleep 2
+done
+docker exec "$bootstrap_database" pg_isready -U ship_live_test -d ship_live_compatibility > /dev/null
+probe_database="postgres://ship_live_test:ship_live_test@$bootstrap_database:5432/ship_live_compatibility"
+docker run --rm --network "$bootstrap_network" -e "DATABASE_URL=$probe_database" \
+  --mount "type=bind,source=$PROBE_FILE,target=/app/previous-store-probe.mjs,readonly" \
+  --entrypoint node "$legacy_image" --import tsx /app/previous-store-probe.mjs seed
+docker run --rm --network "$bootstrap_network" -e "DATABASE_URL=$probe_database" "$TARGET_IMAGE" npm run db:migrate
+docker run --rm --network "$bootstrap_network" -e "DATABASE_URL=$probe_database" \
+  --mount "type=bind,source=$PROBE_FILE,target=/app/previous-store-probe.mjs,readonly" \
+  --entrypoint node "$legacy_image" --import tsx /app/previous-store-probe.mjs verify
+printf '%s\n%s\n' "$TARGET_IMAGE" "$legacy_image" > "$BOOTSTRAP_DIR/schema-safe"
+printf 'Retain bootstrap directory: %s\n' "$BOOTSTRAP_DIR"
+exit
+```
+
+Only after this passes, install the new Compose file and host boundary, render
+its config privately, and compare it with the saved working model: the app
+image source must be the only material change. Then perform the first manual
+digest deployment. If that attempt fails with empty state, run the block below
+as root with `BOOTSTRAP_DIR` set to the retained directory and `TARGET_IMAGE`
+set to the attempted digest. These are one-time operator recovery commands;
+they are never accepted through the forced SSH key. If the image is missing,
+first load the retained archive with `docker image load --input
+"$BOOTSTRAP_DIR/legacy-image.tar"`.
+
+<!-- bootstrap-restore:start -->
+
+```sh
+set -euo pipefail
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 077
+APP_DIR=/opt/apps/ship-live
+STATE_DIR=/var/lib/ship-live-deploy
+test "$(id -u)" -eq 0
+exec 9>"$STATE_DIR/lock"
+flock -n 9
+test ! -e "$STATE_DIR/current"
+test ! -e "$STATE_DIR/previous"
+legacy_image="$(cat "$BOOTSTRAP_DIR/image-id")"
+[[ "$legacy_image" =~ ^sha256:[0-9a-f]{64}$ ]]
+[[ "$TARGET_IMAGE" =~ ^ghcr\.io/vndee/ship\.live@sha256:[0-9a-f]{64}$ ]]
+cmp "$BOOTSTRAP_DIR/schema-safe" <(printf '%s\n%s\n' "$TARGET_IMAGE" "$legacy_image")
+test "$(timeout --signal=TERM --kill-after=1 19 docker image inspect --format '{{.Id}}' "$legacy_image")" = "$legacy_image"
+cd "$APP_DIR"
+export COMPOSE_PROJECT_NAME=ship-live APP_IMAGE="$legacy_image"
+compose_args=(--project-directory "$APP_DIR" --env-file "$BOOTSTRAP_DIR/.env.production" -f "$BOOTSTRAP_DIR/working.compose.yml" -f "$BOOTSTRAP_DIR/fallback-image.yml")
+timeout --signal=TERM --kill-after=1 19 docker-compose "${compose_args[@]}" config --quiet > /dev/null 2>&1
+timeout --signal=TERM --kill-after=1 59 docker-compose "${compose_args[@]}" up -d --no-build --no-deps app > /dev/null 2>&1
+deadline=$((SECONDS + 120))
+bounded() {
+  local remaining=$((deadline - SECONDS))
+  test "$remaining" -ge 2 || return 1
+  if (( remaining > 10 )); then remaining=10; fi
+  timeout --signal=TERM --kill-after=1 "$((remaining - 1))" "$@"
+}
+container="$(bounded docker-compose "${compose_args[@]}" ps -q app)"
+[[ "$container" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]
+test "$(bounded docker inspect --format '{{.Image}}' "$container")" = "$legacy_image"
+ready=false
+while (( SECONDS < deadline )); do
+  health="$(bounded docker inspect --format '{{.State.Status}}|{{.State.Health.Status}}|{{.RestartCount}}' "$container")"
+  case "$health" in
+    running\|healthy\|[012]) ready=true; break ;;
+    running\|starting\|[012]|restarting\|starting\|[012]) sleep 2 ;;
+    *) exit 1 ;;
+  esac
+done
+test "$ready" = true
+curl --fail --silent --show-error --connect-timeout 5 --max-time 10 \
+  --output "$BOOTSTRAP_DIR/health-body" --write-out '%{http_code}' \
+  https://ship.duy.dev/api/health > "$BOOTSTRAP_DIR/health-code"
+cmp "$BOOTSTRAP_DIR/health-body" <(printf '%s' '{"status":"ok"}')
+cmp "$BOOTSTRAP_DIR/health-code" <(printf '%s' '200')
+printf '%s\n' 'Retained bootstrap image restored and healthy; deployment state remains empty.'
+```
+
+<!-- bootstrap-restore:end -->
+
+The restoration has 20-second image-inspection and config bounds, a 60-second recreation bound,
+120-second Docker-health deadline, and 10-second public-health bound. Any
+failed check exits nonzero; preserve the archive and `last-failure`, keep
+automation disabled, and investigate before another attempt. It neither
+creates a synthetic `current` record nor claims automatic rollback.
+Keep migrations and database administration frozen between this rehearsal and
+the first replacement/restoration. If another actor changes the database,
+invalidate the `schema-safe` evidence and reassess compatibility before restoring.
+
+### Retry, interrupted transactions, and credential rotation
+
+An SSH timeout can occur after health and durable state commit. Repeating the
+same version is intentionally rejected as not newer. First resolve the app
+through Compose and compare `current.IMAGE` with both `.Config.Image` and the
+running image's `RepoDigests`, then verify Docker/public health and release
+labels using the commands above. A matching, healthy committed release needs
+no rerun. Do not bump a version solely to hide an uncertain outcome.
+
+For SIGKILL or power loss, pause automation and hold the deployment lock during
+operator recovery. Save `current`, `previous`, `last-failure`, container inspect
+output, and bounded logs privately. The container can have changed before
+`current` was committed; `previous` may already equal `current` because the
+records are written separately. Compare exact image references, not container
+names or configuration IDs alone. If the running image differs, do not edit
+state to match it or blindly rerun the release. Establish the actual database
+migration level with the database operator. Restore the recorded `current`
+digest only when its maximum supported schema covers the database, using the
+same root-only Compose recreation and bounded Docker/public health checks;
+retain the existing records. Otherwise recover with a reviewed higher-version
+compatible release or an explicit database recovery. With empty state use the
+one-time fallback only if its exact `schema-safe` evidence still covers the
+attempted image and no later schema changes occurred.
+
+For deploy-key rotation, disable automatic deployment and let any active
+transaction finish. Generate a new dedicated Ed25519 key, add its public entry
+with the identical forced-command and forwarding restrictions, update the
+`production` environment's `DEPLOY_SSH_KEY`, and check authentication using
+an invalid digest command (it must reach the wrapper and be rejected without
+deploying). Remove the old authorized-key entry and securely retire the old
+private key, then re-enable the gate. Never grant a shell to test rotation.
+For host-key rotation, obtain the replacement fingerprint through the GCP
+console or another independently authenticated channel, install/update
+`DEPLOY_KNOWN_HOSTS` for the exact host and port, and verify strict checking with
+the same non-deploying rejection test. Remove the superseded host key only
+after the replacement is verified; never disable strict checking or trust
+runtime `ssh-keyscan` output as the authority.
 
 ### Failure and recovery
 

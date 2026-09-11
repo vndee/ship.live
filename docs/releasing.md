@@ -51,15 +51,27 @@ Follow this exact operator sequence:
 1. Update `package.json` and `package-lock.json` to `X.Y.Z`.
 2. Move `CHANGELOG.md` entries into the dated release.
 3. Merge and wait for CI on `main`.
+   Review every SQL change for expand/contract compatibility: the immediately
+   previous release must still read and write the migrated schema. Add fields
+   compatibly first; remove/rename columns, tables, or incompatible constraints
+   only in a later cleanup release after the affected image leaves the rollback
+   window. Keep the previous-image operational probe representative of any
+   changed store operations; a schema-range label alone is not proof.
 4. Create annotated tag `vX.Y.Z` on that exact `main` commit.
 5. Publish a non-prerelease GitHub Release.
-6. Follow the release workflow through validate, gates, publish, compatibility, and production health.
+6. Follow the release workflow through validate, gates, image smoke and compatibility, publish, and production health.
 
 The release workflow accepts only a published, non-draft, non-prerelease
 stable tag whose version matches `package.json`, resolves to the release event
-commit, and is already in `main` history. It then runs format, deployment
+commit, and is already in `main` history. Validation uses the exact workflow
+revision, requires that revision to belong to `main`, and establishes tag
+ancestry before executing repository code. It reads the tagged `package.json`
+as JSON without running release-controlled install scripts. It then runs format, deployment
 policy, PostgreSQL, build, browser, image smoke, and previous-release schema
-compatibility gates. The image is built once, labelled with the version,
+compatibility gates. The previous image seeds representative events, the new
+image applies migrations to an isolated synthetic database, and the previous
+store performs real inserts, updates, reads, listing, protection, and delivery
+deduplication before publication. The image is built once, labelled with the version,
 revision, and schema range, copied with Skopeo under both `vX.Y.Z` and
 `sha-<40-character-commit>` immutable tags, and rechecked by digest before it
 can be handed to deployment.
