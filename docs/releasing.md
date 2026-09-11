@@ -59,14 +59,27 @@ Follow this exact operator sequence:
    changed store operations; a schema-range label alone is not proof.
 4. Create annotated tag `vX.Y.Z` on that exact `main` commit.
 5. Publish a non-prerelease GitHub Release.
-6. Follow the release workflow through validate, gates, image smoke and compatibility, publish, and production health.
+6. Follow both linked Actions runs: `Release` records the tag, then `Release publish` performs validation, gates, image smoke and compatibility, publication, and production health. Find the follow-up run in Actions; its triggering workflow run links back to `Release`.
 
-The release workflow accepts only a published, non-draft, non-prerelease
-stable tag whose version matches `package.json`, resolves to the release event
-commit, and is already in `main` history. Validation uses the exact workflow
-revision, requires that revision to belong to `main`, and establishes tag
-ancestry before executing repository code. It reads the tagged `package.json`
-as JSON without running release-controlled install scripts. It then runs format, deployment
+The reviewed `Release` workflow (`.github/workflows/release.yml`) runs from the
+release tag with only `contents: read`. It uploads one bounded tag record and
+does not check out source, publish images, or access production secrets. Its
+successful completion signals `Release publish`
+(`.github/workflows/release-publish.yml`) through `workflow_run`. GitHub loads
+that consumer from the default branch; both workflows must be present on
+protected `main` before relying on this release path.
+
+The consumer treats the signal and artifact as hostile. It requires a successful
+source run whose event is `release`, downloads the artifact from that exact run,
+and accepts only one stable SemVer record of at most 128 bytes, including its
+newline. It binds the canonical tag commit to the triggering run's `head_sha`,
+requires that commit and the trusted workflow revision to belong to `main`,
+and queries the current Release API record to require the same tag, a published
+date, `draft: false`, and `prerelease: false`. Only then does it execute policy
+code from its trusted workflow revision. It reads the tagged `package.json`
+as JSON with `git show`, verifies the version match, and subsequently checks
+out the validated release SHA. An unmerged tag or forged signal cannot obtain
+this consumer's publication outputs or run its replaced validator. It then runs format, deployment
 policy, PostgreSQL, build, browser, image smoke, and previous-release schema
 compatibility gates. The previous image seeds representative events, the new
 image applies migrations to an isolated synthetic database, and the previous
@@ -76,10 +89,23 @@ revision, and schema range, copied with Skopeo under both `vX.Y.Z` and
 `sha-<40-character-commit>` immutable tags, and rechecked by digest before it
 can be handed to deployment.
 
+Repository writers remain trusted. GitHub lets a writer replace a workflow and
+request broader `GITHUB_TOKEN` permissions; the reviewed signal's read-only
+declaration is not an enforced ceiling for another writer-authored workflow.
+This split protects the reviewed consumer's validation boundary, and does not
+sandbox a malicious writer or prevent them publishing through a different
+workflow. Before enabling automation, restrict repository write and release
+authority to trusted maintainers, protect `main` with required reviews and CI,
+restrict the `production` environment to protected branches, and audit changes
+to workflows and release policy. Keep production secrets exclusively in that
+environment. Preventing a malicious writer from publishing packages would
+require an external registry authority or an additional human authorization
+boundary beyond this automatic repository workflow.
+
 Pushing a tag alone, saving a draft, publishing a prerelease, or pushing
 `main` does not deploy. A published stable Release publishes an image, but the
 managed deployment job runs only when the repository variable
-`PRODUCTION_DEPLOY_ENABLED` is exactly `true`; release jobs are serialized by
+`PRODUCTION_DEPLOY_ENABLED` is exactly `true`; trusted consumer runs are serialized by
 the `production` concurrency group. The first stable release must be
 bootstrapped with that flag disabled because there is no previous release to
 prove schema rollback compatibility.

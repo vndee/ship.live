@@ -575,6 +575,63 @@ git add docs/releasing.md docs/self-host-docker.md
 git commit -m "docs: explain automated release deployment"
 ```
 
+### Task 9: Move Privileged Release Work to a Trusted Default-Branch Workflow
+
+**Files:**
+
+- Modify: `.github/workflows/release.yml`
+- Create: `.github/workflows/release-publish.yml`
+- Modify: `deploy/workflow-policy.test.mjs`
+- Modify: `docs/releasing.md`
+- Modify: `docs/self-host-docker.md`
+
+**Interfaces:**
+
+- The release-tag workflow is an untrusted signal producer. It has only `contents: read`, contains no package-write or production-environment job, uploads only the release tag as an artifact, and is triggered only by a published GitHub Release.
+- The privileged workflow is triggered by `workflow_run` completion of the named signal workflow. GitHub loads this workflow from the default branch. It rejects non-successful and non-release source runs, treats the artifact as untrusted input, checks the triggering run SHA against the canonical tag commit and `origin/main`, queries the GitHub Release API to require a published non-draft non-prerelease release, and only then executes trusted repository policy code.
+- Build, previous-store compatibility, immutable GHCR publication, digest verification, and production deployment live only in the trusted workflow. Release-controlled source is checked out only after ancestry and release identity are established.
+- GitHub treats repository writers as trusted principals who may change a workflow's requested `GITHUB_TOKEN` permissions. This design protects the privileged consumer from accidental/unmerged releases and from executing release-controlled code before validation; it does not claim to sandbox a malicious repository writer. Production governance must restrict write/release authority, protect `main`, restrict the `production` environment to protected branches, and audit workflow changes.
+
+- [ ] **Step 1: Write failing behavioral trust-boundary tests**
+
+Add tests that replace the complete release-tag workflow and policy code on an unmerged tagged commit. The harness must load the privileged workflow from the trusted main revision, feed it attacker-controlled artifact input, and prove the unmerged tag cannot obtain the trusted consumer's publication outputs or execute its replaced validator. Do not claim that GitHub Actions can sandbox a malicious repository writer; explicitly document that GitHub permits writers to request broader `GITHUB_TOKEN` permissions in their own workflows. Also assert the reviewed signal workflow has no `packages: write`, production environment, registry login/push, deploy secrets, or SSH, while the trusted workflow alone owns those capabilities. Name the production break each test catches and use literal expectations independent of the YAML parsing helpers.
+
+- [ ] **Step 2: Run focused tests and verify RED**
+
+Run: `BASH_ENV= node --test --test-name-pattern='trusted publisher|untrusted release signal|replaced release workflow' deploy/workflow-policy.test.mjs`
+
+Expected: FAIL because the privileged work still resides in the release-ref workflow and no trusted default-branch publisher exists.
+
+- [ ] **Step 3: Split signal and trusted publisher workflows**
+
+Keep `.github/workflows/release.yml` minimal and read-only. Upload a bounded stable-tag text artifact with a pinned action. Create `.github/workflows/release-publish.yml` using `workflow_run` for the signal workflow. Keep top-level permissions read-only; grant `packages: write` only to the trusted publish job and production environment/secrets only to the trusted deploy job. Download the artifact from the exact triggering run with pinned actions and explicit token/run ID. Validate artifact shape before using it in Git or API arguments.
+
+Before executing repository JavaScript or checking out release-controlled source, the trusted validator must:
+
+```text
+require triggering workflow conclusion == success
+require triggering workflow event == release
+require one stable SemVer tag artifact with bounded bytes and no extra records
+resolve refs/tags/<tag>^{commit}
+require resolved tag SHA == github.event.workflow_run.head_sha
+require tag SHA is an ancestor of fetched origin/main
+query the release-by-tag API and require tag match, published state, draft=false, prerelease=false
+```
+
+Then run the existing strict release policy using code checked out at the trusted workflow revision and read release `package.json` with `git show`. Preserve the existing build-once, compatibility-before-publication, immutable tag conflict, anonymous pull, digest-only deployment, concurrency, and disabled-bootstrap contracts.
+
+- [ ] **Step 4: Update operator documentation**
+
+Document the two-stage workflow and the trust boundary: the release-tag run is an unprivileged signal; the follow-up workflow from protected `main` performs all privileged work. State that operators follow both linked runs and that an unmerged or forged signal is rejected before publication.
+
+- [ ] **Step 5: Run focused and regression gates GREEN**
+
+Run the focused workflow trust tests, the complete deployment policy suite, formatting, build, ShellCheck, and `git diff --check`. Record exact pass/fail counts. Do not access GitHub, GHCR, SSH, or production.
+
+- [ ] **Step 6: Commit the trusted workflow split**
+
+Commit one focused change with message `fix: isolate privileged release workflow` and write the implementation report into this plan's SDD workspace.
+
 ### Task 8: Verify Locally, Review, and Bootstrap Production Safely
 
 **Files:**

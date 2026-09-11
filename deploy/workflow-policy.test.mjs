@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,6 +18,215 @@ const root = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, root), "utf8");
 const ci = read(".github/workflows/ci.yml");
 const release = () => read(".github/workflows/release.yml");
+const publisher = () => {
+  assert.ok(
+    existsSync(new URL(".github/workflows/release-publish.yml", root)),
+    "A trusted default-branch publisher must exist before release signals can grant publication",
+  );
+  return read(".github/workflows/release-publish.yml");
+};
+
+test("reviewed untrusted release signal requests read-only permissions and never executes repository code", () => {
+  const source = release();
+  assert.match(source, /on:\n  release:\n    types: \[published\]/);
+  assert.match(source, /permissions:\n  contents: read/);
+  assert.doesNotMatch(
+    source,
+    /packages:|environment:|secrets\.|login-action|skopeo|docker |\bssh\b|actions\/checkout|npm |node /,
+    "The reviewed signal must not own privileged jobs or execute repository files; this is not a permission ceiling for other writer-authored workflows",
+  );
+  assert.match(source, /actions\/upload-artifact@[0-9a-f]{40}/);
+});
+
+test("trusted publisher receives only an exact-run artifact and owns the reviewed privileged jobs", () => {
+  const source = publisher();
+  assert.match(
+    source,
+    /on:\n  workflow_run:\n    workflows: \[Release\]\n    types: \[completed\]/,
+  );
+  assert.doesNotMatch(
+    source,
+    /^  (?:push|pull_request|release|workflow_dispatch):/m,
+  );
+  assert.match(source, /permissions:\n  contents: read/);
+  const validate = job(source, "validate");
+  assert.match(validate, /actions: read/);
+  assert.match(validate, /actions\/download-artifact@[0-9a-f]{40}/);
+  assert.match(validate, /run-id: \$\{\{ github.event.workflow_run.id \}\}/);
+  assert.match(validate, /github-token: \$\{\{ secrets.GITHUB_TOKEN \}\}/);
+  assert.match(validate, /path: \$\{\{ runner.temp \}\}\/release-signal/);
+  assert.doesNotMatch(validate, /cache:|actions\/cache/);
+  assert.match(job(source, "publish"), /packages: write/);
+  assert.match(job(source, "deploy"), /environment: production/);
+});
+
+// Removing the trusted consumer's provenance/API checks must let these hostile
+// fixtures emit outputs or execute policy code, causing the literal assertions
+// below to fail. Git and the validator are real; only the external API is faked.
+test("replaced release workflow cannot bypass trusted publisher validation or run replaced policy", (t) => {
+  const source = publisher();
+  const directory = mkdtempSync(join(tmpdir(), "release-workflow-boundary-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const git = (...args) => {
+    const result = spawnSync("git", args, { cwd: directory, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git("init", "--initial-branch=main");
+  git("config", "user.email", "fixture@example.test");
+  git("config", "user.name", "Fixture");
+  mkdirSync(join(directory, ".github/workflows"), { recursive: true });
+  mkdirSync(join(directory, "deploy"));
+  writeFileSync(join(directory, ".github/workflows/release.yml"), release());
+  writeFileSync(
+    join(directory, ".github/workflows/release-publish.yml"),
+    source,
+  );
+  writeFileSync(
+    join(directory, "deploy/release-policy.mjs"),
+    "import { writeFileSync } from 'node:fs'; writeFileSync(process.env.POLICY_MARKER, 'trusted');\n" +
+      read("deploy/release-policy.mjs"),
+  );
+  writeFileSync(join(directory, "package.json"), '{"version":"1.4.2"}');
+  git("add", ".");
+  git("commit", "-m", "trusted default branch");
+  const trusted = git("rev-parse", "HEAD");
+  git("tag", "-a", "v1.4.2", "-m", "stable");
+  git("switch", "-c", "unmerged");
+  const attack =
+    "name: Release\non:\n  release:\n    types: [published]\npermissions:\n  packages: write\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo image=attacker >> $GITHUB_OUTPUT\n";
+  writeFileSync(join(directory, ".github/workflows/release.yml"), attack);
+  writeFileSync(
+    join(directory, ".github/workflows/release-publish.yml"),
+    attack,
+  );
+  writeFileSync(
+    join(directory, "deploy/release-policy.mjs"),
+    "import { writeFileSync } from 'node:fs'; writeFileSync(process.env.ATTACKER_MARKER, 'ran'); console.log(JSON.stringify({tag:'v1.4.3',revision:process.env.RELEASE_SHA}));",
+  );
+  writeFileSync(join(directory, "package.json"), '{"version":"1.4.3"}');
+  git("commit", "-am", "replace both workflows and policy");
+  const unmerged = git("rev-parse", "HEAD");
+  git("tag", "v1.4.3");
+  git("remote", "add", "origin", directory);
+  // Model workflow_run: YAML comes from main even when the triggering release
+  // workflow and its artifact were replaced wholesale on the unmerged tag.
+  const loaded =
+    git("show", `${trusted}:.github/workflows/release-publish.yml`) + "\n";
+  const validate = job(loaded, "validate");
+  assert.match(validate, /ref: \$\{\{ github.workflow_sha \}\}/);
+  const script = step(validate, "release")
+    .split("        run: |\n")[1]
+    .replace(/^          /gm, "");
+  git("checkout", "--detach", trusted);
+  const baseRecord = {
+    tag_name: "v1.4.2",
+    draft: false,
+    prerelease: false,
+    published_at: "2026-09-11T00:00:00Z",
+    target_commitish: "main",
+  };
+  const cases = [
+    { name: "unmerged replacement", tag: "v1.4.3\n", sha: unmerged },
+    { name: "forged approved tag for unmerged head", sha: unmerged },
+    { name: "unsuccessful producer", conclusion: "failure" },
+    { name: "cancelled producer", conclusion: "cancelled" },
+    { name: "non-release producer", event: "push" },
+    { name: "multiple tag records", tag: "v1.4.2\nv1.4.3\n" },
+    { name: "trailing blank record", tag: "v1.4.2\n\n" },
+    { name: "NUL record", tag: "v1.4.2\0\n" },
+    { name: "option injection", tag: "--upload-pack=evil\n" },
+    { name: "prerelease tag", tag: "v1.4.2-rc.1\n" },
+    { name: "leading zero", tag: "v01.4.2\n" },
+    { name: "oversized record", tag: `v${"1".repeat(128)}.4.2\n` },
+    { name: "extra artifact file", extra: true },
+    { name: "symlink artifact", symlink: true },
+    { name: "missing release", apiFailure: true },
+    { name: "draft release", record: { draft: true } },
+    { name: "prerelease record", record: { prerelease: true } },
+    { name: "unpublished record", record: { published_at: null } },
+    { name: "wrong API tag", record: { tag_name: "v1.4.3" } },
+    { name: "invalid draft type", record: { draft: "false" } },
+    {
+      name: "mismatched target commit",
+      record: { target_commitish: unmerged },
+      policyRuns: true,
+    },
+    { name: "published merged release", success: true, policyRuns: true },
+  ];
+  for (const scenario of cases) {
+    const temp = mkdtempSync(join(directory, "case-"));
+    const artifact = join(temp, "release-signal");
+    mkdirSync(artifact);
+    writeFileSync(join(artifact, "tag.txt"), scenario.tag ?? "v1.4.2\n");
+    if (scenario.extra) writeFileSync(join(artifact, "extra"), "attacker");
+    if (scenario.symlink) {
+      rmSync(join(artifact, "tag.txt"));
+      writeFileSync(join(temp, "outside"), "v1.4.2\n");
+      symlinkSync(join(temp, "outside"), join(artifact, "tag.txt"));
+    }
+    const apiCalls = join(temp, "api-calls");
+    writeFileSync(
+      join(temp, "gh"),
+      `#!${process.execPath}\nconst fs = require('node:fs');\nfs.appendFileSync(process.env.API_CALLS, JSON.stringify(process.argv.slice(2)) + '\\n');\nif (process.env.API_FAILURE === 'true') process.exit(1);\nprocess.stdout.write(process.env.API_RECORD);\n`,
+      { mode: 0o755 },
+    );
+    const output = join(temp, "outputs");
+    const marker = join(temp, "policy-ran");
+    const attackerMarker = join(temp, "attacker-ran");
+    writeFileSync(output, "");
+    const result = spawnSync("bash", ["-euo", "pipefail", "-c", script], {
+      cwd: directory,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        BASH_ENV: "",
+        PATH: `${temp}${delimiter}${process.env.PATH}`,
+        WORKFLOW_SHA: trusted,
+        RELEASE_SHA: scenario.sha ?? trusted,
+        SOURCE_EVENT: scenario.event ?? "release",
+        SOURCE_CONCLUSION: scenario.conclusion ?? "success",
+        RUNNER_TEMP: temp,
+        GITHUB_OUTPUT: output,
+        GITHUB_REPOSITORY: "vndee/ship.live",
+        POLICY_MARKER: marker,
+        ATTACKER_MARKER: attackerMarker,
+        API_CALLS: apiCalls,
+        API_RECORD: JSON.stringify({ ...baseRecord, ...scenario.record }),
+        API_FAILURE: String(scenario.apiFailure ?? false),
+      },
+    });
+    assert.equal(
+      result.status === 0,
+      scenario.success ?? false,
+      `${scenario.name}: ${result.stderr}`,
+    );
+    assert.equal(existsSync(attackerMarker), false, scenario.name);
+    assert.equal(
+      existsSync(marker),
+      scenario.policyRuns ?? false,
+      `${scenario.name}: policy execution boundary`,
+    );
+    const values = readFileSync(output, "utf8");
+    if (scenario.success) {
+      assert.equal(
+        values,
+        `tag=v1.4.2\nrevision=${trusted}\nprevious_tag=\nprevious_revision=\n`,
+      );
+      assert.deepEqual(JSON.parse(readFileSync(apiCalls, "utf8")), [
+        "api",
+        "--method",
+        "GET",
+        "repos/vndee/ship.live/releases/tags/v1.4.2",
+      ]);
+    } else
+      assert.equal(
+        values,
+        "",
+        `${scenario.name}: publication prerequisite must remain empty`,
+      );
+  }
+});
 
 function job(source, name) {
   const match = source.match(
@@ -111,7 +321,7 @@ if (command === 'skopeo') {
     for (const command of ["skopeo", "docker", "git", "ssh"])
       writeFileSync(join(directory, command), program, { mode: 0o755 });
     writeFileSync(join(directory, "local-manifest.json"), manifest);
-    const script = step(job(release(), jobName), stepId)
+    const script = step(job(publisher(), jobName), stepId)
       .split("        run: |\n")[1]
       ?.replace(/^          /gm, "");
     assert.ok(script, `Missing shell script for ${stepId}`);
@@ -308,11 +518,15 @@ test("ordinary pushes and pull requests run deployment policy with read-only cre
 });
 
 test("production publishing is exclusively a stable published release with serialized runs", () => {
-  const source = release();
-  assert.match(source, /on:\n  release:\n    types: \[published\]/);
+  const source = publisher();
+  assert.match(release(), /on:\n  release:\n    types: \[published\]/);
+  assert.match(
+    source,
+    /on:\n  workflow_run:\n    workflows: \[Release\]\n    types: \[completed\]/,
+  );
   assert.doesNotMatch(
     source,
-    /^  (?:push|pull_request|workflow_dispatch|workflow_run):/m,
+    /^  (?:push|pull_request|workflow_dispatch|release):/m,
   );
   assert.match(source, /permissions:\n  contents: read/);
   assert.match(
@@ -320,13 +534,17 @@ test("production publishing is exclusively a stable published release with seria
     /concurrency:\n  group: production\n  cancel-in-progress: false/,
   );
   assert.match(
-    job(source, "validate"),
+    job(release(), "signal"),
     /!github\.event\.release\.draft && !github\.event\.release\.prerelease/,
+  );
+  assert.match(
+    job(source, "validate"),
+    /github\.event\.workflow_run\.conclusion == 'success' && github\.event\.workflow_run\.event == 'release'/,
   );
 });
 
-test("every action in both workflows is pinned to a full lowercase commit", () => {
-  for (const source of [ci, release()]) {
+test("every action in CI, signal, and publisher is pinned to a full lowercase commit", () => {
+  for (const source of [ci, release(), publisher()]) {
     const actions = [...source.matchAll(/\buses:\s*([^\s#]+)/g)];
     assert.ok(actions.length > 0);
     for (const [, action] of actions)
@@ -336,7 +554,7 @@ test("every action in both workflows is pinned to a full lowercase commit", () =
 });
 
 test("production concurrency retains pending releases instead of replacing them", () => {
-  const concurrency = release().match(/^concurrency:\n(?:  .+\n)+/m)?.[0];
+  const concurrency = publisher().match(/^concurrency:\n(?:  .+\n)+/m)?.[0];
   assert.ok(concurrency, "Missing workflow-level production concurrency");
   assert.match(concurrency, /^  group: production$/m);
   assert.match(concurrency, /^  cancel-in-progress: false$/m);
@@ -344,7 +562,7 @@ test("production concurrency retains pending releases instead of replacing them"
 });
 
 test("validation binds the event tag using trusted workflow code and main ancestry", () => {
-  const validate = job(release(), "validate");
+  const validate = job(publisher(), "validate");
   assert.match(validate, /ref: \$\{\{ github\.workflow_sha \}\}/);
   assert.doesNotMatch(validate, /^\s*(?:- run: )?npm\s|node-version-file:/m);
   assert.match(validate, /fetch-depth: 0/);
@@ -352,7 +570,10 @@ test("validation binds the event tag using trusted workflow code and main ancest
     validate,
     /git fetch --force origin '\+refs\/heads\/main:refs\/remotes\/origin\/main' --tags/,
   );
-  assert.match(validate, /RELEASE_SHA: \$\{\{ github\.sha \}\}/);
+  assert.match(
+    validate,
+    /RELEASE_SHA: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/,
+  );
   assert.match(validate, /node deploy\/release-policy\.mjs/);
   for (const argument of [
     "--tag",
@@ -402,10 +623,18 @@ test("a replaced validator on an unmerged tag cannot pass the publication prereq
   const unmerged = git("rev-parse", "HEAD");
   git("tag", "v1.4.3");
   git("remote", "add", "origin", directory);
-  const validate = job(release(), "validate");
+  const validate = job(publisher(), "validate");
   const script = step(validate, "release")
     .split("        run: |\n")[1]
     .replace(/^          /gm, "");
+  const apiBin = join(directory, "api-bin");
+  mkdirSync(apiBin);
+  writeFileSync(
+    join(apiBin, "gh"),
+    `#!${process.execPath}\nconsole.log(JSON.stringify({tag_name:process.env.RELEASE_TAG,draft:false,prerelease:false,published_at:'2026-09-11T00:00:00Z',target_commitish:'main'}));\n`,
+    { mode: 0o755 },
+  );
+  mkdirSync(join(directory, "release-signal"));
   for (const [tag, revision, workflowSha, success] of [
     ["v1.4.3", unmerged, trusted, false],
     ["v1.4.3", unmerged, unmerged, false],
@@ -418,11 +647,16 @@ test("a replaced validator on an unmerged tag cannot pass the publication prereq
     );
     const output = join(directory, "outputs");
     writeFileSync(output, "");
+    writeFileSync(join(directory, "release-signal/tag.txt"), `${tag}\n`);
     const result = spawnSync("bash", ["-euo", "pipefail", "-c", script], {
       cwd: directory,
       encoding: "utf8",
       env: {
         ...process.env,
+        PATH: `${apiBin}${delimiter}${process.env.PATH}`,
+        SOURCE_EVENT: "release",
+        SOURCE_CONCLUSION: "success",
+        GITHUB_REPOSITORY: "vndee/ship.live",
         WORKFLOW_SHA: workflowSha,
         RELEASE_TAG: tag,
         RELEASE_SHA: revision,
@@ -453,7 +687,7 @@ test("anonymous image check cannot inherit registry credentials or credential he
 });
 
 test("all checks use the validated SHA and block publishing and deployment", () => {
-  const source = release();
+  const source = publisher();
   for (const name of ["checks", "browser", "publish"]) {
     assert.match(
       job(source, name),
@@ -479,7 +713,7 @@ test("all checks use the validated SHA and block publishing and deployment", () 
 });
 
 test("package writes and production secrets are isolated to their respective jobs", () => {
-  const source = release();
+  const source = publisher();
   assert.equal((source.match(/packages:\s*write/g) ?? []).length, 1);
   assert.match(
     job(source, "publish"),
@@ -504,7 +738,7 @@ test("package writes and production secrets are isolated to their respective job
 });
 
 test("the one current build is loaded, smoke-tested, then compatibility-tested before publication", () => {
-  const publish = job(release(), "publish");
+  const publish = job(publisher(), "publish");
   assert.equal(
     (publish.match(/docker buildx build/g) ?? []).length,
     2,
@@ -545,7 +779,7 @@ test("the one current build is loaded, smoke-tested, then compatibility-tested b
 });
 
 test("the exact previous tag opens the new schema, with fail-closed bootstrap", () => {
-  const publish = job(release(), "publish");
+  const publish = job(publisher(), "publish");
   assert.match(publish, /POSTGRES_DB: ship_live_compatibility/);
   const compatibility = step(publish, "compatibility");
   assert.match(
@@ -581,7 +815,7 @@ test("the exact previous tag opens the new schema, with fail-closed bootstrap", 
 });
 
 test("both immutable tags are checked before digest-preserving publication", () => {
-  const publish = step(job(release(), "publish"), "publish");
+  const publish = step(job(publisher(), "publish"), "publish");
   assert.match(publish, /for tag in "\$VERSION" "sha-\$REVISION"/);
   assert.match(publish, /existing_digest.*!=.*expected_digest/);
   assert.match(publish, /MANIFEST_UNKNOWN\|NAME_UNKNOWN/);
@@ -602,7 +836,7 @@ test("both immutable tags are checked before digest-preserving publication", () 
 });
 
 test("deployment checks anonymous registry access before opening the forced SSH session", () => {
-  const deploy = job(release(), "deploy");
+  const deploy = job(publisher(), "deploy");
   assert.match(
     deploy,
     /if: \$\{\{ vars\.PRODUCTION_DEPLOY_ENABLED == 'true' \}\}/,
@@ -632,7 +866,7 @@ test("deployment checks anonymous registry access before opening the forced SSH 
   );
   assert.match(handoff, /"\$DEPLOY_USER@\$DEPLOY_HOST" "\$APP_IMAGE"\s*$/);
   assert.doesNotMatch(
-    release(),
+    publisher(),
     /StrictHostKeyChecking=no|ssh-keyscan|\bscp\b|\brsync\b|\.env\.production|upload-artifact/,
   );
 });

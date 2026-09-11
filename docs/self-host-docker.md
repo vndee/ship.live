@@ -138,8 +138,35 @@ pulls a previously verified public GHCR image by immutable digest.
 
 ### Bootstrap the GHCR package and GitHub environment
 
+Before publishing, land both `Release` (`.github/workflows/release.yml`) and
+`Release publish` (`.github/workflows/release-publish.yml`) on protected `main`.
+Restrict repository write and release authority to trusted maintainers, require
+review and CI on `main`, audit workflow/policy changes, and configure the
+`production` environment to allow deployments only from protected branches.
+Keep deploy secrets exclusively in that environment. Check these controls
+before setting `PRODUCTION_DEPLOY_ENABLED` to `true`.
+
+There are two linked Actions runs. The reviewed release-tag `Release` run has
+only `contents: read` and uploads a bounded tag record. Its default-branch
+`workflow_run` consumer, `Release publish`, downloads that exact run's artifact,
+requires a successful release event, checks the canonical tag SHA against the
+triggering head SHA and `main` ancestry, and confirms the current published,
+non-draft, non-prerelease Release API record before executing repository policy
+or release source. An unmerged or forged signal is rejected before this
+consumer produces publication outputs. Follow both runs in Actions; the
+consumer's triggering workflow run links back to the signal.
+
+This protects the reviewed consumer, not against malicious repository writers.
+GitHub permits a writer to replace workflow YAML and request broader token
+permissions, including package writes. The signal's read-only declaration is
+not a platform permission ceiling for writer-authored workflows. Preventing
+that separate path requires registry authority outside this repository or an
+additional human authorization boundary. The governance controls above and
+trust in repository writers are prerequisites for this automatic design.
+
 Publish the first stable GitHub Release with the repository variable
-`PRODUCTION_DEPLOY_ENABLED` unset or not equal to `true`. Wait for
+`PRODUCTION_DEPLOY_ENABLED` unset or not equal to `true`. Follow `Release`, then
+wait in `Release publish` for
 `validate`, `checks`, `browser`, and `publish` to pass and confirm that
 `deploy` was skipped. Set the `vndee/ship.live` GHCR package visibility to
 **Public**, then verify an anonymous pull from the managed host, without
