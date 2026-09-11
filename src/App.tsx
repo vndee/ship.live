@@ -30,6 +30,7 @@ import { AccountPanel } from "./components/AccountPanel";
 import { ActivityCelebration } from "./components/ActivityCelebration";
 import { AppHeader } from "./components/AppHeader";
 import { ContributorProfile } from "./components/ContributorProfile";
+import { RepositoryProfile } from "./components/RepositoryProfile";
 import { EngineeringWall } from "./components/EngineeringWall";
 import { EventDetail } from "./components/EventDetail";
 import type { Kind } from "./components/event-kinds";
@@ -258,10 +259,18 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     [personal, feed.events],
   );
   // A repository chosen in Pulse opens its activity in the Live feed.
-  function focusRepository(repository: string) {
+  // A repository's details are part of the URL; Back closes them.
+  function openRepository(repository: string) {
+    navigate({ ...route, repository }, { overlay: true });
+  }
+  // Its full feed takes the dialog's place, so Back returns to the page.
+  function viewRepositoryActivity(repository: string) {
     setReplay(null);
     setSelectedId(null);
-    navigate({ page: "feed", repo: repository, period: "30d" });
+    navigate(
+      { page: "feed", repo: repository, period: "30d" },
+      { replace: true },
+    );
   }
   // Profiles are part of the URL; Back closes one opened here.
   function openProfile(login: string) {
@@ -658,7 +667,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                 }
                 onSelectPerson={openProfile}
                 onOpenTeam={() => navigate({ page: "team" })}
-                onSelectRepository={focusRepository}
+                onSelectRepository={openRepository}
                 repositoryNote={feed.demo ? undefined : REPOSITORY_NOTE}
                 status={
                   feed.demo
@@ -691,7 +700,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                   title="Sources"
                   framed
                   note={feed.demo ? undefined : SOURCES_NOTE}
-                  onSelect={focusRepository}
+                  onSelect={openRepository}
                 />
               </div>
             )}
@@ -907,6 +916,28 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             now={now}
             demo={feed.demo}
             displayName={displayName}
+          />
+        </Modal>
+      )}
+      {route.repository && (
+        <Modal
+          title={route.repository.split("/").pop() || route.repository}
+          onClose={() => closeOverlay({ ...route, repository: undefined })}
+        >
+          <RepositoryProfile
+            events={feed.events}
+            repository={route.repository}
+            now={now}
+            snapshot={feed.demo ? demoSignals().snapshot : engineering.data}
+            demo={feed.demo}
+            displayName={displayName}
+            onSelectPerson={(login) =>
+              navigate(
+                { ...route, repository: undefined, person: login },
+                { overlay: true, replace: true },
+              )
+            }
+            onViewActivity={() => viewRepositoryActivity(route.repository!)}
           />
         </Modal>
       )}

@@ -27,6 +27,7 @@
     "test": "node --import tsx --test src/lib/*.test.ts shared/*.test.ts server/*.test.ts",
     "test:db": "node --import tsx server/test-database.ts",
     "test:browser": "node --test \"src/**/*.browser.test.mjs\"",
+    "test:docker": "node --test deploy/runtime-image.test.mjs",
     "check": "tsc --noEmit",
     "format": "prettier --write src server shared docs .github *.json *.ts *.md *.yaml index.html",
     "format:check": "prettier --check src server shared docs .github *.json *.ts *.md *.yaml index.html"

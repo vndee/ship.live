@@ -22,7 +22,7 @@ A private shipping journal for individual builders and a live **Pulse** for engi
 
 The team's live view of what is shipping, beside a feed of every visible contribution.
 
-- **Overview.** Today’s momentum, a seven-day activity chart, the next team milestone, and the repositories that moved most this week. Choose a repository to open its activity.
+- **Overview.** Today’s momentum, a seven-day activity chart, the next team milestone, and the repositories that moved most this week. Choose a repository to open its details: this week, a 12-week heatmap, top contributors, recent activity, open pull requests, and deployments.
 - **Review Radar and Release Pulse.** Open pull requests ranked by what needs attention — failing CI, ready to merge, checks running, awaiting review — and the latest GitHub deployment for each environment.
 - **Delivery.** Deployments per week, change failure rate, time to restore, and time to merge for one environment over 30 days, each compared with the 30 days before, with eight weeks of deployments by week. The figures describe the team, never a person.
 - **Leaderboard and profiles.** Weekly XP with animated rank changes. Open anyone’s profile for their rank, 30-day totals, a 12-week activity heatmap, daily XP, and recent activity.

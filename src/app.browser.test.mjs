@@ -161,3 +161,19 @@ test("unknown paths and malformed parameters show Pulse", async (t) => {
   await heading(page, "Great work. Shared momentum.");
   assert.equal(await page.locator("dialog.modal").count(), 0);
 });
+
+test("a repository's details open over Pulse and lead to its feed", async (t) => {
+  const page = await open(t, "/");
+  await page
+    .getByRole("button", { name: /^Open details for / })
+    .first()
+    .click();
+  await page.waitForSelector("dialog.modal[open] .repository-profile");
+  assert.match(location(page), /^\/\?repository=[\w.%-]+$/);
+  await page
+    .locator("dialog.modal")
+    .getByRole("button", { name: "View all activity" })
+    .click();
+  await page.waitForFunction(() => !document.querySelector("dialog.modal"));
+  assert.match(location(page), /^\/feed\?repo=.+&period=30d$/);
+});

@@ -86,3 +86,22 @@ test("a journal tag filters the Live feed and survives the URL", () => {
   );
   assert.deepEqual(parseRoute("/team", "?tag=launch"), { page: "team" });
 });
+
+test("a repository's details open over any page and survive the URL", () => {
+  const href = routeHref({ page: "team", repository: "acme/api-gateway" });
+  assert.equal(href, "/team?repository=acme%2Fapi-gateway");
+  const url = new URL(href, "https://ship.example.test");
+  assert.deepEqual(parseRoute(url.pathname, url.search), {
+    page: "team",
+    repository: "acme/api-gateway",
+  });
+  assert.deepEqual(parseRoute("/", "?repository=platform"), {
+    page: "pulse",
+    repository: "platform",
+  });
+  for (const bad of ["a/b/c", "<script>", "acme/", "x".repeat(101)])
+    assert.deepEqual(
+      parseRoute("/", `?repository=${encodeURIComponent(bad)}`),
+      { page: "pulse" },
+    );
+});
