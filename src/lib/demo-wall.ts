@@ -305,7 +305,7 @@ function demoProbe(
   degraded: boolean,
 ): HealthProbe {
   // Newest first, like health snapshots from the server.
-  const history: HealthCheck[] = Array.from({ length: 24 }, (_, index) => {
+  const history: HealthCheck[] = Array.from({ length: 40 }, (_, index) => {
     const failing = degraded && index < 2;
     return {
       checkedAt: new Date(now - (index + 1) * MINUTE).toISOString(),
