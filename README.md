@@ -47,7 +47,7 @@ Send what matters to the tools your team already watches, and bring outside aler
 - **Every event, any destination.** Merges, reviews, releases, CI failures and recoveries, deployments, Service Health incidents, inbound alerts, and a weekly digest, sent to Slack, Discord, Microsoft Teams, Google Chat, Lark / Feishu, or any HTTPS endpoint.
 - **Bodies you control.** A preset for each service and a template editor with a live preview, filters with wildcards and exclusions, cooldowns for flapping alerts, custom headers, signed requests, and success checks for services that report errors inside a 200 response.
 - **Reliable delivery.** Retries with backoff, a delivery log with each request and response, test sends, and redelivery. Deliveries follow each webhook owner's repository access, checked again before every attempt.
-- **Inbound alerts.** Give Grafana, Sentry, or any service a URL, map its JSON to a title and link, and pass it on.
+- **Inbound alerts.** Give Grafana, Sentry, or any service a URL, map its JSON to a title and link, see it in Live activity, and pass it on.
 
 See the [webhook guide](docs/webhooks.md).
 
@@ -55,7 +55,7 @@ See the [webhook guide](docs/webhooks.md).
 
 - **Personal journal.** Keep private notes about launches, experiments, decisions, and progress. Add GitHub activity from selected repositories when you are ready. Group notes with #tags, filter the feed by tag, and export any view as Markdown.
 - **Google or GitHub sign-in.** Supabase Auth handles identity. A separate GitHub App connection grants repository access, including for someone who signed in with Google.
-- **Live activity and replay.** Follow merges, reviews, releases, pushes, issues, and journal entries. Filter by repository, type, time, or text; replay the last 24 hours, 7 days, or 30 days.
+- **Live activity and replay.** Follow merges, reviews, releases, pushes, issues, journal entries, and inbound alerts. Filter by repository, type, time, or text; replay the last 24 hours, 7 days, or 30 days.
 - **Shared recognition.** Weekly contributor spotlights and team milestones celebrate outcomes and collaboration. New commits earn a small per-commit credit; personal notes earn no XP.
 - **Expiring share links.** Share a read-only Pulse or Service Health page without requiring sign-in. Choose from one hour through a 100-year no-expiration option; rotate or revoke your link at any time.
 - **Private by default.** Personal notes belong to their owner. GitHub events are filtered to repositories each viewer could access through the GitHub App at their last sync.

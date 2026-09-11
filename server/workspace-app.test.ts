@@ -21,6 +21,8 @@ import { HealthStore } from "./health-store.js";
 import { WorkspaceStore } from "./workspace-store.js";
 import { WallStore } from "./wall-store.js";
 import { SecretBox } from "./secret-box.js";
+import { recordWorkspaceEvent } from "./webhook-outbox.js";
+import { WebhookStore } from "./webhook-store.js";
 
 const APP_URL = "http://localhost:3000";
 const SECRET = "synthetic-workspace-webhook-secret";
@@ -281,6 +283,7 @@ async function withApp(
       github: provider.github,
       webhookSecret: SECRET,
       secrets: new SecretBox("11".repeat(32)),
+      webhooks: new WebhookStore(replica.pool, new SecretBox("11".repeat(32))),
     }).listen(0, "127.0.0.1");
     await once(server, "listening");
     const address = server.address();
@@ -2404,5 +2407,33 @@ test("rotating a share can keep its expiry, but not once it has expired", async 
     const expired = await post(`${path}/rotate`, { keepExpiry: true });
     assert.equal(expired.status, 409);
     assert.match((await expired.json()).error, /Choose a lifetime/);
+  });
+});
+
+test("a team's feed adds its inbound alerts to repository activity", async (t) => {
+  await withApp(t, async ({ store, workspaces, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    await store.merge("installation-70", [event("alpha", 101)], {
+      restricted: true,
+    });
+    await recordWorkspaceEvent(store.pool, workspace.id, {
+      type: "inbound.grafana",
+      dedupeKey: "inbound:grafana:1",
+      occurredAt: new Date().toISOString(),
+      summary: "API latency is alerting",
+      data: { endpoint: { name: "Grafana" }, body: "p95 above 800 ms" },
+    });
+    const feed = (await (
+      await request(`/api/workspaces/${workspace.id}/feed`)
+    ).json()) as FeedResponse;
+    assert.deepEqual(
+      feed.events.map((item) => [item.type, item.title]),
+      [
+        ["alert", "API latency is alerting"],
+        ["merge", feed.events[1]?.title],
+      ],
+    );
+    assert.equal(feed.events[0].actor.login, "Grafana");
+    assert.equal(feed.events[1].id, "alpha");
   });
 });

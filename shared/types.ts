@@ -1,5 +1,13 @@
 export type ActivityType =
-  "merge" | "review" | "push" | "issue" | "release" | "pr" | "note";
+  | "merge"
+  | "review"
+  | "push"
+  | "issue"
+  | "release"
+  | "pr"
+  | "note"
+  /** An inbound webhook's accepted request, shown in a team's Live activity. */
+  | "alert";
 
 export interface ActivityEvent {
   id: string;

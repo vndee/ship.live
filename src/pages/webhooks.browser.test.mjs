@@ -141,7 +141,22 @@ async function open(t, viewport = { width: 1280, height: 900 }) {
               creator: { id: "u1", name: "Sarah Park" },
               createdAt: "2026-09-10T08:00:00.000Z",
               lastReceivedAt: "2026-09-10T08:00:00.000Z",
-              receipts: [],
+              receipts: [
+                {
+                  id: "r1",
+                  receivedAt: new Date(Date.now() - 60_000).toISOString(),
+                  accepted: true,
+                  summary: "API latency is alerting",
+                  error: null,
+                },
+                {
+                  id: "r2",
+                  receivedAt: new Date(Date.now() - 300_000).toISOString(),
+                  accepted: false,
+                  summary: null,
+                  error: "The title mapping rendered no text.",
+                },
+              ],
             },
           ],
         });
@@ -161,7 +176,7 @@ async function open(t, viewport = { width: 1280, height: 900 }) {
     };
   }, delivered);
   await page.addScriptTag({ content: script });
-  await page.waitForSelector(".webhook-row");
+  await page.waitForSelector(".webhook-item");
   return page;
 }
 
@@ -172,24 +187,68 @@ async function shot(page, name, locator) {
   else await page.screenshot({ path, fullPage: true });
 }
 
-test("the page lists webhooks with their latest delivery and inbound endpoints", async (t) => {
+test("webhooks collapse to a summary and open to their full details, one at a time", async (t) => {
   const page = await open(t);
-  const row = page.locator(".webhook-row").first();
-  assert.match(await row.textContent(), /Incidents to #ops/);
+  const outbound = page.locator(".webhook-item").nth(0);
+  const inbound = page.locator(".webhook-item").nth(1);
+  const toggle = outbound.locator(".webhook-toggle");
+  assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+  assert.match(await toggle.textContent(), /Incidents to #ops/);
   assert.match(
-    await row.textContent(),
-    /Slack · POST https:\/\/hooks\.slack\.com\/services\/…/,
+    await toggle.textContent(),
+    /Slack · 2 events · 10 min cooldown/,
   );
-  assert.match(await row.textContent(), /10 min cooldown/);
   assert.equal(
-    await row.locator(".webhook-status-chip").textContent(),
+    await toggle.locator(".webhook-status-chip").textContent(),
     "Delivered",
   );
   assert.match(
-    await page.locator(".webhook-row").nth(1).textContent(),
+    await inbound.locator(".webhook-toggle").textContent(),
     /inbound\.grafana · signed/,
   );
+  assert.equal(
+    await inbound.locator(".webhook-status-chip").textContent(),
+    "Accepted",
+  );
+  // Actions live in the details, so nothing is shown until an item opens.
+  assert.equal(await page.locator(".webhook-details").count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Edit" }).count(), 0);
   await shot(page, "webhooks-page");
+
+  await toggle.click();
+  assert.equal(await toggle.getAttribute("aria-expanded"), "true");
+  const details = outbound.locator(".webhook-details");
+  const text = await details.textContent();
+  assert.match(text, /POST https:\/\/hooks\.slack\.com\/services\/…/);
+  assert.match(text, /Incident opened \(a probe is down\)/);
+  assert.match(text, /Incident resolved/);
+  assert.match(text, /10 min per alert/);
+  assert.match(text, /Sarah Park/);
+  assert.match(text, /HTTP 200 · 1 attempt/);
+  assert.ok(
+    await details.getByRole("button", { name: "Deliveries" }).isVisible(),
+  );
+  assert.ok(await details.getByRole("button", { name: "Edit" }).isVisible());
+  await shot(page, "webhook-outbound-open", outbound);
+
+  await inbound.locator(".webhook-toggle").click();
+  assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+  assert.equal(await page.locator(".webhook-details").count(), 1);
+  const inboundDetails = inbound.locator(".webhook-details");
+  const inboundText = await inboundDetails.textContent();
+  assert.match(inboundText, /\{\{payload\.title\}\}/);
+  assert.match(inboundText, /Required: X-Signature-256/);
+  assert.match(inboundText, /The title mapping rendered no text\./);
+  assert.deepEqual(
+    await inboundDetails
+      .locator(".inbound-receipts .webhook-status-chip")
+      .allTextContents(),
+    ["Accepted", "Rejected"],
+  );
+  assert.ok(
+    await inboundDetails.getByRole("button", { name: "New URL" }).isVisible(),
+  );
+  await shot(page, "webhook-inbound-open", inbound);
 });
 
 test("the editor previews presets live, signs Lark bodies, and blocks invalid templates", async (t) => {
@@ -260,6 +319,7 @@ test("the editor previews presets live, signs Lark bodies, and blocks invalid te
 
 test("the delivery log shows attempts and sends a test", async (t) => {
   const page = await open(t);
+  await page.locator(".webhook-toggle").first().click();
   await page.getByRole("button", { name: "Deliveries" }).click();
   await page.waitForSelector(".delivery-row");
   assert.match(await page.locator(".delivery-row").textContent(), /Delivered/);
@@ -283,6 +343,8 @@ test("the delivery log shows attempts and sends a test", async (t) => {
 
 test("the page fits a phone screen", async (t) => {
   const page = await open(t, { width: 390, height: 844 });
+  await page.locator(".webhook-toggle").nth(1).click();
+  await page.waitForSelector(".webhook-details");
   assert.equal(
     await page.evaluate(
       () =>

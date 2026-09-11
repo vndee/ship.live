@@ -173,3 +173,28 @@ test("resuming ignores activity from the pause even when its snapshot arrives la
   assert.deepEqual(live.highlightedIds, ["after-resume"]);
   assert.equal(live.celebration?.xp, 30);
 });
+
+test("new alerts are highlighted but never celebrated", () => {
+  const first = observeActivity(undefined, [event("first")], now);
+  const alert = event("alert-1", "alert", now + 1000, "Grafana");
+  const quiet = observeActivity(
+    first.state,
+    [event("first"), alert],
+    now + 1000,
+  );
+  assert.equal(quiet.celebration, null);
+  assert.deepEqual(quiet.highlightedIds, ["alert-1"]);
+  const mixed = observeActivity(
+    quiet.state,
+    [
+      event("first"),
+      alert,
+      event("alert-2", "alert", now + 2000, "Grafana"),
+      event("merged", "merge", now + 2000),
+    ],
+    now + 2000,
+  );
+  assert.equal(mixed.celebration?.event.id, "merged");
+  assert.equal(mixed.celebration?.count, 1);
+  assert.deepEqual(mixed.highlightedIds.sort(), ["alert-2", "merged"]);
+});

@@ -105,10 +105,14 @@ export function observeActivity(
         all.findIndex((item) => item.id === event.id) === index,
     );
   if (!fresh.length) return silent;
-  const notable = fresh.filter(
+  // Alerts are highlighted in the feed, but they are not work to celebrate.
+  const work = fresh.filter((event) => event.type !== "alert");
+  if (!work.length)
+    return { ...silent, highlightedIds: fresh.map((event) => event.id) };
+  const notable = work.filter(
     (event) => event.type === "merge" || event.type === "release",
   );
-  const event = [...(notable.length ? notable : fresh)].sort(
+  const event = [...(notable.length ? notable : work)].sort(
     (a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
   )[0];
   const xp = Math.max(
@@ -130,7 +134,7 @@ export function observeActivity(
     celebration: {
       id: `${now}:${event.id}`,
       event,
-      count: fresh.length,
+      count: work.length,
       xp,
       milestone,
       confetti,

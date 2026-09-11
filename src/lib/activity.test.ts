@@ -236,3 +236,25 @@ test("manual ship notes are visible activity without manufactured XP or mileston
     getAchievements(notes, NOW).every((milestone) => milestone.progress === 0),
   );
 });
+
+test("inbound alerts are visible activity that is never credited", () => {
+  const alerts = Array.from({ length: 20 }, (_, index) =>
+    event(`alert-${index}`, "alert", {
+      actor: { login: "Grafana" },
+      repo: "inbound.grafana",
+    }),
+  );
+  const merge = event("merge-1", "merge");
+  assert.equal(basePoints(alerts[0]), 0);
+  assert.deepEqual(
+    getMetrics([...alerts, merge], NOW),
+    getMetrics([merge], NOW),
+  );
+  assert.deepEqual(
+    getLeaderboard([...alerts, merge], NOW).map((person) => person.login),
+    ["alexchen"],
+  );
+  assert.ok(
+    getAchievements(alerts, NOW).every((milestone) => milestone.progress === 0),
+  );
+});
