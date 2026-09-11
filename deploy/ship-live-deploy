@@ -155,9 +155,9 @@ try:
     if len(raw) > 131072:
         raise ValueError("oversized labels")
     labels = json.loads(raw)
-    keys = ["org.opencontainers.image.source", "org.opencontainers.image.version", "org.opencontainers.image.revision", "io.ship-live.schema-version", "io.ship-live.max-schema-version"]
+    keys = ["org.opencontainers.image.source", "org.opencontainers.image.version", "org.opencontainers.image.revision", "io.ship-live.schema-version", "io.ship-live.max-schema-version", "io.ship-live.tested-predecessor"]
     values = [labels[key] for key in keys]
-    patterns = [r"https://github\.com/vndee/ship\.live", r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", r"[0-9a-f]{40}", r"[1-9][0-9]*", r"[1-9][0-9]*"]
+    patterns = [r"https://github\.com/vndee/ship\.live", r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", r"[0-9a-f]{40}", r"[1-9][0-9]*", r"[1-9][0-9]*", r"(?:none|ghcr\.io/vndee/ship\.live@sha256:[0-9a-f]{64})"]
     if any(not isinstance(value, str) or not re.fullmatch(pattern, value) for pattern, value in zip(patterns, values)):
         raise ValueError("invalid labels")
     if int(values[4]) < int(values[3]):
@@ -222,15 +222,15 @@ healthy() {
 }
 
 prior_record=$(state_io read "$STATE_DIR") || fail 'Recorded deployment state is invalid.'
-prior_image='' prior_version=''
-if [ -n "$prior_record" ]; then IFS='|' read -r prior_image prior_version _ <<< "$prior_record"; fi
+prior_image='' prior_version='' prior_schema=''
+if [ -n "$prior_record" ]; then IFS='|' read -r prior_image prior_version _ prior_schema _ <<< "$prior_record"; fi
 mutated=0 committed=0 scratch=''
 
 rollback_allowed() {
   local previous_metadata previous_max
   [ -n "$prior_image" ] || return 1
   previous_metadata=$(inspect_metadata "$prior_image") || return 1
-  IFS='|' read -r _ _ _ previous_max <<< "$previous_metadata"
+  IFS='|' read -r _ _ _ previous_max _ <<< "$previous_metadata"
   schema_covers "$previous_max" "$target_schema"
 }
 
@@ -268,12 +268,20 @@ scratch=$(mktemp -d "$STATE_DIR/.runtime.XXXXXXXX") || fail 'Unable to create tr
 
 docker pull "$requested_image" >/dev/null 2>&1 || fail 'Image pull failed.'
 target_metadata=$(inspect_metadata "$requested_image") || fail 'Image labels are invalid or unreadable.'
-IFS='|' read -r target_version target_revision target_schema target_max <<< "$target_metadata"
+IFS='|' read -r target_version target_revision target_schema target_max tested_predecessor <<< "$target_metadata"
 state_io validate "$STATE_DIR" "$requested_image" "$target_version" "$target_revision" "$target_schema" "$target_max" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" || fail 'Prospective deployment state is invalid.'
 if [ -n "$prior_version" ]; then
   [ "$target_version" != "$prior_version" ] || fail 'Target version must be newer than production.'
   newest=$(printf '%s\n%s\n' "$prior_version" "$target_version" | sort -V | tail -n 1)
   [ "$newest" = "$target_version" ] || fail 'Target version must be newer than production.'
+  [ "$tested_predecessor" != none ] || fail 'First-release image requires empty deployment state.'
+  # Compatibility belongs to the exact image CI exercised. A skipped/failed
+  # release can leave production behind the greatest lower published version.
+  if ! schema_covers "$prior_schema" "$target_schema"; then
+    [ "$tested_predecessor" = "$prior_image" ] || fail 'Tested predecessor does not match current production image; schema change refused.'
+  fi
+else
+  [ "$tested_predecessor" = none ] || fail 'Initial deployment requires a first-release image and bootstrap rehearsal.'
 fi
 compose "$requested_image" config --quiet >/dev/null 2>&1 || fail 'Compose configuration validation failed.'
 mutated=1

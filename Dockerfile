@@ -25,11 +25,13 @@ ARG RELEASE_VERSION
 ARG VCS_REVISION
 ARG SCHEMA_VERSION
 ARG MAX_SCHEMA_VERSION
+ARG TESTED_PREDECESSOR
 LABEL org.opencontainers.image.source="https://github.com/vndee/ship.live" \
       org.opencontainers.image.revision="$VCS_REVISION" \
       org.opencontainers.image.version="$RELEASE_VERSION" \
       io.ship-live.schema-version="$SCHEMA_VERSION" \
-      io.ship-live.max-schema-version="$MAX_SCHEMA_VERSION"
+      io.ship-live.max-schema-version="$MAX_SCHEMA_VERSION" \
+      io.ship-live.tested-predecessor="$TESTED_PREDECESSOR"
 
 USER node
 EXPOSE 3001

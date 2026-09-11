@@ -9,6 +9,10 @@ import {
 const suppliedImage = process.env.SHIP_LIVE_TEST_IMAGE;
 const image = suppliedImage ?? `ship-live-runtime-test:${process.pid}`;
 const ownsImage = !suppliedImage;
+const localPredecessor = `ghcr.io/vndee/ship.live@sha256:${"0".repeat(64)}`;
+const expectedPredecessor =
+  process.env.SHIP_LIVE_TEST_PREDECESSOR ??
+  (ownsImage ? localPredecessor : undefined);
 const failure = (result) =>
   result.error?.stack ||
   result.stderr ||
@@ -39,6 +43,8 @@ test("the production image loads the digest module and carries release labels", 
         `SCHEMA_VERSION=${SCHEMA_VERSION}`,
         "--build-arg",
         `MAX_SCHEMA_VERSION=${MAX_SUPPORTED_SCHEMA_VERSION}`,
+        "--build-arg",
+        `TESTED_PREDECESSOR=${localPredecessor}`,
         ".",
       ],
       { encoding: "utf8", timeout: 300_000 },
@@ -85,4 +91,13 @@ test("the production image loads the digest module and carries release labels", 
     labels["io.ship-live.max-schema-version"],
     String(MAX_SUPPORTED_SCHEMA_VERSION),
   );
+  assert.match(
+    labels["io.ship-live.tested-predecessor"],
+    /^(?:none|ghcr\.io\/vndee\/ship\.live@sha256:[0-9a-f]{64})(?![\s\S])/,
+  );
+  if (expectedPredecessor !== undefined)
+    assert.equal(
+      labels["io.ship-live.tested-predecessor"],
+      expectedPredecessor,
+    );
 });

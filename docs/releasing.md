@@ -81,13 +81,25 @@ as JSON with `git show`, verifies the version match, and subsequently checks
 out the validated release SHA. An unmerged tag or forged signal cannot obtain
 this consumer's publication outputs or run its replaced validator. It then runs format, deployment
 policy, PostgreSQL, build, browser, image smoke, and previous-release schema
-compatibility gates. The previous image seeds representative events, the new
+compatibility gates. Before building the candidate, the workflow resolves the
+greatest lower stable tag's published GHCR digest and validates its version,
+revision, platform, source, and schema range. Missing predecessor publication
+fails closed. That exact digest seeds representative events, the new
 image applies migrations to an isolated synthetic database, and the previous
 store performs real inserts, updates, reads, listing, protection, and delivery
 deduplication before publication. The image is built once, labelled with the version,
-revision, and schema range, copied with Skopeo under both `vX.Y.Z` and
+revision, schema range, and `io.ship-live.tested-predecessor` digest, copied with Skopeo under both `vX.Y.Z` and
 `sha-<40-character-commit>` immutable tags, and rechecked by digest before it
 can be handed to deployment.
+
+Before a schema increase, the host requires that tested predecessor digest to
+equal durable `current.IMAGE`. If an intermediate release was skipped or failed,
+deploy and verify that predecessor first, or prepare a newly reviewed release
+whose compatibility evidence covers the actual current image. Do not relabel
+an existing image or edit deployment state to bypass the check. Same-schema
+releases can proceed with a different predecessor. The first stable release
+uses the literal `none`, requires deployment disabled during publication, and
+is accepted only with empty host state and the documented bootstrap rehearsal.
 
 The deployment job retains the `production` environment gate and secrets, but
 uses `deployment: false` to suppress GitHub's automatic record for the consumer's

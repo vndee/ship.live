@@ -44,7 +44,15 @@ function fixture(t, options = {}) {
   const log = join(root, "commands.jsonl");
   writeFileSync(
     join(root, "options.json"),
-    JSON.stringify({ target, old, stale, metadata, priorMetadata, ...options }),
+    JSON.stringify({
+      target,
+      old,
+      stale,
+      metadata,
+      priorMetadata,
+      testedPredecessor: options.bootstrap ? "none" : old,
+      ...options,
+    }),
   );
   const fake = join(bin, "fake");
   writeFileSync(
@@ -89,7 +97,9 @@ else if (name === 'docker-compose') {
       const keys = ['org.opencontainers.image.source','org.opencontainers.image.version','org.opencontainers.image.revision','io.ship-live.schema-version','io.ship-live.max-schema-version'];
       const parts = value.split('|');
       if (parts.length > keys.length) parts[4] = parts.slice(4).join('|');
-      out(JSON.stringify(Object.fromEntries(keys.map((key,i)=>[key,parts[i]]))));
+      const labels = Object.fromEntries(keys.map((key,i)=>[key,parts[i]]));
+      labels['io.ship-live.tested-predecessor'] = a.at(-1) === o.target ? o.testedPredecessor : 'none';
+      out(JSON.stringify(labels));
     } else out(value + (a[3].endsWith('|END') ? '|END' : ''));
   }
   if (a[0] === 'inspect') {
@@ -226,6 +236,96 @@ const failed = (r) => {
   assert.equal(r.error, undefined);
   assert.notEqual(r.status, 0, r.stdout + r.stderr);
 };
+
+// The former max-schema-only decision allowed C to migrate and restore A even
+// though compatibility had only exercised B. Run the real transaction twice:
+// B fails health and leaves A current; C must then be rejected before Compose.
+test("tested predecessor rejects skipped or failed intermediate B before C can migrate A", (t) => {
+  const aState = state().replace(
+    "SCHEMA_VERSION=1\nMAX_SCHEMA_VERSION=2",
+    "SCHEMA_VERSION=18\nMAX_SCHEMA_VERSION=19",
+  );
+  for (const failedB of [false, true]) {
+    const f = fixture(t, {
+      state: aState,
+      metadata: `${source}|v1.2.0|${revision}|18|19`,
+      priorMetadata: `${source}|v1.1.0|${revision}|18|19`,
+      health: "exited|unhealthy|0",
+    });
+    writeFileSync(join(f.root, "active"), old);
+    if (failedB) {
+      failed(f.run());
+      assert.deepEqual(
+        upCommands(f).map((c) => c.image),
+        [target, old],
+      );
+      assert.equal(f.read("current"), aState);
+    }
+    const config = join(f.root, "options.json");
+    const options = JSON.parse(readFileSync(config, "utf8"));
+    writeFileSync(
+      config,
+      JSON.stringify({
+        ...options,
+        target: stale,
+        metadata: `${source}|v1.3.0|${revision}|19|20`,
+        testedPredecessor: target,
+      }),
+    );
+    const before = f.commands().length;
+    const result = f.run([stale]);
+    failed(result);
+    assert.match(result.stderr, /tested predecessor.*current/i);
+    assert.equal(
+      f
+        .commands()
+        .slice(before)
+        .some((c) => c.name === "docker-compose"),
+      false,
+      "C must never get a chance to apply its destructive migration",
+    );
+    assert.equal(f.read("current"), aState);
+    assert.equal(readFileSync(join(f.root, "active"), "utf8"), old);
+  }
+});
+
+test("tested predecessor rejects invalid labels and a schema-changing mismatch before mutation", (t) => {
+  for (const testedPredecessor of [
+    stale,
+    "none",
+    null,
+    "",
+    old.toUpperCase(),
+    old + "\n",
+    old + "\0",
+    old + ";id",
+    "ghcr.io/vndee/ship.live:v1.1.0",
+    old.replace("ship.live", "other"),
+  ]) {
+    const f = fixture(t, { testedPredecessor });
+    failed(f.run());
+    notMutated(f);
+    assert.equal(f.read("current"), state());
+  }
+});
+
+test("tested predecessor preserves same-schema releases but reserves sentinel for empty bootstrap state", (t) => {
+  const same = fixture(t, {
+    testedPredecessor: stale,
+    metadata: metadata.replace("|2|3", "|1|2"),
+  });
+  assert.equal(same.run().status, 0);
+  const bootstrap = fixture(t, { bootstrap: true });
+  assert.equal(bootstrap.run().status, 0);
+  for (const options of [
+    { bootstrap: true, testedPredecessor: old },
+    { testedPredecessor: "none", metadata: metadata.replace("|2|3", "|1|2") },
+  ]) {
+    const f = fixture(t, options);
+    failed(f.run());
+    notMutated(f);
+  }
+});
 function bootstrapBackup(f, legacy, approvedTarget = target) {
   const backup = join(f.root, "bootstrap");
   mkdirSync(backup);

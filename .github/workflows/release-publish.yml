@@ -228,12 +228,42 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes skopeo
-      - name: Build the current runtime once and load the same result locally
-        id: build
+      - name: Resolve and validate the published predecessor before building
+        id: predecessor
         run: |
           set -euo pipefail
-          node --import tsx deploy/image-metadata.mjs "$VERSION" "$REVISION" > "$RUNNER_TEMP/release-metadata"
-          # The metadata helper emits only validated version, SHA, and integers.
+          if [[ -z "$PREVIOUS_TAG" ]]; then
+            [[ -z "$PREVIOUS_REVISION" && "$PRODUCTION_DEPLOY_ENABLED" != true ]] || exit 1
+            echo 'image=none' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          test "$(git rev-parse "refs/tags/$PREVIOUS_TAG^{commit}")" = "$PREVIOUS_REVISION"
+          # Resolve once; every subsequent read and execution uses the digest.
+          # Missing/unpublished predecessors and registry errors fail closed.
+          skopeo inspect --no-creds --raw "docker://$IMAGE_REPOSITORY:$PREVIOUS_TAG" > "$RUNNER_TEMP/previous-manifest.json"
+          previous_digest="$(skopeo manifest-digest "$RUNNER_TEMP/previous-manifest.json")"
+          [[ "$previous_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          previous_image="$IMAGE_REPOSITORY@$previous_digest"
+          [[ "$previous_image" =~ ^ghcr\.io/vndee/ship\.live@sha256:[0-9a-f]{64}$ ]] || exit 1
+          skopeo inspect --no-creds --config "docker://$previous_image" \
+            | jq -e --arg version "$PREVIOUS_TAG" --arg revision "$PREVIOUS_REVISION" '
+              .architecture == "amd64" and .os == "linux" and
+              (.config.Labels | .["org.opencontainers.image.source"] == "https://github.com/vndee/ship.live" and
+                .["org.opencontainers.image.version"] == $version and
+                .["org.opencontainers.image.revision"] == $revision and
+                (.["io.ship-live.schema-version"] | type == "string" and test("^[1-9][0-9]{0,8}$")) and
+                (.["io.ship-live.max-schema-version"] | type == "string" and test("^[1-9][0-9]{0,8}$")) and
+                ((.["io.ship-live.max-schema-version"] | tonumber) >= (.["io.ship-live.schema-version"] | tonumber)))' > /dev/null
+          docker pull "$previous_image"
+          echo "image=$previous_image" >> "$GITHUB_OUTPUT"
+      - name: Build the current runtime once and load the same result locally
+        id: build
+        env:
+          TESTED_PREDECESSOR: ${{ steps.predecessor.outputs.image }}
+        run: |
+          set -euo pipefail
+          node --import tsx deploy/image-metadata.mjs "$VERSION" "$REVISION" "$TESTED_PREDECESSOR" > "$RUNNER_TEMP/release-metadata"
+          # The helper emits validated version, SHA, integers, and digest/sentinel.
           # shellcheck disable=SC1091
           source "$RUNNER_TEMP/release-metadata"
           docker buildx build --load --platform linux/amd64 --target runtime \
@@ -243,34 +273,35 @@ jobs:
             --build-arg "RELEASE_VERSION=$VERSION" \
             --build-arg "VCS_REVISION=$REVISION" \
             --build-arg "SCHEMA_VERSION=$SCHEMA_VERSION" \
-            --build-arg "MAX_SCHEMA_VERSION=$MAX_SCHEMA_VERSION" .
+            --build-arg "MAX_SCHEMA_VERSION=$MAX_SCHEMA_VERSION" \
+            --build-arg "TESTED_PREDECESSOR=$TESTED_PREDECESSOR" .
           skopeo inspect --raw "oci-archive:$RUNNER_TEMP/release-image.tar" > "$RUNNER_TEMP/local-manifest.json"
           test "$(jq -er '.config.digest' "$RUNNER_TEMP/local-manifest.json")" = \
             "$(docker image inspect "$LOCAL_IMAGE" --format '{{.Id}}')"
           test "$(docker image inspect "$LOCAL_IMAGE" --format '{{.Os}}/{{.Architecture}}')" = linux/amd64
       - name: Smoke-test the loaded current image
         id: smoke
+        env:
+          SHIP_LIVE_TEST_PREDECESSOR: ${{ steps.predecessor.outputs.image }}
         run: SHIP_LIVE_TEST_IMAGE="$LOCAL_IMAGE" npm run test:docker
       - name: Prove previous-release reads and writes survive the migrated database
         id: compatibility
         env:
           DATABASE_URL: postgres://ship_live_test:ship_live_test@127.0.0.1:5432/ship_live_compatibility
+          TESTED_PREDECESSOR: ${{ steps.predecessor.outputs.image }}
         run: |
           set -euo pipefail
           if [[ -z "$PREVIOUS_TAG" ]]; then
             echo 'first stable release: no previous image compatibility target'
+            [[ "$TESTED_PREDECESSOR" = none && -z "$PREVIOUS_REVISION" ]] || exit 1
             [[ "$PRODUCTION_DEPLOY_ENABLED" != true ]] || {
               echo 'First stable release requires bootstrap with production deployment disabled' >&2
               exit 1
             }
             exit 0
           fi
-          previous_source="$RUNNER_TEMP/previous-release"
-          previous_image="ship-live-previous:$REVISION"
-          test "$(git rev-parse "refs/tags/$PREVIOUS_TAG^{commit}")" = "$PREVIOUS_REVISION"
-          git worktree add --detach "$previous_source" "refs/tags/$PREVIOUS_TAG"
-          docker buildx build --load --platform linux/amd64 --target runtime \
-            --tag "$previous_image" "$previous_source"
+          [[ "$TESTED_PREDECESSOR" =~ ^ghcr\.io/vndee/ship\.live@sha256:[0-9a-f]{64}$ ]] || exit 1
+          previous_image="$TESTED_PREDECESSOR"
           docker run --rm --network host -e DATABASE_URL --entrypoint node \
             --mount "type=bind,source=$PWD/deploy/previous-store-probe.mjs,target=/app/previous-store-probe.mjs,readonly" \
             "$previous_image" --import tsx /app/previous-store-probe.mjs seed
@@ -285,6 +316,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Guard immutable tags, publish tested bytes, and verify the remote digest
         id: publish
+        env:
+          TESTED_PREDECESSOR: ${{ steps.predecessor.outputs.image }}
         run: |
           set -euo pipefail
           expected_digest="$(skopeo manifest-digest "$RUNNER_TEMP/local-manifest.json")"
@@ -316,11 +349,12 @@ jobs:
             > "$RUNNER_TEMP/remote-manifest.json"
           cmp "$RUNNER_TEMP/local-manifest.json" "$RUNNER_TEMP/remote-manifest.json"
           skopeo inspect --authfile "$auth_file" --config "docker://$IMAGE_REPOSITORY@$expected_digest" \
-            | jq -e --arg version "$VERSION" --arg revision "$REVISION" '
+            | jq -e --arg version "$VERSION" --arg revision "$REVISION" --arg predecessor "$TESTED_PREDECESSOR" '
               .architecture == "amd64" and .os == "linux" and
               .config.Labels["org.opencontainers.image.source"] == "https://github.com/vndee/ship.live" and
               .config.Labels["org.opencontainers.image.version"] == $version and
-              .config.Labels["org.opencontainers.image.revision"] == $revision' > /dev/null
+              .config.Labels["org.opencontainers.image.revision"] == $revision and
+              .config.Labels["io.ship-live.tested-predecessor"] == $predecessor' > /dev/null
           echo "image=$IMAGE_REPOSITORY@$expected_digest" >> "$GITHUB_OUTPUT"
 
   deploy:

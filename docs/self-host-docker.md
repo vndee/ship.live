@@ -297,7 +297,12 @@ sudo /usr/local/sbin/ship-live-deploy \
 ```
 
 The transaction pulls the image, checks the required source, version,
-revision, and schema-range labels, validates Compose, recreates only `app`,
+revision, schema-range, and `io.ship-live.tested-predecessor` labels. Before a
+schema increase it requires the tested predecessor digest to equal durable
+`current.IMAGE`; mismatch fails before Compose or migrations. The first release
+uses `none` and requires empty deployment state plus the bootstrap rehearsal
+below. With established state the sentinel is rejected; same-schema releases
+may name a different immutable predecessor. The transaction then validates Compose, recreates only `app`,
 and waits up to 120 seconds. Success requires a running, Docker-healthy app
 with restart count `0`, `1`, or `2`, plus HTTPS `https://ship.duy.dev/api/health` returning
 HTTP `200` with the exact body `{"status":"ok"}`. It commits state only after
@@ -547,6 +552,13 @@ after the replacement is verified; never disable strict checking or trust
 runtime `ssh-keyscan` output as the authority.
 
 ### Failure and recovery
+
+If a schema-changing candidate was tested against B but production still runs A
+because B was skipped or failed, deployment rejects the candidate before any
+app mutation. Deploy and verify the tested predecessor first, or prepare a new
+reviewed release that covers the actual current image; never alter image labels
+or durable state to manufacture a match. Publication and operational probes use
+the immutable published predecessor, not a fresh build of its Git tag.
 
 When a target deployment fails after the app was changed, the root script
 stores `last-failure`, prints at most 100 app log lines, and rolls back to the

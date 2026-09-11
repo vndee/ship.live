@@ -17,6 +17,7 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, root), "utf8");
 const ci = read(".github/workflows/ci.yml");
+const predecessorImage = `ghcr.io/vndee/ship.live@sha256:${"e".repeat(64)}`;
 const release = () => read(".github/workflows/release.yml");
 const publisher = () => {
   assert.ok(
@@ -273,22 +274,28 @@ const command = path.basename(process.argv[1]);
 const args = process.argv.slice(2);
 const directory = process.env.RUNNER_TEMP;
 const scenario = process.env.SCENARIO;
-const manifest = fs.readFileSync(path.join(directory, 'local-manifest.json'), 'utf8');
+const manifest = fs.readFileSync(path.join(directory, 'fixture-manifest.json'), 'utf8');
 fs.appendFileSync(path.join(directory, 'calls.jsonl'), JSON.stringify([command, ...args]) + '\\n');
 if (command === 'skopeo') {
   if (args[0] === 'manifest-digest') {
-    console.log('sha256:' + crypto.createHash('sha256').update(fs.readFileSync(args[1])).digest('hex'));
+    console.log(args[1].endsWith('previous-manifest.json') ? 'sha256:' + (scenario === 'previous-invalid-digest' ? 'E' : 'e').repeat(64) : 'sha256:' + crypto.createHash('sha256').update(fs.readFileSync(args[1])).digest('hex'));
   } else if (args[0] === 'copy') {
     if (!args.includes('--preserve-digests')) process.exit(92);
     fs.writeFileSync(path.join(directory, 'copied'), 'yes');
   } else if (args[0] === 'inspect') {
     if (args.includes('--config')) {
+      const previous = args.at(-1).endsWith('@sha256:' + 'e'.repeat(64));
       console.log(JSON.stringify({ architecture: 'amd64', os: 'linux', config: { Labels: {
         'org.opencontainers.image.source': 'https://github.com/vndee/ship.live',
-        'org.opencontainers.image.version': scenario === 'wrong-label' ? 'v9.0.0' : 'v1.2.3',
-        'org.opencontainers.image.revision': process.env.REVISION
+        'org.opencontainers.image.version': scenario === 'wrong-label' ? 'v9.0.0' : previous ? process.env.PREVIOUS_TAG : 'v1.2.3',
+        'org.opencontainers.image.revision': previous ? scenario === 'previous-wrong-revision' ? 'f'.repeat(40) : process.env.PREVIOUS_REVISION : process.env.REVISION,
+        'io.ship-live.schema-version': scenario === 'previous-invalid-schema' ? '18\\n' : '18',
+        'io.ship-live.max-schema-version': scenario === 'previous-low-max' ? '17' : '19',
+        'io.ship-live.tested-predecessor': scenario === 'wrong-predecessor' ? 'none' : process.env.TESTED_PREDECESSOR
       } } }));
-    } else if (fs.existsSync(path.join(directory, 'copied')) || scenario === 'existing') {
+    } else if (args.at(-1).endsWith(':' + process.env.PREVIOUS_TAG) && scenario !== 'previous-unpublished') {
+      process.stdout.write(manifest);
+    } else if (args.at(-1).startsWith('oci-archive:') || fs.existsSync(path.join(directory, 'copied')) || scenario === 'existing') {
       process.stdout.write(scenario === 'remote-mismatch' ? '{}' : manifest);
     } else if (scenario === 'version-conflict' || (scenario === 'sha-conflict' && args.at(-1).includes(':sha-'))) {
       process.stdout.write('{}');
@@ -298,6 +305,8 @@ if (command === 'skopeo') {
     }
   } else process.exit(93);
 } else if (command === 'docker') {
+  if (args[0] === 'image' && args[1] === 'inspect') console.log(args.includes('{{.Id}}') ? 'sha256:' + 'b'.repeat(64) : 'linux/amd64');
+  if (args[0] === 'pull' && scenario === 'previous-pull-failed') process.exit(1);
   if (args.includes('manifest') && scenario === 'anonymous-auth') {
     const config = args[args.indexOf('--config') + 1];
     if (process.env.DOCKER_AUTH_CONFIG !== undefined) process.exit(96);
@@ -307,7 +316,7 @@ if (command === 'skopeo') {
   }
   if (args.includes('manifest') && scenario === 'private-image') process.exit(1);
   if (args[0] === 'run' && scenario === 'current-migration-failed' && args.includes(process.env.LOCAL_IMAGE)) process.exit(1);
-  if (args[0] === 'run' && scenario === 'previous-migration-failed' && args.some(arg => arg.startsWith('ship-live-previous:'))) process.exit(1);
+  if (args[0] === 'run' && scenario === 'previous-migration-failed' && args.includes(process.env.TESTED_PREDECESSOR)) process.exit(1);
   if (args[0] === 'run' && scenario === 'previous-probe-failed' && args.at(-1) === 'verify') process.exit(1);
 } else if (command === 'git') {
   if (args[0] === 'rev-parse') console.log(scenario === 'moved-previous-tag' ? 'd'.repeat(40) : process.env.PREVIOUS_REVISION);
@@ -332,7 +341,9 @@ if (command === 'skopeo') {
   try {
     for (const command of ["skopeo", "docker", "git", "ssh", "gh"])
       writeFileSync(join(directory, command), program, { mode: 0o755 });
+    symlinkSync(process.execPath, join(directory, "node"));
     writeFileSync(join(directory, "local-manifest.json"), manifest);
+    writeFileSync(join(directory, "fixture-manifest.json"), manifest);
     const script = step(job(publisher(), jobName), stepId)
       .split("        run: |\n")[1]
       ?.replace(/^          /gm, "");
@@ -341,6 +352,7 @@ if (command === 'skopeo') {
       encoding: "utf8",
       env: {
         ...process.env,
+        BASH_ENV: "",
         PATH: `${directory}${delimiter}${process.env.PATH}`,
         RUNNER_TEMP: directory,
         GITHUB_OUTPUT: output,
@@ -354,6 +366,7 @@ if (command === 'skopeo') {
         GITHUB_RUN_ID: "12345",
         PREVIOUS_TAG: "v1.2.2",
         PREVIOUS_REVISION: "c".repeat(40),
+        TESTED_PREDECESSOR: predecessorImage,
         LOCAL_IMAGE: "ship-live-release:fixture",
         PRODUCTION_DEPLOY_ENABLED: "true",
         DATABASE_URL: "postgres://fixture",
@@ -504,7 +517,11 @@ test("publication of absent or identical tags returns only the verified digest",
 });
 
 test("a changed remote manifest or incorrect release labels never produce deploy output", () => {
-  for (const scenario of ["remote-mismatch", "wrong-label"]) {
+  for (const scenario of [
+    "remote-mismatch",
+    "wrong-label",
+    "wrong-predecessor",
+  ]) {
     const result = runWorkflowStep("publish", "publish", scenario);
     assert.notEqual(result.status, 0, scenario);
     assert.equal(result.output, "", scenario);
@@ -515,6 +532,8 @@ test("first-release compatibility allows only deployment-disabled bootstrap", ()
   for (const enabled of ["true", "false", ""]) {
     const result = runWorkflowStep("publish", "compatibility", "missing", {
       PREVIOUS_TAG: "",
+      PREVIOUS_REVISION: "",
+      TESTED_PREDECESSOR: "none",
       PRODUCTION_DEPLOY_ENABLED: enabled,
     });
     assert.equal(result.status, enabled === "true" ? 1 : 0, result.stderr);
@@ -524,6 +543,91 @@ test("first-release compatibility allows only deployment-disabled bootstrap", ()
       /first stable release: no previous image compatibility target/,
     );
   }
+});
+
+// A rebuilt source tag may differ from the shipped image. Operational probes
+// must execute precisely the digest that the candidate advertises for rollback.
+test("tested predecessor compatibility executes immutable published bytes without a previous build", () => {
+  const result = runWorkflowStep("publish", "compatibility");
+  assert.equal(result.status, 0, result.stderr);
+  const runs = result.calls.filter((c) => c[0] === "docker" && c[1] === "run");
+  assert.equal(runs.length, 3);
+  assert.ok(runs[0].includes(predecessorImage));
+  assert.ok(runs[2].includes(predecessorImage));
+  assert.equal(
+    result.calls.some((c) => c.includes("build") || c.includes("worktree")),
+    false,
+  );
+});
+
+test("tested predecessor is resolved and label-validated before the one current build", () => {
+  const resolution = runWorkflowStep("publish", "predecessor");
+  assert.equal(resolution.status, 0, resolution.stderr);
+  assert.equal(resolution.output, `image=${predecessorImage}\n`);
+  assert.ok(
+    resolution.calls.some(
+      (c) =>
+        c.includes("--config") && c.at(-1) === `docker://${predecessorImage}`,
+    ),
+  );
+  assert.ok(
+    resolution.calls.some(
+      (c) => c[0] === "docker" && c[1] === "pull" && c[2] === predecessorImage,
+    ),
+  );
+  for (const scenario of [
+    "previous-unpublished",
+    "previous-wrong-revision",
+    "previous-invalid-schema",
+    "previous-invalid-digest",
+    "previous-low-max",
+    "moved-previous-tag",
+    "wrong-label",
+  ]) {
+    const rejected = runWorkflowStep("publish", "predecessor", scenario);
+    assert.notEqual(rejected.status, 0, scenario);
+    assert.equal(rejected.output, "", scenario);
+    assert.equal(
+      rejected.calls.some((c) => c[0] === "docker"),
+      false,
+      scenario,
+    );
+  }
+  const build = runWorkflowStep("publish", "build");
+  assert.equal(build.status, 0, build.stderr + JSON.stringify(build.calls));
+  const builds = build.calls.filter(
+    (c) => c[0] === "docker" && c[2] === "build",
+  );
+  assert.equal(builds.length, 1);
+  assert.ok(builds[0].includes(`TESTED_PREDECESSOR=${predecessorImage}`));
+});
+
+test("tested predecessor resolution permits only a consistent deployment-disabled first release", () => {
+  const good = {
+    PREVIOUS_TAG: "",
+    PREVIOUS_REVISION: "",
+    PRODUCTION_DEPLOY_ENABLED: "false",
+  };
+  const result = runWorkflowStep("publish", "predecessor", "missing", good);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.output, "image=none\n");
+  assert.deepEqual(result.calls, []);
+  for (const overrides of [
+    { ...good, PRODUCTION_DEPLOY_ENABLED: "true" },
+    { ...good, PREVIOUS_REVISION: "c".repeat(40) },
+  ]) {
+    const bad = runWorkflowStep("publish", "predecessor", "missing", overrides);
+    assert.notEqual(bad.status, 0);
+    assert.equal(bad.output, "");
+    assert.deepEqual(bad.calls, []);
+  }
+  const pullFailure = runWorkflowStep(
+    "publish",
+    "predecessor",
+    "previous-pull-failed",
+  );
+  assert.notEqual(pullFailure.status, 0);
+  assert.equal(pullFailure.output, "");
 });
 
 test("compatibility seeds previous data, migrates current, then probes previous operations", () => {
@@ -546,12 +650,12 @@ test("compatibility seeds previous data, migrates current, then probes previous 
           ? 2
           : 3,
     );
-    assert.ok(migrations[0].includes(`ship-live-previous:${"a".repeat(40)}`));
+    assert.ok(migrations[0].includes(predecessorImage));
     assert.equal(migrations[0].at(-1), "seed");
     if (migrations.length >= 2)
       assert.ok(migrations[1].includes("ship-live-release:fixture"));
     if (migrations.length === 3) {
-      assert.ok(migrations[2].includes(`ship-live-previous:${"a".repeat(40)}`));
+      assert.ok(migrations[2].includes(predecessorImage));
       assert.equal(migrations[2].at(-1), "verify");
       assert.ok(
         migrations[2].some((arg) =>
@@ -567,7 +671,7 @@ test("compatibility seeds previous data, migrates current, then probes previous 
 test("compatibility refuses a previous tag moved after release validation", () => {
   const result = runWorkflowStep(
     "publish",
-    "compatibility",
+    "predecessor",
     "moved-previous-tag",
   );
   assert.notEqual(result.status, 0);
@@ -852,8 +956,8 @@ test("the one current build is loaded, smoke-tested, then compatibility-tested b
   const publish = job(publisher(), "publish");
   assert.equal(
     (publish.match(/docker buildx build/g) ?? []).length,
-    2,
-    "Only the current and previous runtime builds are allowed",
+    1,
+    "Only the current image is built; the published predecessor must be used by digest",
   );
   const build = step(publish, "build");
   assert.match(build, /--platform linux\/amd64/);
@@ -869,27 +973,43 @@ test("the one current build is loaded, smoke-tested, then compatibility-tested b
     "VCS_REVISION",
     "SCHEMA_VERSION",
     "MAX_SCHEMA_VERSION",
+    "TESTED_PREDECESSOR",
   ])
     assert.ok(build.includes(`--build-arg "${argument}=`));
   assert.match(
     step(publish, "smoke"),
     /SHIP_LIVE_TEST_IMAGE="\$LOCAL_IMAGE" npm run test:docker/,
   );
-  const ids = ["build", "smoke", "compatibility", "publish"].map((id) =>
-    publish.indexOf(`id: ${id}\n`),
+  const ids = ["predecessor", "build", "smoke", "compatibility", "publish"].map(
+    (id) => publish.indexOf(`id: ${id}\n`),
   );
   assert.ok(
     ids.every((offset, index) => index === 0 || offset > ids[index - 1]),
   );
-  for (const id of ["build", "smoke", "compatibility", "publish"])
+  for (const id of [
+    "predecessor",
+    "build",
+    "smoke",
+    "compatibility",
+    "publish",
+  ])
     assert.doesNotMatch(step(publish, id), /^        if:/m);
+  for (const id of ["build", "compatibility", "publish"])
+    assert.match(
+      step(publish, id),
+      /TESTED_PREDECESSOR: \$\{\{ steps.predecessor.outputs.image \}\}/,
+    );
+  assert.match(
+    step(publish, "smoke"),
+    /SHIP_LIVE_TEST_PREDECESSOR: \$\{\{ steps.predecessor.outputs.image \}\}/,
+  );
   assert.doesNotMatch(
-    publish.slice(0, ids[3]),
+    publish.slice(0, ids[4]),
     /docker push|skopeo copy[^\n]*docker:\/\//,
   );
 });
 
-test("the exact previous tag opens the new schema, with fail-closed bootstrap", () => {
+test("the exact published predecessor opens the new schema, with fail-closed bootstrap", () => {
   const publish = job(publisher(), "publish");
   assert.match(publish, /POSTGRES_DB: ship_live_compatibility/);
   const compatibility = step(publish, "compatibility");
@@ -901,14 +1021,8 @@ test("the exact previous tag opens the new schema, with fail-closed bootstrap", 
     compatibility,
     /\[\[ "\$PRODUCTION_DEPLOY_ENABLED" != true \]\]/,
   );
-  assert.match(
-    compatibility,
-    /git worktree add --detach "\$previous_source" "refs\/tags\/\$PREVIOUS_TAG"/,
-  );
-  assert.match(
-    compatibility,
-    /docker buildx build --load --platform linux\/amd64 --target runtime/,
-  );
+  assert.match(compatibility, /previous_image="\$TESTED_PREDECESSOR"/);
+  assert.doesNotMatch(compatibility, /git worktree|docker build/);
   assert.match(
     compatibility,
     /docker run --rm --network host -e DATABASE_URL "\$LOCAL_IMAGE" npm run db:migrate/,
