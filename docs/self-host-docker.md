@@ -150,16 +150,18 @@ set -euo pipefail
 umask 077
 anonymous_config="$(mktemp -d "${TMPDIR:-/tmp}/ship-live-anonymous-registry.XXXXXX")"
 trap 'rm -rf -- "$anonymous_config"' EXIT
-docker --config "$anonymous_config" pull \
+printf '%s\n' '{"auths":{"ghcr.io":{}}}' > "$anonymous_config/config.json"
+env -u DOCKER_AUTH_CONFIG docker --config "$anonymous_config" pull \
   ghcr.io/vndee/ship.live@sha256:<digest-from-publish-job>
 docker image inspect ghcr.io/vndee/ship.live@sha256:<digest-from-publish-job> \
   --format '{{ index .Config.Labels "org.opencontainers.image.version" }} {{ index .Config.Labels "org.opencontainers.image.revision" }} {{ index .Config.Labels "io.ship-live.schema-version" }} {{ index .Config.Labels "io.ship-live.max-schema-version" }}'
 ```
 
-The empty temporary Docker config prevents a locally cached credential or
-credential helper from making a private package appear public; the trap removes
-it on success or failure. The displayed version and revision must match the
-Release and its exact tag commit. Configure the GitHub `production`
+The explicit empty GHCR auth map prevents Docker from auto-selecting a native
+credential helper, and unsetting `DOCKER_AUTH_CONFIG` prevents injected
+credentials from making a private package appear public. The trap removes the
+temporary config on success or failure. The displayed version and revision must
+match the Release and its exact tag commit. Configure the GitHub `production`
 environment with exactly these four connection values:
 
 | Kind     | Name                 | Value                                                                |
