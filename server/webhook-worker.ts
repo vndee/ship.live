@@ -16,6 +16,7 @@ import {
   type AccessCheck,
   type ClaimedDelivery,
   type DeliveryOutcome,
+  ownerMaySee,
 } from "./webhook-outbox.js";
 import { larkSignature, shipSignature } from "./webhook-signing.js";
 import { scheduleDigests, withDigest } from "./digest.js";
@@ -180,8 +181,32 @@ export async function performDelivery(
   /** Completes events built at send time, such as a webhook's digest. */
   enrich: (claim: ClaimedDelivery) => Promise<WebhookEvent> = async () =>
     claim.event,
+  /** Whether the webhook's owner may still receive this event. */
+  authorize: (claim: ClaimedDelivery) => Promise<boolean> = async () => true,
 ): Promise<DeliveryOutcome> {
   const attempt = claim.attempts + 1;
+  try {
+    if (!(await authorize(claim)))
+      return {
+        status: "failed",
+        requestBody: "",
+        responseStatus: null,
+        responseBody: null,
+        error:
+          "Not sent: the webhook's owner no longer has access to this event.",
+      };
+  } catch {
+    return attempt >= MAX_ATTEMPTS
+      ? finalFailure("Access to the event could not be checked.")
+      : {
+          status: "pending",
+          requestBody: "",
+          responseStatus: null,
+          responseBody: null,
+          error: "Access to the event could not be checked; retrying.",
+          retryInSeconds: RETRY_SECONDS[attempt - 1],
+        };
+  }
   let event: WebhookEvent;
   try {
     event = await enrich(claim);
@@ -266,7 +291,14 @@ export function startWebhookWorker({
         pool,
         concurrency - active.size,
       )) {
-        const task = performDelivery(store, claim, send, Date.now(), enrich)
+        const task = performDelivery(
+          store,
+          claim,
+          send,
+          Date.now(),
+          enrich,
+          (item) => ownerMaySee(access, item),
+        )
           .then(async (outcome) => {
             deliveries.inc({ outcome: outcome.status });
             await completeDelivery(pool, claim, outcome);

@@ -49,7 +49,8 @@ export async function scheduleDigests(
       await recordWorkspaceEvent(client, workspace_id, {
         type: "digest.weekly",
         dedupeKey: `digest:${weekStart}`,
-        occurredAt: new Date(now).toISOString(),
+        // Routing compares this with each webhook's creation time.
+        occurredAt: new Date(sendAt).toISOString(),
         summary: `Weekly digest for the week of ${weekStart}`,
         data: { weekStart, weekEnd: day(monday - DAY) },
       });

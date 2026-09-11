@@ -20,7 +20,10 @@ export function RouteLink({
           event.metaKey ||
           event.ctrlKey ||
           event.shiftKey ||
-          event.altKey
+          event.altKey ||
+          // New tabs and downloads keep the browser's own behavior.
+          (props.target !== undefined && props.target !== "_self") ||
+          (props.download !== undefined && props.download !== false)
         )
           return;
         event.preventDefault();

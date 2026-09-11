@@ -136,7 +136,7 @@ With **Lark** signing and the bot's secret, each delivery computes Lark's `sign`
 
 ## Privacy
 
-Team members may see different repositories. Saving a webhook pins the saver's current repositories to it, like a share link, and every delivery also requires that person to still be a member with access to the repository. Activity and CI events from other repositories never reach the webhook, and the weekly digest counts only the webhook's repositories. Saving someone else's webhook makes you its owner. Service Health events and incidents are visible to every team member and are not narrowed.
+Team members may see different repositories. Saving a webhook pins the saver's current repositories to it, like a share link, and every delivery also requires that person to still be a member with access to the repository, checked again before every attempt, including retries. Activity and CI events from other repositories never reach the webhook, and the weekly digest counts only the webhook's repositories. Saving someone else's webhook makes you its owner. Service Health events and incidents are visible to every team member and are not narrowed.
 
 ## Inbound webhooks
 

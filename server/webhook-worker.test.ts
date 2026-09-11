@@ -12,6 +12,7 @@ import { activityOutboxEvent, healthOutboxEvents } from "./webhook-events.js";
 import {
   claimDeliveries,
   completeDelivery,
+  ownerMaySee,
   recordInstallationEvent,
   recordWorkspaceEvent,
   routeEvents,
@@ -214,6 +215,36 @@ test("deliveries are signed, retried with backoff, and final on success", async 
         finished: true,
       },
     ]);
+  });
+});
+
+test("a delivery is not sent once its owner has lost access", async (t) => {
+  await withWebhook(t, {}, async ({ pool, store, user }) => {
+    await recordInstallationEvent(pool, 99, activityOutboxEvent(merge("a"))!);
+    await routeEvents(pool, async (id) =>
+      id === user ? new Set([7]) : undefined,
+    );
+    const [claim] = await claimDeliveries(pool, 4);
+    assert.equal(claim.repositoryId, 7);
+    assert.equal(await ownerMaySee(async () => new Set([7]), claim), true);
+    // The owner no longer sees the repository, or has left the team.
+    assert.equal(await ownerMaySee(async () => new Set([8]), claim), false);
+    assert.equal(await ownerMaySee(async () => undefined, claim), false);
+    let sent = 0;
+    const outcome = await performDelivery(
+      store,
+      claim,
+      async () => {
+        sent += 1;
+        return reply(200)();
+      },
+      Date.now(),
+      undefined,
+      (item) => ownerMaySee(async () => undefined, item),
+    );
+    assert.equal(sent, 0);
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.error ?? "", /no longer has access/);
   });
 });
 

@@ -7,7 +7,7 @@ import { mondayOf, scheduleDigests, withDigest } from "./digest.js";
 import { PostgresEventStore } from "./postgres-store.js";
 import { SecretBox } from "./secret-box.js";
 import { createTestDatabase } from "./test-database.js";
-import { webhookEvent } from "./webhook-outbox.js";
+import { routeEvents, webhookEvent } from "./webhook-outbox.js";
 import { WebhookStore } from "./webhook-store.js";
 
 test("weeks start on Monday in UTC", () => {
@@ -101,6 +101,18 @@ test("last week's digest is queued once, after Monday 09:00 UTC, for webhooks th
         data: { weekStart: "2026-08-31", weekEnd: "2026-09-06" },
       },
     ]);
+    // A webhook added to the same team after the send time starts next week.
+    const second = await listen(pool, workspace, user);
+    await pool.query(
+      "UPDATE ship_live_webhooks SET created_at = '2026-09-07T10:00:00Z' WHERE id = $1",
+      [second.webhook.id],
+    );
+    await routeEvents(pool, async () => new Set([7]));
+    const deliveries = await pool.query<{ webhook_id: string }>(
+      "SELECT webhook_id FROM ship_live_webhook_deliveries",
+    );
+    assert.equal(deliveries.rows.length, 1);
+    assert.notEqual(deliveries.rows[0].webhook_id, second.webhook.id);
   });
 });
 

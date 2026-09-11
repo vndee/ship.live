@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   BookOpen,
@@ -313,7 +313,10 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     setDetailId(null);
   }, [feed.organization]);
   const onFeedRef = useRef(onFeed);
-  onFeedRef.current = onFeed;
+  // Updated after commit, so the key listener never sees a discarded render.
+  useLayoutEffect(() => {
+    onFeedRef.current = onFeed;
+  }, [onFeed]);
   useEffect(() => {
     const reduced = matchMedia("(prefers-reduced-motion: reduce)");
     const onReduced = () => {

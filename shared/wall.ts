@@ -36,6 +36,10 @@ export interface PipelineState {
   startedAt?: string;
   completedAt?: string;
   updatedAt: string;
+  /** The branch it ran for, when GitHub reports one. */
+  branch?: string;
+  /** The pipeline's last finished result, carried through reruns and commits. */
+  settled?: "passing" | "failing";
 }
 
 export interface DeploymentState {

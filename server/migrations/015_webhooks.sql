@@ -148,3 +148,8 @@ BEGIN
     END LOOP;
   END LOOP;
 END $$;
+
+-- CI transitions compare each run with the latest run of the same pipeline.
+CREATE INDEX ship_live_wall_signals_pipeline_idx
+  ON ship_live_wall_signals (installation_id, repository_id, (value->>'name'), observed_at DESC)
+  WHERE kind = 'pipeline';

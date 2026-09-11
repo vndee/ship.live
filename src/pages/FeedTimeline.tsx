@@ -34,7 +34,7 @@ export function FeedTimeline({
           max="100"
           step="0.1"
           value={percent}
-          aria-valuetext={clock(cutoff, "7d")}
+          aria-valuetext={clock(cutoff, period)}
           onChange={(e) => onScrub(Number(e.target.value))}
         />
         <div className="timeline-labels">
