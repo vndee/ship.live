@@ -95,7 +95,8 @@ export function observeActivity(
       const timestamp = Date.parse(event.occurredAt);
       return (
         !previous.seen.has(event.id) &&
-        isHumanActor(event.actor.login) &&
+        // An alert is named after its endpoint, which may look like a bot.
+        (event.type === "alert" || isHumanActor(event.actor.login)) &&
         timestamp <= now &&
         timestamp >= Math.max(now - 120000, state.acceptAfter)
       );

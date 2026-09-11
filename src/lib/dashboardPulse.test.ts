@@ -176,7 +176,7 @@ test("resuming ignores activity from the pause even when its snapshot arrives la
 
 test("new alerts are highlighted but never celebrated", () => {
   const first = observeActivity(undefined, [event("first")], now);
-  const alert = event("alert-1", "alert", now + 1000, "Grafana");
+  const alert = event("alert-1", "alert", now + 1000, "sentry-bot");
   const quiet = observeActivity(
     first.state,
     [event("first"), alert],
