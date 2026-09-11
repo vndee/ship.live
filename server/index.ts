@@ -66,15 +66,14 @@ async function main(): Promise<void> {
       store.pool,
       process.env.TOKEN_ENCRYPTION_KEY?.trim(),
     );
-    const webhooks = new WebhookStore(
-      store.pool,
-      new SecretBox(process.env.TOKEN_ENCRYPTION_KEY?.trim()),
-    );
+    const secrets = new SecretBox(process.env.TOKEN_ENCRYPTION_KEY?.trim());
+    const webhooks = new WebhookStore(store.pool, secrets);
     const app = createWorkspaceApp({
       auth,
       store,
       workspaces,
       webhooks,
+      secrets,
       github: githubConfig ? new GitHubApp(githubConfig) : undefined,
       webhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim(),
       trustProxyHops: trustProxyHopsFromEnv(),

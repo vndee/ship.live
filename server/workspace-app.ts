@@ -36,6 +36,7 @@ import type {
   WorkspaceStore,
 } from "./workspace-store.js";
 import { healthRouter } from "./health-app.js";
+import type { SecretBox } from "./secret-box.js";
 import { dashboardShareRouter, healthShareRouter } from "./share-app.js";
 import { normalizeWallWebhook } from "./wall-normalize.js";
 import { WallStore } from "./wall-store.js";
@@ -61,6 +62,8 @@ interface WorkspaceAppOptions {
   responseHeaders?: Readonly<Record<string, string>>;
   /** Outbound and inbound webhooks; without it their routes are absent. */
   webhooks?: WebhookStore;
+  /** Encrypts share links, so their creators can copy them again. */
+  secrets?: SecretBox;
 }
 interface Viewer {
   workspace: Workspace;
@@ -104,6 +107,7 @@ export function createWorkspaceApp({
   metricsToken,
   responseHeaders,
   webhooks,
+  secrets,
 }: WorkspaceAppOptions): Express {
   if (
     !Number.isSafeInteger(trustProxyHops) ||
@@ -700,10 +704,28 @@ export function createWorkspaceApp({
   if (webhooks) app.use(inboundReceiver({ webhooks, pool: store.pool }));
   app.use(express.json({ limit: "64kb" }));
   app.use(auth.router);
-  app.use(dashboardShareRouter({ auth, store, workspaces, github, viewer }));
+  app.use(
+    dashboardShareRouter({
+      auth,
+      store,
+      workspaces,
+      github,
+      viewer,
+      secrets,
+    }),
+  );
   app.use(healthRouter({ auth, store, workspaces, viewer }));
   if (webhooks) app.use(webhookRouter({ auth, webhooks, viewer }));
-  app.use(healthShareRouter({ auth, store, workspaces, github, viewer }));
+  app.use(
+    healthShareRouter({
+      auth,
+      store,
+      workspaces,
+      github,
+      viewer,
+      secrets,
+    }),
+  );
 
   // Authorizations that predate stored access, or whose first sync failed, get
   // one automatic snapshot. Failures back off so polling cannot hammer GitHub.

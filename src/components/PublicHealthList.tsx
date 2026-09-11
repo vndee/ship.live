@@ -7,7 +7,7 @@ import { HealthServiceStats, HealthStatsInfo } from "./HealthServiceStats";
 import { LatencyChart } from "./LatencyChart";
 import { ServiceStatusStrip } from "./ServiceStatusStrip";
 import { UptimeStrip } from "./UptimeStrip";
-import { uptimeDays } from "../lib/uptime";
+import { formatUptime, uptimeDays } from "../lib/uptime";
 import "./service-health.css";
 
 export function publicProbeStatus(
@@ -126,7 +126,7 @@ export function PublicHealthList({
                         <strong>
                           {probe.successRate24h === null
                             ? "—"
-                            : `${probe.successRate24h.toFixed(1)}%`}{" "}
+                            : formatUptime(probe.successRate24h)}{" "}
                           <small>({probe.checks24h} checks)</small>
                         </strong>
                       </span>
@@ -145,33 +145,6 @@ export function PublicHealthList({
                       windows={probe.latency24h}
                       now={now}
                     />
-                    <div
-                      className="health-history"
-                      role="img"
-                      aria-label={`Recent checks for ${probe.name}, oldest to newest: ${
-                        probe.history
-                          .slice(0, 40)
-                          .reverse()
-                          .map((check) => (check.ok ? "passed" : "failed"))
-                          .join(", ") || "no checks"
-                      }`}
-                    >
-                      {probe.history
-                        .slice(0, 40)
-                        .reverse()
-                        .map((check, index) => (
-                          <span
-                            key={`${check.checkedAt}-${index}`}
-                            className={check.ok ? "health-pass" : "health-fail"}
-                            title={`${new Date(check.checkedAt).toLocaleString()} · ${check.ok ? "Passed" : "Failed"} · ${Math.round(check.latencyMs)} ms`}
-                          />
-                        ))}
-                      {!probe.history.length && (
-                        <span className="health-no-history">
-                          No recorded checks
-                        </span>
-                      )}
-                    </div>
                     <details className="health-timeline">
                       <summary>State-change timeline</summary>
                       <ul>

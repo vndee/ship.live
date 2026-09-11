@@ -114,6 +114,17 @@
 .health-service-details {
   animation: health-expand 160ms ease-out;
 }
+/* Sections above the probes, such as the uptime strip, incidents, and
+   maintenance, share the probes' inset instead of touching the card edges. */
+.health-service-details > :not(.health-probe, .health-empty) {
+  margin: 16px 20px;
+}
+@media (max-width: 600px) {
+  /* Probes use 16px here too. */
+  .health-service-details > :not(.health-probe, .health-empty) {
+    margin: 14px 16px;
+  }
+}
 .health-service h3 {
   font-size: 15px;
   margin: 0;
@@ -178,28 +189,6 @@
   color: var(--muted);
   font-size: 12px;
   font-weight: 400;
-}
-.health-history {
-  display: flex;
-  align-items: stretch;
-  gap: 4px;
-  height: 23px;
-  margin: 13px 0;
-}
-.health-history > span:not(.health-no-history) {
-  flex: 1;
-  max-width: 20px;
-  border-radius: 2px;
-}
-.health-pass {
-  background: var(--success);
-}
-.health-fail {
-  background: var(--danger-strong);
-}
-.health-no-history {
-  color: var(--muted);
-  font-size: 13px;
 }
 .health-timeline {
   color: var(--muted);
@@ -522,6 +511,21 @@
 }
 .latency-point {
   fill: var(--info);
+}
+.latency-point.is-failed {
+  fill: var(--danger-strong);
+}
+/* Recent checks: each check's result, under its point. */
+.latency-rail {
+  fill: var(--success);
+}
+.latency-rail.is-failed {
+  fill: var(--danger-strong);
+}
+.latency-rail.is-active {
+  stroke: var(--text);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
 }
 .latency-chart-empty {
   padding: 24px 0;
@@ -880,4 +884,30 @@
   .maintenance-form {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* Details for one block of a status strip, above it and fixed to the viewport. */
+.block-tooltip {
+  position: fixed;
+  z-index: 50;
+  display: grid;
+  gap: 2px;
+  max-width: 280px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 10px 28px var(--shadow);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+  transform: translateY(-100%);
+}
+.block-tooltip.below {
+  transform: none;
+}
+.block-tooltip strong {
+  color: var(--text);
+  font-weight: 500;
 }
