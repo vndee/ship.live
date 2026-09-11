@@ -5,6 +5,9 @@ export interface Workspace {
   owner: boolean;
   installationId?: number;
   githubAccount?: string;
+  /** The workspace's own Pulse heading, when set. */
+  pulseTitle?: string;
+  pulseSubtitle?: string;
 }
 
 export interface WorkspaceList {

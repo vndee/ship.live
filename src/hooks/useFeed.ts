@@ -738,6 +738,20 @@ export function useFeed() {
       noteId: id,
     });
   }
+  /** Saves the workspace's Pulse heading; empty fields restore the default. */
+  async function updatePulseHeading(title: string, subtitle: string) {
+    const active = currentWorkspace.current;
+    if (!active) throw new Error("Choose a workspace first.");
+    await request(`/api/workspaces/${encodeURIComponent(active.id)}/pulse`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "x-csrf-token": csrf.current || "",
+      },
+      body: JSON.stringify({ title, subtitle }),
+    });
+    await refreshWorkspaces();
+  }
   const retry = () => {
     if (operationPending.current) return;
     dispatchOperation({ type: "reset", sequence: ++operationSequence.current });
@@ -774,6 +788,7 @@ export function useFeed() {
     setPaused,
     refresh: retry,
     selectWorkspace,
+    updatePulseHeading,
     useDemo: () => selectWorkspace(null),
     simulateActivity: () => {
       // Demo events stay in the browser and can never enter a real workspace.

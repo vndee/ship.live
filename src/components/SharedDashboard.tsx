@@ -110,7 +110,10 @@ export function SharedDashboard() {
                 day: "numeric",
               })}
             </p>
-            <h1>Great work. Shared momentum.</h1>
+            <h1>{feed.data?.pulseTitle || "Great work. Shared momentum."}</h1>
+            {feed.data?.pulseSubtitle && (
+              <p className="page-subtitle">{feed.data.pulseSubtitle}</p>
+            )}
           </div>
           {feed.data && (
             <span className="share-expiry-badge">

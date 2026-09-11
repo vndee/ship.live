@@ -67,5 +67,7 @@ export interface CreatedDashboardShare extends DashboardShare {
 }
 export interface SharedFeedResponse extends FeedResponse {
   expiresAt: string;
+  pulseTitle?: string;
+  pulseSubtitle?: string;
   wall: EngineeringWallSnapshot;
 }
