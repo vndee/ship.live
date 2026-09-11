@@ -165,10 +165,12 @@ test("team members create, test, update, and delete webhooks without seeing secr
   });
 });
 
-test("personal journals have no webhooks", async (t) => {
+test("a journal's owner manages its own webhooks", async (t) => {
   await withApi(t, "personal", async ({ request, workspace }) => {
-    const response = await request(`/api/workspaces/${workspace}/webhooks`);
-    assert.equal(response.status, 403);
+    const base = `/api/workspaces/${workspace}/webhooks`;
+    assert.equal((await request(base)).status, 200);
+    assert.equal((await request(base, post(slack))).status, 201);
+    assert.equal((await (await request(base)).json()).webhooks.length, 1);
   });
 });
 

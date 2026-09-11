@@ -213,3 +213,73 @@ test("a digest counts only the week's activity in the webhook's repositories, wi
     assert.ok(!JSON.stringify(empty).includes("acme/private"));
   });
 });
+
+test("a journal's digest counts its sources and only its owner's activity by default", async (t) => {
+  await withWorkspace(t, async ({ pool, workspace, user }) => {
+    const journal = randomUUID();
+    await pool.query(
+      "INSERT INTO ship_live_workspaces(id,name,kind,owner_user_id) VALUES($1,'Journal','personal',$2)",
+      [journal, user],
+    );
+    await pool.query(
+      "INSERT INTO ship_live_workspace_members(workspace_id,user_id) VALUES($1,$2)",
+      [workspace, user],
+    );
+    await pool.query(
+      "INSERT INTO ship_live_github_connections(user_id,github_user_id,login,encrypted_grant) VALUES($1,1,'SarahPark','sealed')",
+      [user],
+    );
+    await pool.query(
+      "INSERT INTO ship_live_organizations(organization) VALUES ('installation-99')",
+    );
+    for (const [id, login] of [
+      ["mine", "sarahpark"],
+      ["theirs", "leowang"],
+    ])
+      await pool.query(
+        "INSERT INTO ship_live_events(organization,event_id,event,occurred_at) VALUES('installation-99',$1,$2,'2026-09-01T10:00:00Z')",
+        [
+          id,
+          {
+            id,
+            type: "merge",
+            actor: { login },
+            repo: "acme/api",
+            title: "Work",
+            occurredAt: "2026-09-01T10:00:00Z",
+            number: 1,
+            repositoryId: 7,
+          },
+        ],
+      );
+    const event = webhookEvent({
+      id: randomUUID(),
+      workspace_id: journal,
+      workspace_name: "Journal",
+      type: "digest.weekly",
+      payload: {
+        occurredAt: "2026-09-07T09:30:00Z",
+        summary: "Weekly digest",
+        data: { weekStart: "2026-08-31", weekEnd: "2026-09-06" },
+      },
+    });
+    const logins = async () =>
+      (
+        (await withDigest(pool, event, [7])).data.topContributors as {
+          login: string;
+        }[]
+      ).map((person) => person.login);
+    assert.deepEqual(await logins(), ["sarahpark"]);
+    await pool.query(
+      "UPDATE ship_live_workspaces SET source_mine_only=false WHERE id=$1",
+      [journal],
+    );
+    assert.deepEqual((await logins()).sort(), ["leowang", "sarahpark"]);
+    // A source left out of the journal is not counted.
+    await pool.query(
+      "UPDATE ship_live_workspaces SET source_installation_ids='{}' WHERE id=$1",
+      [journal],
+    );
+    assert.deepEqual(await logins(), []);
+  });
+});

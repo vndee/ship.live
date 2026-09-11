@@ -13,6 +13,8 @@ export interface OutboxEvent {
   summary: string;
   url?: string;
   data: Record<string, unknown>;
+  /** Who did it, for journals that keep only their owner's activity. */
+  actor?: string;
 }
 
 const plural = (count: number, word: string) =>
@@ -39,6 +41,7 @@ export function activityOutboxEvent(
   return {
     type: `activity.${event.type}`,
     dedupeKey: `activity:${event.id}`,
+    actor: event.actor.login,
     repositoryId: event.repositoryId,
     occurredAt: event.occurredAt,
     summary,

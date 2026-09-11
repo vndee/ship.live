@@ -79,6 +79,8 @@ interface Viewer {
   sources: Source[];
   /** Lowercased GitHub login when a journal shows only its owner's activity. */
   author?: string;
+  /** A journal owner's GitHub login, so their notes and activity read as one person. */
+  ownerLogin?: string;
   notice?: string;
 }
 const positiveId = (value: unknown): value is number =>
@@ -288,13 +290,18 @@ export function createWorkspaceApp({
     // Showing only the owner's activity needs their login.
     const sources = mineOnly && !author ? [] : synced;
     const missing = chosen.sources.length > synced.length;
+    // The owner's login even with no source chosen, so notes still read as them.
+    const login =
+      chosen.login ??
+      (github && workspace.sources
+        ? (await workspaces.connection(principal.user.id))?.login
+        : undefined);
     await auth.assertActive(principal);
     return {
       workspace,
-      repositories:
-        sources.find(
-          (source) => source.installationId === workspace.installationId,
-        )?.repositories ?? [],
+      // Webhooks pin every source's repositories.
+      repositories: sources.flatMap((source) => source.repositories),
+      ...(login ? { ownerLogin: login } : {}),
       sources,
       ...(author ? { author } : {}),
       ...(missing
@@ -1120,16 +1127,21 @@ export function createWorkspaceApp({
       })),
       initial.author,
     );
-    // Inbound alerts belong to the whole team rather than to a repository.
-    const alerts =
-      webhooks && initial.workspace.kind === "team"
-        ? await webhooks.alerts(initial.workspace.id)
-        : [];
+    // Inbound alerts belong to the workspace rather than to a repository.
+    const alerts = webhooks ? await webhooks.alerts(initial.workspace.id) : [];
     // An upstream read or database query can overlap logout, disconnect, or an
     // access change. Recheck the original session and filter against fresh IDs.
     const current = await viewer(principal, initial.workspace.id, true);
     const events = combineEvents(visible(saved, current));
-    if (alerts.length && current.workspace.kind === "team") {
+    // A journal's notes appear under its owner's GitHub login, as one person.
+    if (current.ownerLogin)
+      for (const [index, event] of events.entries())
+        if (event.type === "note")
+          events[index] = {
+            ...event,
+            actor: { ...event.actor, login: current.ownerLogin },
+          };
+    if (alerts.length) {
       events.push(...alerts);
       events.sort(
         (a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
@@ -1148,24 +1160,67 @@ export function createWorkspaceApp({
   app.get("/api/workspaces/:id/wall", async (request, response) => {
     const principal = await auth.authenticate(request, response);
     const initial = await viewer(principal, request.params.id, true);
-    const installation = initial.workspace.installationId;
-    if (!installation) {
-      response.json({ repositories: [], updatedAt: new Date().toISOString() });
-      return;
-    }
-    const saved = await wall.snapshot(
-      installation,
-      initial.repositories.map((repository) => repository.id),
+    // A journal combines the signals of every source.
+    const saved = await Promise.all(
+      initial.sources.map(async (source) => ({
+        installationId: source.installationId,
+        snapshot: await wall.snapshot(
+          source.installationId,
+          source.repositories.map((repository) => repository.id),
+        ),
+      })),
     );
     const current = await viewer(principal, initial.workspace.id, true);
-    if (current.workspace.installationId !== installation) throw accessDenied();
-    const allowed = new Set(
-      current.repositories.map((repository) => repository.id),
+    if (
+      current.workspace.kind === "team" &&
+      current.workspace.installationId !== initial.workspace.installationId
+    )
+      throw accessDenied();
+    const allowed = new Map(
+      current.sources.map((source) => [
+        source.installationId,
+        new Set(source.repositories.map((repository) => repository.id)),
+      ]),
     );
+    const author = current.author;
     response.json({
-      ...saved,
-      repositories: saved.repositories.filter((repository) =>
-        allowed.has(repository.repositoryId),
+      updatedAt:
+        saved
+          .map(({ snapshot }) => snapshot.updatedAt)
+          .sort()
+          .at(-1) ?? new Date().toISOString(),
+      repositories: saved.flatMap(({ installationId, snapshot }) =>
+        snapshot.repositories
+          .filter((repository) =>
+            allowed.get(installationId)?.has(repository.repositoryId),
+          )
+          .map((repository) => {
+            if (!author) return repository;
+            // A journal showing only its owner's activity keeps their pull
+            // requests, the reviews on them or by them, and no checks on anyone
+            // else's pull request. Branch checks and deployments have no author.
+            const mine = repository.pullRequests.filter(
+              (pull) => pull.author.toLowerCase() === author,
+            );
+            const numbers = new Set(mine.map((pull) => pull.number));
+            const others = new Set(
+              repository.pullRequests
+                .filter((pull) => !numbers.has(pull.number))
+                .map((pull) => pull.headSha),
+            );
+            return {
+              ...repository,
+              pullRequests: mine,
+              reviews: repository.reviews.filter(
+                (review) =>
+                  numbers.has(review.pullRequestNumber) ||
+                  review.reviewer.toLowerCase() === author,
+              ),
+              pipelines: repository.pipelines.filter(
+                (pipeline) => !others.has(pipeline.headSha),
+              ),
+            };
+          }),
       ),
     });
   });
