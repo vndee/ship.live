@@ -37,6 +37,7 @@ import { ServiceStatusStrip } from "./ServiceStatusStrip";
 import { RepositoryList } from "./RepositoryList";
 import { SceneHeader } from "./SceneHeader";
 import { serviceStats } from "../lib/service-stats";
+import { formatUptime } from "../lib/uptime";
 import "../engineering-wall.css";
 import "./service-health.css";
 
@@ -90,8 +91,6 @@ const initials = (name: string) => {
     words.length > 1 ? words[0][0] + words[1][0] : name.slice(0, 1)
   ).toUpperCase();
 };
-/** One decimal only when it matters: "100%", "99.9%". */
-const percent = (value: number) => `${Math.round(value * 10) / 10}%`;
 
 function readWallTabs(storageKey: string | null): WallTabs {
   try {
@@ -692,7 +691,7 @@ export function EngineeringWall({
                           <dd>
                             {summary.uptime === null
                               ? "—"
-                              : percent(summary.uptime)}
+                              : formatUptime(summary.uptime)}
                           </dd>
                         </div>
                         <div>

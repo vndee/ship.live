@@ -6,6 +6,7 @@ import type { Workspace } from "../shared/workspaces.js";
 import { AuthError, type AuthService, type Principal } from "./auth.js";
 import type { GitHubApp, Repo } from "./github-app.js";
 import type { PostgresEventStore } from "./postgres-store.js";
+import type { SecretBox } from "./secret-box.js";
 import { DashboardShareStore, unavailableShare } from "./share-store.js";
 import type { WorkspaceStore } from "./workspace-store.js";
 import { WallStore } from "./wall-store.js";
@@ -18,11 +19,14 @@ function workspaceShareRouter(
     workspaces,
     github,
     viewer,
+    secrets,
   }: {
     auth: AuthService;
     store: PostgresEventStore;
     workspaces: WorkspaceStore;
     github?: GitHubApp;
+    /** Keeps an encrypted copy of each link, so its creator can copy it again. */
+    secrets?: SecretBox;
     viewer: (
       principal: Principal,
       id: string,
@@ -31,7 +35,7 @@ function workspaceShareRouter(
   kind: "dashboard" | "health",
 ) {
   const router = Router();
-  const shares = new DashboardShareStore(workspaces.pool, kind);
+  const shares = new DashboardShareStore(workspaces.pool, kind, secrets);
   const health = new HealthStore(store.pool);
   const wall = new WallStore(store.pool);
   let connections = 0;

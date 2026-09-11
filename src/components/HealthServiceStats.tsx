@@ -1,17 +1,16 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Info } from "lucide-react";
 import type { ServiceStats } from "../lib/service-stats";
+import { formatUptime } from "../lib/uptime";
 
 const TOOLTIP_WIDTH = 300;
-/** One decimal only when it matters: "100%", "99.9%". */
-const percent = (value: number) => `${Math.round(value * 10) / 10}%`;
 
 /** Compact 24-hour figures shown in a service row. */
 export function HealthServiceStats({ stats }: { stats: ServiceStats }) {
   return (
     <span className="health-service-stats">
       <span>
-        <b>{stats.uptime === null ? "—" : percent(stats.uptime)}</b> uptime
+        <b>{stats.uptime === null ? "—" : formatUptime(stats.uptime)}</b> uptime
       </span>{" "}
       <span>
         <b>
