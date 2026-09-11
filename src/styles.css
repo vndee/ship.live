@@ -1897,6 +1897,52 @@ textarea:focus-visible {
 .workspace-choice > svg {
   color: var(--muted);
 }
+.workspace-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.workspace-row .workspace-choice {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+.workspace-github svg {
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+.workspace-rename-form {
+  display: grid;
+  gap: 8px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.workspace-rename-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.workspace-rename-form input {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--background);
+  font: inherit;
+}
+.workspace-rename-form .field-hint,
+.workspace-rename-form .form-error {
+  margin: 0;
+}
+.workspace-rename-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
 .installation-list {
   display: grid;
   gap: 16px;

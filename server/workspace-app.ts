@@ -1094,6 +1094,19 @@ export function createWorkspaceApp({
     await auth.assertActive(principal);
     response.json({ workspace });
   });
+  app.patch("/api/workspaces/:id/name", async (request, response) => {
+    const principal = await auth.requireMutation(request, response);
+    const current = await workspaces.get(principal.user.id, request.params.id);
+    // Team members rename it only while GitHub still grants them the workspace.
+    if (current.kind === "team") await viewer(principal, current.id);
+    const workspace = await workspaces.rename(
+      principal.user.id,
+      current.id,
+      request.body,
+    );
+    await auth.assertActive(principal);
+    response.json({ workspace });
+  });
   app.patch("/api/workspaces/:id/sources", async (request, response) => {
     const principal = await auth.requireMutation(request, response);
     const workspace = await workspaces.setPersonalSources(

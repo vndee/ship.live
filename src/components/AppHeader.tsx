@@ -55,7 +55,17 @@ export function AppHeader({
           ship<span>.live</span>
         </span>
       </RouteLink>
-      <button className="organization-switch" onClick={onConnect}>
+      <button
+        className="organization-switch"
+        onClick={onConnect}
+        title={
+          !feed.demo &&
+          feed.workspace?.githubAccount &&
+          feed.workspace.githubAccount !== feed.organization
+            ? `On GitHub: ${feed.workspace.githubAccount}`
+            : undefined
+        }
+      >
         {!feed.demo && <LockKeyhole size={12} />}
         <span>{feed.demo ? "Acme Team" : feed.organization}</span>
         <ChevronDown size={13} />

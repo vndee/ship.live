@@ -2,6 +2,8 @@ export interface Workspace {
   id: string;
   name: string;
   kind: "personal" | "team";
+  /** The default name, present when the workspace has its own. */
+  defaultName?: string;
   owner: boolean;
   installationId?: number;
   githubAccount?: string;

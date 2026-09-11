@@ -754,6 +754,15 @@ export function useFeed() {
     });
     await refreshWorkspaces();
   }
+  /** Gives a workspace its own name; an empty name restores the default. */
+  async function renameWorkspace(id: string, name: string) {
+    await mutate(
+      `/api/workspaces/${encodeURIComponent(id)}/name`,
+      { name },
+      "PATCH",
+    );
+    await refreshWorkspaces();
+  }
   /** Connects the ticked installations and leaves the unticked ones. */
   async function saveConnections(connect: number[], disconnect: number[]) {
     await mutate(
@@ -851,6 +860,7 @@ export function useFeed() {
     connectInstallation,
     saveConnections,
     updateSources,
+    renameWorkspace,
     disconnectGithub,
     sync,
     syncRun,
