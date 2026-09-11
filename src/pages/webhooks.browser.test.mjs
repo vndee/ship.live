@@ -200,9 +200,10 @@ test("the editor previews presets live, signs Lark bodies, and blocks invalid te
   const dialog = await page.locator("dialog.modal[open]").boundingBox();
   assert.ok(dialog.width > 900, `the editor is ${dialog.width}px wide`);
   await shot(page, "webhook-editor", page.locator("dialog.modal[open]"));
+  // Scroll the dialog to the template and its preview, side by side.
   await page
-    .getByRole("heading", { name: "Body template" })
-    .scrollIntoViewIfNeeded();
+    .getByLabel("Rendered body")
+    .evaluate((node) => node.scrollIntoView({ block: "center" }));
   await shot(
     page,
     "webhook-editor-template",
