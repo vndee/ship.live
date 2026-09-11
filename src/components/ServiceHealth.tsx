@@ -19,7 +19,7 @@ import { LatencyChart } from "./LatencyChart";
 import { ServiceStatusStrip } from "./ServiceStatusStrip";
 import { HealthServiceStats, HealthStatsInfo } from "./HealthServiceStats";
 import { UptimeStrip } from "./UptimeStrip";
-import { uptimeDays } from "../lib/uptime";
+import { formatUptime, uptimeDays } from "../lib/uptime";
 
 /** Paused probes are not checked, so their open incidents wait for them. */
 function incidentState(
@@ -799,7 +799,7 @@ export function ServiceHealth({
                                 <strong>
                                   {probe.successRate24h === null
                                     ? "—"
-                                    : `${probe.successRate24h.toFixed(1)}%`}{" "}
+                                    : formatUptime(probe.successRate24h)}{" "}
                                   <small>({probe.checks24h} checks)</small>
                                 </strong>
                               </span>

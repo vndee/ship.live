@@ -1,7 +1,11 @@
-import { overallUptime, uptimeTone, type UptimeDay } from "../lib/uptime";
+import {
+  formatUptime,
+  overallUptime,
+  uptimeTone,
+  type UptimeDay,
+} from "../lib/uptime";
 
-const percent = (value: number) =>
-  `${value >= 0.9995 && value < 1 ? "99.9" : (Math.floor(value * 1000) / 10).toString()}%`;
+const percent = (ratio: number) => formatUptime(ratio * 100);
 
 /** A status-page strip of daily uptime; maintenance checks are not counted. */
 export function UptimeStrip({

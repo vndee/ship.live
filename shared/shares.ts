@@ -59,6 +59,8 @@ export interface DashboardShare {
   createdAt: string;
   expiresAt: string;
   repositoryCount: number;
+  /** The link's token, shown again to its creator when the server can. */
+  token?: string;
 }
 export interface CreatedDashboardShare extends DashboardShare {
   token: string;

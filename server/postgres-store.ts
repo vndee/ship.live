@@ -93,6 +93,7 @@ export class PostgresEventStore implements EventStore {
         "014_rate_limits_retention.sql",
         "015_webhooks.sql",
         "016_uptime_maintenance.sql",
+        "017_share_link_reveal.sql",
       ].map((file) =>
         readFile(new URL(`./migrations/${file}`, import.meta.url), "utf8"),
       ),

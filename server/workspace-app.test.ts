@@ -20,6 +20,7 @@ import { createWorkspaceApp } from "./workspace-app.js";
 import { HealthStore } from "./health-store.js";
 import { WorkspaceStore } from "./workspace-store.js";
 import { WallStore } from "./wall-store.js";
+import { SecretBox } from "./secret-box.js";
 
 const APP_URL = "http://localhost:3000";
 const SECRET = "synthetic-workspace-webhook-secret";
@@ -279,6 +280,7 @@ async function withApp(
       auth,
       github: provider.github,
       webhookSecret: SECRET,
+      secrets: new SecretBox("11".repeat(32)),
     }).listen(0, "127.0.0.1");
     await once(server, "listening");
     const address = server.address();
@@ -435,7 +437,7 @@ test("dashboard shares expose only the creator's pinned repositories and never n
 });
 
 test("share creation and management require membership, CSRF, and creator ownership", async (t) => {
-  await withApp(t, async ({ workspaces, users, request }) => {
+  await withApp(t, async ({ store, workspaces, users, request }) => {
     const workspace = await connect(workspaces, users[0], 1);
     const path = `/api/workspaces/${workspace.id}/share`;
     const post = {
@@ -470,6 +472,21 @@ test("share creation and management require membership, CSRF, and creator owners
       "the no-expiration option must persist a roughly 100-year expiry",
     );
     assert.equal((await request(path, users[0], post)).status, 409);
+    // The creator can copy the active link again; the token is stored sealed.
+    const current = await (await request(path, users[0])).json();
+    assert.equal(current.share.token, link.token);
+    const sealed = await store.pool.query<{ token_encrypted: string }>(
+      "SELECT token_encrypted FROM ship_live_dashboard_shares",
+    );
+    assert.ok(!sealed.rows[0].token_encrypted.includes(link.token));
+    // A link stored before migration 017 has no copy to show.
+    await store.pool.query(
+      "UPDATE ship_live_dashboard_shares SET token_encrypted = NULL",
+    );
+    assert.equal(
+      (await (await request(path, users[0])).json()).share.token,
+      undefined,
+    );
     await connect(workspaces, users[1], 2);
     assert.equal((await (await request(path, users[1])).json()).share, null);
     await request(path, users[1], { method: "DELETE" });

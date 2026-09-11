@@ -7,6 +7,7 @@ import type {
 import type { Workspace } from "../shared/workspaces.js";
 import { AuthError } from "./auth.js";
 import { ACTIVITY_CHANNEL } from "./postgres-notifications.js";
+import type { SecretBox } from "./secret-box.js";
 
 interface ShareRow {
   id: string;
@@ -17,6 +18,7 @@ interface ShareRow {
   repository_ids: string[];
   created_at: Date;
   expires_at: Date;
+  token_encrypted: string | null;
 }
 export const unavailableShare = () =>
   new AuthError(
@@ -37,6 +39,8 @@ export class DashboardShareStore {
   constructor(
     private readonly pool: Pool,
     kind: "dashboard" | "health" = "dashboard",
+    /** Keeps an encrypted copy of each token, so its creator can copy it again. */
+    private readonly box?: SecretBox,
   ) {
     // Table names are selected only from this internal allowlist, never request input.
     this.table =
@@ -53,7 +57,29 @@ export class DashboardShareStore {
       `SELECT * FROM ${this.table} WHERE creator_user_id=$1 AND workspace_id=$2`,
       [userId, workspaceId],
     );
-    return result.rows[0] ? metadata(result.rows[0]) : null;
+    const row = result.rows[0];
+    if (!row) return null;
+    const token = this.reveal(row);
+    return token ? { ...metadata(row), token } : metadata(row);
+  }
+
+  /** Binds a sealed token to its table, workspace, and creator. */
+  private context(workspaceId: string, userId: string): string {
+    return `${this.table}:${workspaceId}:${userId}`;
+  }
+
+  /** The active token, when it was sealed and this server can open it. */
+  private reveal(row: ShareRow): string | undefined {
+    if (!row.token_encrypted || !this.box?.configured) return undefined;
+    try {
+      return this.box.open(
+        row.token_encrypted,
+        this.context(row.workspace_id, row.creator_user_id),
+      );
+    } catch {
+      // A replaced key: the link still works but must be rotated to be shown.
+      return undefined;
+    }
   }
 
   async create(
@@ -69,8 +95,8 @@ export class DashboardShareStore {
     // authorization. Conflict handling makes simultaneous creations/rotations atomic.
     const result = await this.pool.query<ShareRow>(
       `WITH changed AS (
-        INSERT INTO ${this.table}(id,workspace_id,creator_user_id,connection_generation,installation_id,repository_ids,token_hash,expires_at)
-        SELECT $1,w.id,$3,c.generation,w.installation_id,$6,$7,now()+($8 * interval '1 second')
+        INSERT INTO ${this.table}(id,workspace_id,creator_user_id,connection_generation,installation_id,repository_ids,token_hash,token_encrypted,expires_at)
+        SELECT $1,w.id,$3,c.generation,w.installation_id,$6,$7,$12,now()+($8 * interval '1 second')
         FROM ship_live_workspaces w
         JOIN ship_live_workspace_members m ON m.workspace_id=w.id AND m.user_id=$3
         JOIN ship_live_github_connections c ON c.user_id=m.user_id AND c.generation=$4
@@ -79,7 +105,7 @@ export class DashboardShareStore {
         ON CONFLICT(workspace_id,creator_user_id) DO UPDATE SET
           id=EXCLUDED.id,connection_generation=EXCLUDED.connection_generation,
           installation_id=EXCLUDED.installation_id,repository_ids=EXCLUDED.repository_ids,
-          token_hash=EXCLUDED.token_hash,created_at=now(),expires_at=EXCLUDED.expires_at
+          token_hash=EXCLUDED.token_hash,token_encrypted=EXCLUDED.token_encrypted,created_at=now(),expires_at=EXCLUDED.expires_at
         WHERE $9 OR ${this.table}.expires_at<=now()
         RETURNING *
       ) SELECT changed.*,pg_notify($10,$11) FROM changed`,
@@ -98,6 +124,9 @@ export class DashboardShareStore {
           organization: `workspace-${workspace.id}`,
           eventId: "refresh",
         }),
+        this.box?.configured
+          ? this.box.seal(token, this.context(workspace.id, userId))
+          : null,
       ],
     );
     if (!result.rows[0])

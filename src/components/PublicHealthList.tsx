@@ -7,7 +7,7 @@ import { HealthServiceStats, HealthStatsInfo } from "./HealthServiceStats";
 import { LatencyChart } from "./LatencyChart";
 import { ServiceStatusStrip } from "./ServiceStatusStrip";
 import { UptimeStrip } from "./UptimeStrip";
-import { uptimeDays } from "../lib/uptime";
+import { formatUptime, uptimeDays } from "../lib/uptime";
 import "./service-health.css";
 
 export function publicProbeStatus(
@@ -126,7 +126,7 @@ export function PublicHealthList({
                         <strong>
                           {probe.successRate24h === null
                             ? "—"
-                            : `${probe.successRate24h.toFixed(1)}%`}{" "}
+                            : formatUptime(probe.successRate24h)}{" "}
                           <small>({probe.checks24h} checks)</small>
                         </strong>
                       </span>
