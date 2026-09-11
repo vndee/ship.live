@@ -7,11 +7,12 @@ import type { HealthSnapshot } from "../../shared/health.js";
 import { getCreditedEvents, getWeekStart } from "./activity.js";
 
 export type WallScene =
-  "pulse" | "review" | "release" | "health" | "leaderboard";
+  "pulse" | "review" | "release" | "delivery" | "health" | "leaderboard";
 export const ALL_SCENES: readonly WallScene[] = [
   "pulse",
   "review",
   "release",
+  "delivery",
   "health",
   "leaderboard",
 ];
@@ -317,6 +318,20 @@ export function getAvailableScenes(
 ): WallScene[] {
   const scenes: WallScene[] = ["pulse", "review"];
   if (getReleasePulse(snapshot).length) scenes.push("release");
+  // Delivery needs something finished to measure: a deployment or a merge.
+  if (
+    snapshot.repositories.some(
+      (repository) =>
+        repository.deployments.some(
+          (deployment) =>
+            deployment.status === "successful" ||
+            deployment.status === "failing" ||
+            (deployment.status === "inactive" &&
+              deployment.succeededAt !== undefined),
+        ) || repository.pullRequests.some((pull) => pull.state === "merged"),
+    )
+  )
+    scenes.push("delivery");
   if (health) scenes.push("health");
   scenes.push("leaderboard");
   return scenes;

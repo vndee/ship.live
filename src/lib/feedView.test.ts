@@ -188,3 +188,40 @@ test("journal search finds the story inside a ship note without needing an exter
     [note],
   );
 });
+
+test("a tag keeps only ship notes that use it", () => {
+  const events: ActivityEvent[] = [
+    {
+      id: "n1",
+      type: "note",
+      actor: { login: "minh" },
+      repo: "journal/notes",
+      title: "Launched search #launch",
+      occurredAt: "2026-09-10T08:00:00Z",
+    },
+    {
+      id: "n2",
+      type: "note",
+      actor: { login: "minh" },
+      repo: "journal/notes",
+      title: "A lesson",
+      body: "Measure first. #lesson",
+      occurredAt: "2026-09-10T09:00:00Z",
+    },
+    {
+      id: "m1",
+      type: "merge",
+      actor: { login: "minh" },
+      repo: "acme/api",
+      title: "Merge #launch",
+      occurredAt: "2026-09-10T10:00:00Z",
+    },
+  ];
+  const ids = (tag: string) =>
+    filterEvents(events, { repo: "", kind: "", query: "", tag }).map(
+      (event) => event.id,
+    );
+  assert.deepEqual(ids("launch"), ["n1"]);
+  assert.deepEqual(ids("lesson"), ["n2"]);
+  assert.deepEqual(ids(""), ["n1", "n2", "m1"]);
+});

@@ -11,11 +11,14 @@ import type {
   HealthCheck,
   HealthIncident,
   DailyLatency,
+  DailyUptime,
+  MaintenanceWindow,
   LatencyStats,
   LatencyWindow,
   ProbeInput,
   ProbeResult,
 } from "../shared/health.js";
+import { HEALTH_INCIDENT_LIMIT } from "../shared/health.js";
 import { AuthError } from "./auth.js";
 import { ACTIVITY_CHANNEL } from "./postgres-notifications.js";
 import { healthOutboxEvents, type IncidentChange } from "./webhook-events.js";
@@ -331,20 +334,24 @@ export class HealthStore {
         latencyHistory: DailyLatency[];
         latency24h: LatencyWindow[];
         latencyStats24h: LatencyStats | null;
+        uptime90d: DailyUptime[];
         checks: number;
         rate: number | null;
       })[];
       incidents: HealthIncident[];
+      maintenance: MaintenanceWindow[];
     }>(
       `SELECT s.id,s.name,coalesce((SELECT jsonb_agg(to_jsonb(p)-'headers_encrypted'||jsonb_build_object('has_headers',p.headers_encrypted IS NOT NULL,
     'history',coalesce((SELECT jsonb_agg(h.entry ORDER BY h.checked_at DESC,h.id DESC) FROM (SELECT c.id,c.checked_at,c.result||jsonb_build_object('checkedAt',c.checked_at,'status',c.state) AS entry FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '30 days' ORDER BY c.checked_at DESC,c.id DESC LIMIT 120) h),'[]'::jsonb),
     'latencyHistory',coalesce((SELECT jsonb_agg(jsonb_build_object('date',d.day,'avgLatencyMs',round(d.total_latency/d.checks,2),'minLatencyMs',d.min_latency,'maxLatencyMs',d.max_latency,'checks',d.checks) ORDER BY d.day) FROM ship_live_health_latency_daily d WHERE d.probe_id=p.id AND d.day >= (now() AT TIME ZONE 'UTC')::date-29),'[]'::jsonb),
+    'uptime90d',coalesce((SELECT jsonb_agg(jsonb_build_object('date',d.day,'checks',d.checks,'passed',d.passed) ORDER BY d.day) FROM ship_live_health_latency_daily d WHERE d.probe_id=p.id AND d.day >= (now() AT TIME ZONE 'UTC')::date-89 AND d.passed IS NOT NULL),'[]'::jsonb),
     'latency24h',coalesce((SELECT jsonb_agg(jsonb_build_object('start',w.start,'avgLatencyMs',round(w.avg,2),'minLatencyMs',w.min,'maxLatencyMs',w.max,'checks',w.checks) ORDER BY w.start) FROM (SELECT to_timestamp(floor(extract(epoch FROM c.checked_at)/900)*900) AS start,avg((c.result->>'latencyMs')::numeric) AS avg,min((c.result->>'latencyMs')::numeric) AS min,max((c.result->>'latencyMs')::numeric) AS max,count(c.result->>'latencyMs') AS checks FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>=to_timestamp(floor(extract(epoch FROM now())/900)*900-95*900) GROUP BY 1 HAVING count(c.result->>'latencyMs')>0) w),'[]'::jsonb),
     'latencyStats24h',(SELECT CASE WHEN count(x.l)>0 THEN jsonb_build_object('mean',round(avg(x.l),2),'sd',round(coalesce(stddev_pop(x.l),0),2),'checks',count(x.l)) END FROM (SELECT (c.result->>'latencyMs')::numeric AS l FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '24 hours') x),
     'checks',(SELECT count(*) FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '24 hours'),
     'rate',(SELECT round(100.0*avg(CASE WHEN (c.result->>'ok')::boolean THEN 1 ELSE 0 END),1) FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '24 hours')
     ) ORDER BY p.config->>'name',p.id) FROM ship_live_health_probes p WHERE p.service_id=s.id),'[]'::jsonb) AS probes,
-    coalesce((SELECT jsonb_agg(jsonb_build_object('id',i.id,'probeId',i.probe_id,'probeName',p.config->>'name','openedAt',i.opened_at,'resolvedAt',i.resolved_at,'reason',i.reason) ORDER BY i.opened_at DESC) FROM (SELECT * FROM ship_live_health_incidents WHERE service_id=s.id AND (resolved_at IS NULL OR opened_at>now()-interval '30 days') ORDER BY opened_at DESC LIMIT 20) i JOIN ship_live_health_probes p ON p.id=i.probe_id),'[]'::jsonb) AS incidents
+    coalesce((SELECT jsonb_agg(jsonb_build_object('id',i.id,'probeId',i.probe_id,'probeName',p.config->>'name','openedAt',i.opened_at,'resolvedAt',i.resolved_at,'reason',i.reason) ORDER BY i.opened_at DESC) FROM (SELECT * FROM ship_live_health_incidents WHERE service_id=s.id AND (resolved_at IS NULL OR opened_at>now()-interval '30 days' OR resolved_at>now()-interval '30 days') ORDER BY opened_at DESC LIMIT ${HEALTH_INCIDENT_LIMIT}) i JOIN ship_live_health_probes p ON p.id=i.probe_id),'[]'::jsonb) AS incidents,
+    coalesce((SELECT jsonb_agg(jsonb_build_object('id',m.id,'serviceId',m.service_id,'startsAt',m.starts_at,'endsAt',m.ends_at,'note',m.note) ORDER BY m.starts_at) FROM ship_live_health_maintenance m WHERE m.workspace_id=s.workspace_id AND (m.service_id IS NULL OR m.service_id=s.id) AND m.ends_at>now()),'[]'::jsonb) AS maintenance
     FROM ship_live_health_services s WHERE s.workspace_id=$1 ORDER BY s.display_order,s.created_at,s.id`,
       [workspaceId],
     );
@@ -383,6 +390,7 @@ export class HealthStore {
             latencyHistory: p.latencyHistory,
             latency24h: p.latency24h,
             latencyStats24h: p.latencyStats24h,
+            uptime90d: p.uptime90d,
           };
         });
         return {
@@ -391,6 +399,7 @@ export class HealthStore {
           status: aggregate(probes.map((p) => p.status)),
           probes,
           incidents: service.incidents,
+          maintenance: service.maintenance,
         };
       }),
     };
@@ -434,15 +443,28 @@ export class HealthStore {
       );
       if (!rows.rowCount) return false;
       const p = rows.rows[0];
-      const successes = result.ok ? p.successes + 1 : 0;
-      const failures = result.ok ? 0 : p.failures + 1;
-      const status: HealthStatus = result.ok
-        ? p.state === "down" && successes < p.config.recoveryThreshold
-          ? "down"
-          : "healthy"
-        : p.state === "down" || failures >= p.config.failureThreshold
-          ? "down"
-          : "degraded";
+      // Inside planned maintenance a failed check changes nothing: no degraded
+      // or down state, no incident, no alert, and no cost to uptime.
+      const maintenance = Boolean(
+        (
+          await c.query(
+            "SELECT 1 FROM ship_live_health_maintenance WHERE workspace_id=$1 AND (service_id IS NULL OR service_id=$2) AND starts_at<=now() AND ends_at>now() LIMIT 1",
+            [p.workspace_id, p.service_id],
+          )
+        ).rowCount,
+      );
+      const held = maintenance && !result.ok;
+      const successes = result.ok ? p.successes + 1 : held ? p.successes : 0;
+      const failures = result.ok ? 0 : held ? p.failures : p.failures + 1;
+      const status: HealthStatus = held
+        ? p.state
+        : result.ok
+          ? p.state === "down" && successes < p.config.recoveryThreshold
+            ? "down"
+            : "healthy"
+          : p.state === "down" || failures >= p.config.failureThreshold
+            ? "down"
+            : "degraded";
       await c.query(
         "UPDATE ship_live_health_probes SET state=$3,failures=$4,successes=$5,last_checked_at=now(),last_result=$6,lease=NULL,lease_until=NULL,next_check_at=now()+make_interval(secs=>$7) WHERE id=$1 AND lease=$2",
         [
@@ -457,7 +479,7 @@ export class HealthStore {
       );
       await c.query(
         "INSERT INTO ship_live_health_checks(probe_id,result,state) VALUES($1,$2,$3)",
-        [p.id, result, status],
+        [p.id, maintenance ? { ...result, maintenance: true } : result, status],
       );
       // An incident spans a probe's time down. Its opening and resolution, and
       // other state changes, become webhook events in this same transaction.
@@ -512,18 +534,108 @@ export class HealthStore {
         ))
           await recordWorkspaceEvent(c, p.workspace_id, event);
       }
-      await c.query(
-        `INSERT INTO ship_live_health_latency_daily(probe_id,day,checks,total_latency,min_latency,max_latency) VALUES($1,(now() AT TIME ZONE 'UTC')::date,1,$2,$2,$2)
-         ON CONFLICT(probe_id,day) DO UPDATE SET checks=ship_live_health_latency_daily.checks+1,total_latency=ship_live_health_latency_daily.total_latency+EXCLUDED.total_latency,min_latency=least(ship_live_health_latency_daily.min_latency,EXCLUDED.min_latency),max_latency=greatest(ship_live_health_latency_daily.max_latency,EXCLUDED.max_latency)`,
-        [p.id, result.latencyMs],
-      );
+      if (!maintenance)
+        await c.query(
+          `INSERT INTO ship_live_health_latency_daily(probe_id,day,checks,passed,total_latency,min_latency,max_latency) VALUES($1,(now() AT TIME ZONE 'UTC')::date,1,$3,$2,$2,$2)
+         ON CONFLICT(probe_id,day) DO UPDATE SET checks=ship_live_health_latency_daily.checks+1,passed=ship_live_health_latency_daily.passed+EXCLUDED.passed,total_latency=ship_live_health_latency_daily.total_latency+EXCLUDED.total_latency,min_latency=least(ship_live_health_latency_daily.min_latency,EXCLUDED.min_latency),max_latency=greatest(ship_live_health_latency_daily.max_latency,EXCLUDED.max_latency)`,
+          [p.id, result.latencyMs, result.ok ? 1 : 0],
+        );
       await this.notify(c, p.workspace_id);
       return true;
     });
   }
+  /** Schedules maintenance for one service, or every service without serviceId. */
+  async scheduleMaintenance(
+    workspaceId: string,
+    userId: string,
+    input: unknown,
+  ): Promise<MaintenanceWindow> {
+    const data = (input && typeof input === "object" ? input : {}) as Record<
+      string,
+      unknown
+    >;
+    const serviceId = data.serviceId ?? null;
+    if (
+      serviceId !== null &&
+      (typeof serviceId !== "string" || !validId(serviceId))
+    )
+      throw missing();
+    const startsAt = Date.parse(String(data.startsAt));
+    const endsAt = Date.parse(String(data.endsAt));
+    if (
+      !Number.isFinite(startsAt) ||
+      !Number.isFinite(endsAt) ||
+      endsAt <= startsAt
+    )
+      throw new AuthError(400, "End maintenance after it starts.");
+    if (endsAt <= Date.now())
+      throw new AuthError(400, "Maintenance must end in the future.");
+    if (endsAt - startsAt > 7 * 86_400_000)
+      throw new AuthError(400, "Maintenance can last at most 7 days.");
+    const note = typeof data.note === "string" ? data.note.trim() : "";
+    if (note.length > 200)
+      throw new AuthError(400, "Keep the note under 200 characters.");
+    return this.transaction(async (c) => {
+      // One scheduler per workspace at a time, so the cap holds.
+      await this.lockWorkspace(c, workspaceId);
+      if (serviceId) {
+        const owned = await c.query(
+          "SELECT 1 FROM ship_live_health_services WHERE workspace_id=$1 AND id=$2",
+          [workspaceId, serviceId],
+        );
+        if (!owned.rowCount) throw missing();
+      }
+      const scheduled = await c.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM ship_live_health_maintenance WHERE workspace_id=$1 AND ends_at>now()",
+        [workspaceId],
+      );
+      if (scheduled.rows[0].count >= 50)
+        throw new AuthError(
+          400,
+          "At most 50 maintenance windows can be scheduled.",
+        );
+      const { rows } = await c.query<{
+        id: string;
+        service_id: string | null;
+        starts_at: Date;
+        ends_at: Date;
+        note: string;
+      }>(
+        "INSERT INTO ship_live_health_maintenance(id,workspace_id,service_id,starts_at,ends_at,note,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,service_id,starts_at,ends_at,note",
+        [
+          randomUUID(),
+          workspaceId,
+          serviceId,
+          new Date(startsAt),
+          new Date(endsAt),
+          note,
+          userId,
+        ],
+      );
+      await this.notify(c, workspaceId);
+      const row = rows[0];
+      return {
+        id: row.id,
+        serviceId: row.service_id,
+        startsAt: row.starts_at.toISOString(),
+        endsAt: row.ends_at.toISOString(),
+        note: row.note,
+      };
+    });
+  }
+  /** Cancels a window; checks count again from the next one. */
+  async cancelMaintenance(workspaceId: string, id: string) {
+    if (!validId(id)) throw missing();
+    const { rowCount } = await this.pool.query(
+      "DELETE FROM ship_live_health_maintenance WHERE workspace_id=$1 AND id=$2",
+      [workspaceId, id],
+    );
+    if (!rowCount) throw missing();
+    await this.notify(this.pool, workspaceId);
+  }
   async prune() {
     await this.pool.query(
-      "DELETE FROM ship_live_health_latency_daily WHERE day<(now() AT TIME ZONE 'UTC')::date-30",
+      "DELETE FROM ship_live_health_latency_daily WHERE day<(now() AT TIME ZONE 'UTC')::date-90",
     );
     await this.pool.query(
       "DELETE FROM ship_live_health_checks WHERE checked_at<now()-interval '30 days'",

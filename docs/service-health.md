@@ -63,9 +63,19 @@ Hover over a latency chart or tap it to select the nearest recorded point by hor
 
 Each populated chart is one keyboard stop: focus it, use **Arrow Left/Right** to move between recorded points, and use **Home/End** for the first/last point. **Escape** dismisses the tooltip, including one opened by hover while focus is elsewhere. Moving the mouse out dismisses a hover selection. Touch selection persists after lifting your finger; selecting another point, changing the range, moving focus away, or pressing Escape changes or dismisses it. The active description is associated with the chart for assistive technology, and the expandable latency data table remains available.
 
-New Down and recovery transitions highlight and announce on the dashboard. The first loaded snapshot does not trigger alerts. Motion respects reduced-motion preferences. This release provides in-dashboard visibility; it does not send external notifications.
+New Down and recovery transitions highlight and announce on the dashboard. The first loaded snapshot does not trigger alerts. Motion respects reduced-motion preferences. To send alerts elsewhere, add a [webhook](webhooks.md).
 
 **Check now** queues an enabled probe for the next worker tick. Already running checks and checks completed within ten seconds cannot be queued again. Pause, edit or delete invalidates any running result for that definition.
+
+## 90-day uptime
+
+Each open service shows a strip of 90 daily bars, oldest on the left and today on the right, with the overall figure above it. A day's uptime is the share of that UTC day's checks that passed, pooled across the service's probes. Green is at least 99.9%, amber at least 99%, red below that, and grey a day without checks. Hover over a bar for its date, uptime, and check count. The share page shows the same strip. Daily aggregates are kept for 90 days. Days from before the upgrade to this version appear only when every check from that day was still retained.
+
+## Maintenance windows
+
+Open a service and choose **Schedule maintenance**. Pick a start and an end, at most seven days apart and ending in the future, an optional note of up to 200 characters, and whether the window covers this service or every service in the workspace. A workspace can have up to 50 windows scheduled.
+
+Probes keep running during a window, and their results are recorded and marked as maintenance. A failing check changes no status: it neither degrades the probe nor opens an incident, and no alert is sent. Checks inside a window are left out of 90-day uptime. Services show a **Maintenance** badge while a window is active, and **Cancel** removes a window, ending it early if it has started. Windows are deleted 90 days after they end.
 
 ## Share service health
 
@@ -85,8 +95,8 @@ Restoration waits for the freshly authorized workspace list. If the saved worksp
 
 The existing server process starts the scheduler automatically. No external cron or additional service is required. PostgreSQL stores the schedule and coordinates replicas with expiring leases; each process runs at most four probes concurrently. Restarted workers reclaim expired leases, and overdue results remain visibly Unknown until a new check succeeds or fails.
 
-Migrations `006_service_health.sql`, `007_health_shares.sql`, `008_health_latency_daily.sql` and `010_health_service_order.sql` run through the existing migration mechanism. Set the existing `TOKEN_ENCRYPTION_KEY` (32 bytes encoded as 64 hexadecimal characters) to use secret headers. Replacing this key makes old headers unreadable; update or clear headers through the UI to repair affected probes. Health snapshots and live updates load separately from the GitHub activity feed.
+Migrations `006_service_health.sql`, `007_health_shares.sql`, `008_health_latency_daily.sql`, `010_health_service_order.sql` and `016_uptime_maintenance.sql` run through the existing migration mechanism. Set the existing `TOKEN_ENCRYPTION_KEY` (32 bytes encoded as 64 hexadecimal characters) to use secret headers. Replacing this key makes old headers unreadable; update or clear headers through the UI to repair affected probes. Health snapshots and live updates load separately from the GitHub activity feed.
 
 ## Incidents and alerts
 
-When a probe goes down, Service Health opens an incident, and resolves it when the probe is healthy again. Each service lists its open incidents and those from the last 30 days, and incidents are kept for a year for uptime reports. A paused probe is not checked, so its open incident stays open, marked as paused, until the probe resumes and recovers. To be told, add a [webhook](webhooks.md) for `incident.opened` and `incident.resolved`, or for every probe change with `health.degraded`, `health.down`, and `health.recovered`.
+When a probe goes down, Service Health opens an incident, and resolves it when the probe is healthy again. Each service lists up to 20 recent incidents, open or opened or resolved in the last 30 days, and incidents are kept for a year for uptime reports. A paused probe is not checked, so its open incident stays open, marked as paused, until the probe resumes and recovers. To be told, add a [webhook](webhooks.md) for `incident.opened` and `incident.resolved`, or for every probe change with `health.degraded`, `health.down`, and `health.recovered`.

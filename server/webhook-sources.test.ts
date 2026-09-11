@@ -226,6 +226,18 @@ test("CI and deployment changes announce transitions once, ignoring stale and re
       "pipeline.recovered",
       "deployment.succeeded",
     ]);
+    // GitHub later marks the deployment inactive; when it succeeded is kept.
+    await apply(
+      "d7",
+      "deployment",
+      deployment("inactive", "2026-09-10T09:00:00Z"),
+    );
+    const { rows } = await pool.query<{ value: DeploymentState }>(
+      "SELECT value FROM ship_live_wall_signals WHERE kind='deployment'",
+    );
+    assert.equal(rows[0].value.status, "inactive");
+    assert.equal(rows[0].value.succeededAt, "2026-09-10T08:05:00Z");
+    assert.equal((await stored(pool)).length, 3);
   });
 });
 

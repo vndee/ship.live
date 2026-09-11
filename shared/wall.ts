@@ -49,6 +49,8 @@ export interface DeploymentState {
   status: DeploymentStatus;
   url?: string;
   updatedAt: string;
+  /** When it succeeded, kept after GitHub marks it inactive. */
+  succeededAt?: string;
 }
 
 export type WallSignalUpdate =

@@ -178,5 +178,22 @@ export function healthRouter({
     });
     write("event: health\ndata: {}\n\n");
   });
+  router.post(`${base}/maintenance`, async (req, res) => {
+    const principal = await auth.requireMutation(req, res);
+    await access(principal, req.params.id);
+    const window = await health.scheduleMaintenance(
+      req.params.id,
+      principal.user.id,
+      req.body,
+    );
+    await auth.assertActive(principal);
+    res.status(201).json(window);
+  });
+  router.delete(`${base}/maintenance/:maintenanceId`, async (req, res) => {
+    const principal = await auth.requireMutation(req, res);
+    await access(principal, req.params.id);
+    await health.cancelMaintenance(req.params.id, req.params.maintenanceId);
+    res.sendStatus(204);
+  });
   return router;
 }

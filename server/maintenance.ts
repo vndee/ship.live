@@ -56,6 +56,10 @@ function tasks(policy: RetentionPolicy): Task[] {
       condition: "resolved_at < now() - interval '1 year'",
     },
     {
+      table: "ship_live_health_maintenance",
+      condition: "ends_at < now() - interval '90 days'",
+    },
+    {
       table: "ship_live_digest_runs",
       condition: "week_start < now() - interval '1 year'",
     },

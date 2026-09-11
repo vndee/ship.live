@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add a Delivery scene to Pulse: deployments per week, change failure rate, time to restore, and time to merge for one environment over the last 30 days, each compared with the 30 days before, and eight weeks of deployments by week. Lead time is shown as time to merge, because GitHub does not link a deployment to the pull requests it ships. The figures describe the team; nothing is ranked by person.
+- Show 90-day uptime for each service on Service Health and its share page, as a strip of daily bars.
+- Add maintenance windows. Schedule up to seven days for one service or the whole workspace. Failing checks inside a window hold the probe's status, open no incident, send no alert, and are left out of 90-day uptime.
+- Add #tags to journal notes. The Live feed filters by tag, the note composer suggests tags already in use, and **Export Markdown** downloads the current view.
+- Upgrade note: migration 016 adds a passed-check count to daily probe aggregates, backfilled for days whose checks are all still retained (other earlier days show no data), and the maintenance window table. Daily aggregates are now kept for 90 days.
+
 - Add team webhooks. Outbound webhooks send activity, CI and deployment changes, Service Health incidents and probe changes, inbound alerts, and a weekly digest to Slack, Discord, Microsoft Teams, Google Chat, Lark / Feishu, or any HTTPS endpoint. Bodies are Handlebars-like templates with a live preview. Webhooks filter by repository, branch, environment, service, person, or summary text, with wildcards and exclusions, and a cooldown holds repeated alerts until a recovery. Requests are signed (an `X-Ship-Signature` header, or Lark's body fields), can require a JSON value in the response, retry with backoff for about nine hours, and are logged for 30 days with test sends and redelivery. URLs, header values, and secrets are encrypted, and deliveries follow the webhook owner's current repository access, checked again before every attempt. A rerun or the next commit's run of the same check on the same branch counts as one pipeline, so CI recoveries are announced. See the [webhook guide](docs/webhooks.md).
 - Add inbound webhooks: a secret URL, optionally HMAC-signed, whose JSON is mapped by templates to a title, details, link, and delivery ID, then passed on to outbound webhooks.
 - Record Service Health incidents. Each period a probe is down opens and resolves an incident, shown on its service for 30 days and kept for a year.

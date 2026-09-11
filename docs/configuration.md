@@ -98,7 +98,7 @@ Manage repository selection in GitHub's installation settings. Users do not need
 
 ## Personal and team privacy
 
-Every account has a private personal journal. Notes accept a title up to 200 characters and a body up to 10,000 characters; only their owner may read, create, or delete them. Notes earn zero XP.
+Every account has a private personal journal. Notes accept a title up to 200 characters and a body up to 10,000 characters; only their owner may read, create, or delete them. Notes earn zero XP. Write `#tags` in a note to group it: a tag starts with a letter or number and has up to 40 letters, numbers, `_`, or `-`; longer words are not tags. The Live feed can filter by tag, and **Export Markdown** downloads the events in the current view, with its filters applied.
 
 A team workspace is associated with a verified installation. Each viewer must connect GitHub. The server filters activity by immutable repository IDs that both the App and that viewer could access at the viewer's last sync. Installation repository selections, organization membership, team, and collaborator changes apply through webhooks; changes GitHub does not announce, such as an organization's base permission, apply at the viewer's next sync. Organization membership alone does not grant every private repository. Totals, repository names, search results, and live updates are derived from the permitted events.
 

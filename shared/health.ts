@@ -59,6 +59,22 @@ export interface HealthProbe extends ProbeInput {
   latencyHistory: DailyLatency[];
   latency24h: LatencyWindow[];
   latencyStats24h: LatencyStats | null;
+  /** The last 90 UTC days, oldest first; days without checks are absent. */
+  uptime90d?: DailyUptime[];
+}
+/** One UTC day of a probe's checks; maintenance checks are left out. */
+export interface DailyUptime {
+  date: string;
+  checks: number;
+  passed: number;
+}
+/** Planned maintenance for one service, or every service when serviceId is null. */
+export interface MaintenanceWindow {
+  id: string;
+  serviceId: string | null;
+  startsAt: string;
+  endsAt: string;
+  note: string;
 }
 /** A period when a probe was down. */
 export interface HealthIncident {
@@ -69,6 +85,9 @@ export interface HealthIncident {
   resolvedAt: string | null;
   reason: string;
 }
+/** The most incidents a snapshot lists per service, newest first. */
+export const HEALTH_INCIDENT_LIMIT = 20;
+
 export interface HealthService {
   id: string;
   name: string;
@@ -76,6 +95,8 @@ export interface HealthService {
   probes: HealthProbe[];
   /** Open incidents and those from the last 30 days, newest first. */
   incidents?: HealthIncident[];
+  /** Maintenance that is active or scheduled. */
+  maintenance?: MaintenanceWindow[];
 }
 export interface HealthSnapshot {
   services: HealthService[];
@@ -98,6 +119,7 @@ export type PublicHealthProbe = Pick<
   | "latencyHistory"
   | "latency24h"
   | "latencyStats24h"
+  | "uptime90d"
 >;
 export interface PublicHealthService {
   id: string;

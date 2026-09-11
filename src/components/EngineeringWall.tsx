@@ -31,9 +31,11 @@ import {
   type WallTabs,
 } from "../lib/engineering-wall.js";
 import { DashboardPulse } from "./DashboardPulse";
+import { DeliveryScene } from "./DeliveryScene";
 import { LiveLeaderboard } from "./LiveLeaderboard";
 import { ServiceStatusStrip } from "./ServiceStatusStrip";
 import { RepositoryList } from "./RepositoryList";
+import { SceneHeader } from "./SceneHeader";
 import { serviceStats } from "../lib/service-stats";
 import "../engineering-wall.css";
 import "./service-health.css";
@@ -42,6 +44,7 @@ const labels: Record<WallScene, string> = {
   pulse: "Overview",
   review: "Review radar",
   release: "Release pulse",
+  delivery: "Delivery",
   health: "Service health",
   leaderboard: "Leaderboard",
 };
@@ -103,26 +106,6 @@ function tally<T extends string>(values: T[], order: readonly T[]) {
   return order
     .map((value) => [value, values.filter((item) => item === value).length])
     .filter((entry): entry is [T, number] => (entry[1] as number) > 0);
-}
-
-function SceneHeader({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: string;
-  children?: ReactNode;
-}) {
-  return (
-    <div className="scene-header">
-      <div>
-        <h2>{title}</h2>
-        <p>{description}</p>
-      </div>
-      {children && <div className="scene-chips">{children}</div>}
-    </div>
-  );
 }
 
 function SceneEmpty({
@@ -658,6 +641,9 @@ export function EngineeringWall({
               ))}
             </ul>
           </>
+        )}
+        {scene === "delivery" && (
+          <DeliveryScene snapshot={snapshot} health={health} now={now} />
         )}
         {scene === "health" && health && (
           <>

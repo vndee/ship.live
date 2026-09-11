@@ -1,9 +1,12 @@
 import type { ActivityEvent } from "../../shared/types";
+import { noteTags } from "./journal";
 
 export type FeedFilters = {
   repo: string;
   kind: ActivityEvent["type"] | "";
   query: string;
+  /** Only ship notes carrying this hashtag. */
+  tag?: string;
 };
 
 /** Keep bot activity visible here; weekly contribution scoring is handled separately. */
@@ -42,6 +45,7 @@ export function filterEvents(
   return events.filter((event) => {
     if (filters.repo && event.repo !== filters.repo) return false;
     if (filters.kind && event.type !== filters.kind) return false;
+    if (filters.tag && !noteTags(event).includes(filters.tag)) return false;
     if (!query) return true;
     const fields = [
       event.title,

@@ -90,7 +90,7 @@ export class WallStore {
           const carried = settledOf(update.value) ?? settled;
           if (carried) value = { ...update.value, settled: carried };
         } else if (update.kind === "deployment") {
-          previous = (
+          const earlier = (
             await client.query<{ value: DeploymentState }>(
               `SELECT value FROM ship_live_wall_signals
                WHERE installation_id=$1 AND repository_id=$2 AND kind=$3 AND signal_key=$4
@@ -98,6 +98,17 @@ export class WallStore {
               [installationId, repositoryId, update.kind, signalKey(update)],
             )
           ).rows[0]?.value;
+          previous = earlier;
+          // GitHub marks earlier successful deployments inactive; keep when
+          // each one succeeded, for delivery figures.
+          if (update.value.status === "inactive")
+            value = {
+              ...update.value,
+              succeededAt:
+                earlier?.status === "successful"
+                  ? earlier.updatedAt
+                  : earlier?.succeededAt,
+            };
         }
         const written = await client.query(
           `INSERT INTO ship_live_wall_signals
