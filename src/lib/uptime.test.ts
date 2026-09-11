@@ -46,11 +46,11 @@ test("tones follow status-page thresholds", () => {
   assert.equal(uptimeTone(0.98), "bad");
 });
 
-test("uptime reads to two decimals, rounded down, and 100% only when every check passed", () => {
+test("uptime reads to four decimals, rounded down, and 100% only when every check passed", () => {
   assert.equal(formatUptime(100), "100%");
-  assert.equal(formatUptime(99.999), "99.99%");
-  assert.equal(formatUptime(99.99), "99.99%");
-  assert.equal(formatUptime(99.9), "99.90%");
-  assert.equal(formatUptime(87.5), "87.50%");
-  assert.equal(formatUptime(0), "0.00%");
+  assert.equal(formatUptime(99.99999), "99.9999%");
+  assert.equal(formatUptime((1439 / 1440) * 100), "99.9305%");
+  assert.equal(formatUptime(99.99), "99.9900%");
+  assert.equal(formatUptime(87.5), "87.5000%");
+  assert.equal(formatUptime(0), "0.0000%");
 });

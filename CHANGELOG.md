@@ -3,8 +3,9 @@
 ## Unreleased
 
 - Show the active share link again, with **Copy link**, to the member who created it. Tokens are kept encrypted with `TOKEN_ENCRYPTION_KEY`; links created before this version need one rotation to become copyable.
-- Show uptime and check success to two decimals, rounded down, so 99.99% never reads as 100%.
+- Show uptime and check success to four decimals (99.9305%), rounded down, so 99.99999% never reads as 100%.
 - Keep the leaderboard's leading card clear of the divider below it.
+- Span each probe's check strip across its card with 40 slots, and show details when you hover over or tap a status block: probe checks, service rows, and days in the 90-day strip.
 - Upgrade note: migration 017 adds an encrypted token column to share links.
 
 - Add a Delivery scene to Pulse: deployments per week, change failure rate, time to restore, and time to merge for one environment over the last 30 days, each compared with the 30 days before, and eight weeks of deployments by week. Lead time is shown as time to merge, because GitHub does not link a deployment to the pull requests it ships. The figures describe the team; nothing is ranked by person.
