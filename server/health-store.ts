@@ -146,7 +146,10 @@ export class HealthStore {
         [workspaceId],
       );
       if (count.rows[0].count >= 20)
-        throw new AuthError(400, "A team can configure up to 20 services.");
+        throw new AuthError(
+          400,
+          "A workspace can configure up to 20 services.",
+        );
       const id = randomUUID();
       await c.query(
         "INSERT INTO ship_live_health_services(id,workspace_id,name,display_order) SELECT $1,$2,$3,coalesce(max(display_order),-1)+1 FROM ship_live_health_services WHERE workspace_id=$2",
@@ -278,7 +281,10 @@ export class HealthStore {
           [workspaceId],
         );
         if (count.rows[0].count >= 100)
-          throw new AuthError(400, "A team can configure up to 100 probes.");
+          throw new AuthError(
+            400,
+            "A workspace can configure up to 100 probes.",
+          );
         await c.query(
           "INSERT INTO ship_live_health_probes(id,workspace_id,service_id,config,headers_encrypted) VALUES($1,$2,$3,$4,$5)",
           [

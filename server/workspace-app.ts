@@ -290,12 +290,18 @@ export function createWorkspaceApp({
     // Showing only the owner's activity needs their login.
     const sources = mineOnly && !author ? [] : synced;
     const missing = chosen.sources.length > synced.length;
+    // The owner's login even with no source chosen, so notes still read as them.
+    const login =
+      chosen.login ??
+      (github && workspace.sources
+        ? (await workspaces.connection(principal.user.id))?.login
+        : undefined);
     await auth.assertActive(principal);
     return {
       workspace,
       // Webhooks pin every source's repositories.
       repositories: sources.flatMap((source) => source.repositories),
-      ...(chosen.login ? { ownerLogin: chosen.login } : {}),
+      ...(login ? { ownerLogin: login } : {}),
       sources,
       ...(author ? { author } : {}),
       ...(missing
@@ -1155,15 +1161,15 @@ export function createWorkspaceApp({
     const principal = await auth.authenticate(request, response);
     const initial = await viewer(principal, request.params.id, true);
     // A journal combines the signals of every source.
-    const saved = [];
-    for (const source of initial.sources)
-      saved.push({
+    const saved = await Promise.all(
+      initial.sources.map(async (source) => ({
         installationId: source.installationId,
         snapshot: await wall.snapshot(
           source.installationId,
           source.repositories.map((repository) => repository.id),
         ),
-      });
+      })),
+    );
     const current = await viewer(principal, initial.workspace.id, true);
     if (
       current.workspace.kind === "team" &&
@@ -1188,17 +1194,33 @@ export function createWorkspaceApp({
           .filter((repository) =>
             allowed.get(installationId)?.has(repository.repositoryId),
           )
-          // A journal showing only its owner's activity keeps their pull requests.
-          .map((repository) =>
-            author
-              ? {
-                  ...repository,
-                  pullRequests: repository.pullRequests.filter(
-                    (pull) => pull.author.toLowerCase() === author,
-                  ),
-                }
-              : repository,
-          ),
+          .map((repository) => {
+            if (!author) return repository;
+            // A journal showing only its owner's activity keeps their pull
+            // requests, the reviews on them or by them, and no checks on anyone
+            // else's pull request. Branch checks and deployments have no author.
+            const mine = repository.pullRequests.filter(
+              (pull) => pull.author.toLowerCase() === author,
+            );
+            const numbers = new Set(mine.map((pull) => pull.number));
+            const others = new Set(
+              repository.pullRequests
+                .filter((pull) => !numbers.has(pull.number))
+                .map((pull) => pull.headSha),
+            );
+            return {
+              ...repository,
+              pullRequests: mine,
+              reviews: repository.reviews.filter(
+                (review) =>
+                  numbers.has(review.pullRequestNumber) ||
+                  review.reviewer.toLowerCase() === author,
+              ),
+              pipelines: repository.pipelines.filter(
+                (pipeline) => !others.has(pipeline.headSha),
+              ),
+            };
+          }),
       ),
     });
   });

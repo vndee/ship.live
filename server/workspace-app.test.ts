@@ -2606,9 +2606,37 @@ test("a journal is a full workspace: combined wall signals, its own Service Heal
         updatedAt: "2026-09-10T12:00:00Z",
       },
     });
+    const review = (id: number, pullRequestNumber: number) => ({
+      kind: "review" as const,
+      observedAt: "2026-09-10T12:00:00Z",
+      value: {
+        id,
+        pullRequestNumber,
+        reviewer: "someone",
+        decision: "approved" as const,
+        submittedAt: "2026-09-10T12:00:00Z",
+      },
+    });
+    const check = (id: string, headSha: string) => ({
+      kind: "pipeline" as const,
+      observedAt: "2026-09-10T12:00:00Z",
+      value: {
+        id,
+        name: "CI",
+        provider: "github-actions",
+        headSha,
+        status: "passing" as const,
+        updatedAt: "2026-09-10T12:00:00Z",
+      },
+    });
     await wall.apply(70, 101, "team/alpha", randomUUID(), [
       pull(1, "Builder-1"),
       pull(2, "someone"),
+      review(11, 1),
+      review(12, 2),
+      check("check:mine", "1".repeat(40)),
+      check("check:theirs", "2".repeat(40)),
+      check("check:main", "f".repeat(40)),
     ]);
     await wall.apply(71, 111, "other-team/app", randomUUID(), [
       pull(3, "builder-1"),
@@ -2630,6 +2658,19 @@ test("a journal is a full workspace: combined wall signals, its own Service Heal
         ["other-team/app", [3]],
         ["team/alpha", [1]],
       ],
+    );
+    // Reviews on the owner's pull requests stay; checks on others' do not.
+    const alpha = signals.repositories.find(
+      (repository: { repository: string }) =>
+        repository.repository === "team/alpha",
+    );
+    assert.deepEqual(
+      alpha.reviews.map((item: { id: number }) => item.id),
+      [11],
+    );
+    assert.deepEqual(
+      alpha.pipelines.map((item: { id: string }) => item.id).sort(),
+      ["check:main", "check:mine"],
     );
 
     // Service Health belongs to the journal and only its owner.

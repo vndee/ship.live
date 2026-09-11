@@ -762,14 +762,14 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             />
           ) : (
             <div className="empty-state">
-              <h3>Webhooks belong to team workspaces</h3>
+              <h3>Webhooks belong to your workspaces</h3>
               <p>
-                Sign in and choose a team workspace to send its activity, CI,
-                deployments, and incidents to Slack, Discord, Teams, Google
-                Chat, Lark, or any URL.
+                Sign in and open your journal or a team workspace to send its
+                activity, CI, deployments, and incidents to Slack, Discord,
+                Teams, Google Chat, Lark, or any URL.
               </p>
               <button className="button secondary" onClick={openConnect}>
-                {feed.session.user ? "Choose team workspace" : "Sign in"}
+                {feed.session.user ? "Choose a workspace" : "Sign in"}
               </button>
             </div>
           ))}

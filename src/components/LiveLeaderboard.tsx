@@ -198,7 +198,7 @@ export function LiveLeaderboard({
           <strong>
             <AnimatedNumber value={metrics.xp} moving={animate} />
           </strong>
-          <span>team XP</span>
+          <span>{personal ? "XP" : "team XP"}</span>
         </div>
         <div>
           <Users size={15} />
@@ -314,8 +314,9 @@ export function LiveLeaderboard({
               : "A new week, ready to ship."}
           </h3>
           <p>
-            Merge a pull request, review a teammate’s work, or publish a release
-            to earn team XP.
+            {personal
+              ? "Merge a pull request, review someone’s work, or publish a release to earn XP."
+              : "Merge a pull request, review a teammate’s work, or publish a release to earn team XP."}
           </p>
         </div>
       )}

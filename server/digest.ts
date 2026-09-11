@@ -78,25 +78,45 @@ export async function withDigest(
   const start = Date.parse(`${String(event.data.weekStart)}T00:00:00Z`);
   if (!Number.isFinite(start)) return event;
   const end = start + 7 * DAY;
+  // A team reads its installation. A journal reads each of its sources, and only
+  // its owner's activity when it keeps only theirs.
   const { rows: workspaces } = await pool.query<{
-    installation_id: string | null;
-  }>("SELECT installation_id FROM ship_live_workspaces WHERE id=$1", [
-    event.workspace.id,
-  ]);
-  const installation = workspaces[0]?.installation_id;
+    installations: string[];
+    author: string | null;
+  }>(
+    `SELECT ARRAY(
+       SELECT c.installation_id FROM ship_live_workspaces c
+       WHERE c.installation_id IS NOT NULL AND (
+         (w.kind = 'team' AND c.id = w.id)
+         OR (w.kind = 'personal'
+           AND (w.source_installation_ids IS NULL OR c.installation_id = ANY(w.source_installation_ids))
+           AND (c.id = w.id OR EXISTS (SELECT 1 FROM ship_live_workspace_members m
+             WHERE m.workspace_id = c.id AND m.user_id = w.owner_user_id))))
+     )::text[] AS installations,
+     CASE WHEN w.kind = 'personal' AND w.source_mine_only THEN coalesce(g.login, '') END AS author
+     FROM ship_live_workspaces w
+     LEFT JOIN ship_live_github_connections g ON g.user_id = w.owner_user_id
+     WHERE w.id = $1`,
+    [event.workspace.id],
+  );
+  const scopes = (workspaces[0]?.installations ?? []).map(
+    (id) => `installation-${id}`,
+  );
   const activity =
-    installation && repositoryIds.length
+    scopes.length && repositoryIds.length
       ? (
           await pool.query<{ event: ActivityEvent }>(
             `SELECT event FROM ship_live_events
-             WHERE organization = $1 AND occurred_at >= $2 AND occurred_at < $3
+             WHERE organization = ANY($1::text[]) AND occurred_at >= $2 AND occurred_at < $3
                AND (event->>'repositoryId')::bigint = ANY($4::bigint[])
+               AND ($5::text IS NULL OR lower(event->'actor'->>'login') = lower($5))
              ORDER BY occurred_at LIMIT 20000`,
             [
-              `installation-${installation}`,
+              scopes,
               new Date(start),
               new Date(end),
               repositoryIds,
+              workspaces[0]?.author ?? null,
             ],
           )
         ).rows.map((row) => row.event)
