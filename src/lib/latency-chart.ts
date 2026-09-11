@@ -9,6 +9,8 @@ export interface DailyLatency {
 export interface LatencyPoint {
   ok?: boolean;
   statusCode?: number | null;
+  /** Why a recent check failed. */
+  reason?: string;
   time: number;
   latencyMs: number;
   minLatencyMs: number;
@@ -58,6 +60,7 @@ export function buildLatencySeries(
         checks: 1,
         ok: check.ok,
         statusCode: check.statusCode,
+        reason: check.reason,
       }))
       .sort((a, b) => a.time - b.time)
       .slice(-120);
@@ -107,6 +110,23 @@ export function buildLatencySeries(
     };
   });
 }
+/**
+ * The pass/fail rail under recent checks: one segment per point, meeting its
+ * neighbours halfway, so the segments tile the plot from left to right.
+ */
+export function railSegments(
+  xs: number[],
+  left: number,
+  right: number,
+  gap = 1.5,
+): { x: number; width: number }[] {
+  return xs.map((x, index) => {
+    const start = index === 0 ? left : (xs[index - 1] + x) / 2;
+    const end = index === xs.length - 1 ? right : (x + xs[index + 1]) / 2;
+    return { x: start + gap / 2, width: Math.max(1, end - start - gap) };
+  });
+}
+
 /** Missing days break the line; they are neither zero-latency nor interpolated checks. */
 export function latencySegments(
   points: (LatencyPoint | null)[],

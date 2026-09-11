@@ -65,3 +65,12 @@ export function uptimeTone(
   if (uptime >= 0.99) return "warning";
   return "bad";
 }
+
+/**
+ * An uptime percentage to four decimals, rounded down so it never overstates:
+ * 99.99999 reads "99.9999%", and only every check passing reads "100%".
+ */
+export function formatUptime(percent: number): string {
+  if (percent >= 100) return "100%";
+  return `${(Math.floor(percent * 10_000 + 1e-6) / 10_000).toFixed(4)}%`;
+}

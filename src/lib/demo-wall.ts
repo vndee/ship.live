@@ -305,7 +305,7 @@ function demoProbe(
   degraded: boolean,
 ): HealthProbe {
   // Newest first, like health snapshots from the server.
-  const history: HealthCheck[] = Array.from({ length: 24 }, (_, index) => {
+  const history: HealthCheck[] = Array.from({ length: 40 }, (_, index) => {
     const failing = degraded && index < 2;
     return {
       checkedAt: new Date(now - (index + 1) * MINUTE).toISOString(),
@@ -314,7 +314,7 @@ function demoProbe(
         ? 1480 - index * 90
         : latencyMs + ((index * 37) % 23) - 11,
       statusCode: failing ? 503 : 200,
-      reason: failing ? "HTTP 503" : "",
+      reason: failing ? "HTTP status is outside the accepted range." : "",
       status: failing ? "degraded" : "healthy",
     };
   });

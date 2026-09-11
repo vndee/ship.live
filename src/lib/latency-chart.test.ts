@@ -7,6 +7,7 @@ import {
   moveLatencyPoint,
   clampTooltipLeft,
   plotX,
+  railSegments,
   LATENCY_WINDOW_MS,
   type LatencyPoint,
   type DailyLatency,
@@ -222,4 +223,33 @@ test("the plot spans its measured width between fixed axis margins", () => {
   assert.equal(plotX(50, 0, 100, 640), 330);
   // A lone observation sits in the middle of the plot.
   assert.equal(plotX(5, 5, 5, 1000), 510);
+});
+
+test("recent checks keep why they failed", () => {
+  const check = (ok: boolean, reason: string): HealthCheck => ({
+    checkedAt: "2026-09-10T01:00:00Z",
+    latencyMs: 100,
+    ok,
+    statusCode: ok ? 200 : 503,
+    reason,
+    status: ok ? "healthy" : "down",
+  });
+  assert.deepEqual(
+    buildLatencySeries(
+      [check(false, "HTTP 503")],
+      [],
+      "recent",
+      Date.now(),
+    ).map((point) => point?.reason),
+    ["HTTP 503"],
+  );
+});
+
+test("the recent-check rail tiles the plot with one segment per check", () => {
+  assert.deepEqual(railSegments([70, 90, 110], 60, 120, 2), [
+    { x: 61, width: 18 },
+    { x: 81, width: 18 },
+    { x: 101, width: 18 },
+  ]);
+  assert.deepEqual(railSegments([90], 60, 120, 2), [{ x: 61, width: 58 }]);
 });

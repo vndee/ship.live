@@ -127,6 +127,10 @@
   border-radius: 8px;
   border-top-color: transparent;
 }
+/* The highlighted card needs no divider under it. */
+.leader-row.place-1 + .leader-row {
+  border-top-color: transparent;
+}
 .leader-row.place-2 {
   --leader-color: var(--info);
 }

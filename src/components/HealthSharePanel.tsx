@@ -90,10 +90,10 @@ export function HealthSharePanel({
   const noExpiration = Boolean(
     share && !expired && isEffectivelyNoExpiration(share.expiresAt, now),
   );
+  // A link just created, or the active link the server can show again.
+  const token = link && share?.id === link.id ? link.token : share?.token;
   const url =
-    link && share?.id === link.id && !expired
-      ? `${window.location.origin}/share/health#${link.token}`
-      : "";
+    token && !expired ? `${window.location.origin}/share/health#${token}` : "";
   async function change(action: "create" | "rotate" | "revoke") {
     const controller = scope.current;
     if (!controller || controller.signal.aborted || busy) return;
@@ -226,8 +226,8 @@ export function HealthSharePanel({
             </label>
           ) : share && !expired ? (
             <p className="field-hint">
-              The link’s secret is only shown when it is created. Rotate to get
-              a new link to copy.
+              This link was created before links could be shown again. Rotate it
+              once to get a link you can copy.
             </p>
           ) : null}
           <ExpirationPicker
