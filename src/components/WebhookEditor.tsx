@@ -645,13 +645,13 @@ export function WebhookEditor({
           </p>
         </details>
 
-        <label className="settings-toggle">
-          <span>Send deliveries</span>
+        <label className="webhook-check">
           <input
             type="checkbox"
             checked={enabled}
             onChange={(e) => setEnabled(e.target.checked)}
           />
+          <span>Send deliveries</span>
         </label>
         {webhook?.pausedReason && (
           <p className="field-hint">

@@ -188,8 +188,7 @@
   gap: 10px;
   color: var(--text);
 }
-.webhook-form .webhook-check input,
-.webhook-form .settings-toggle input {
+.webhook-form .webhook-check input {
   width: 16px;
   height: 16px;
   padding: 0;
