@@ -16,6 +16,7 @@ import {
   moveLatencyPoint,
   clampTooltipLeft,
   plotX,
+  railSegments,
   LATENCY_WINDOW_MS,
   LATENCY_WINDOWS,
   PLOT_LEFT,
@@ -29,12 +30,18 @@ import {
 const EMPTY_DAILY: DailyLatency[] = [];
 const EMPTY_WINDOWS: LatencyWindow[] = [];
 const PLOT_HEIGHT = 175;
+/** Recent checks add a pass/fail rail between the plot and the time axis. */
+const RECENT_HEIGHT = 192;
+const RAIL_TOP = 147;
+const RAIL_HEIGHT = 12;
 const MODES: Array<[LatencyMode, string]> = [
   ["recent", "Recent checks"],
   ["day", "24 hours"],
   ["daily", "30 days"],
 ];
 const TIME_OF_DAY = { hour: "2-digit", minute: "2-digit" } as const;
+const result = (point: LatencyPoint) =>
+  `${point.ok ? "Passed" : "Failed"}${point.statusCode != null ? ` · HTTP ${point.statusCode}` : ""}`;
 
 export function LatencyChart({
   name,
@@ -72,6 +79,9 @@ export function LatencyChart({
   );
   const hasPoints = points.length > 0;
   const aggregated = mode !== "recent";
+  const plotHeight = aggregated ? PLOT_HEIGHT : RECENT_HEIGHT;
+  const labelY = aggregated ? 162 : 180;
+  const failed = points.filter((point) => point.ok === false).length;
   const start =
     mode === "daily"
       ? today - 29 * UTC_DAY_MS
@@ -84,12 +94,18 @@ export function LatencyChart({
       : mode === "day"
         ? windowEnd
         : (points.at(-1)?.time ?? today);
+  // Recent checks sit at the centers of equal slots, so the rail gives every
+  // check, first and last included, a full segment under its point.
+  const pad =
+    !aggregated && points.length > 1
+      ? (end - start) / (2 * (points.length - 1))
+      : 0;
   const maximum = Math.max(1, ...points.map((point) => point.latencyMs));
   const top =
     Math.ceil(maximum / Math.pow(10, Math.floor(Math.log10(maximum)))) *
     Math.pow(10, Math.floor(Math.log10(maximum)));
   const right = plotWidth - PLOT_RIGHT_MARGIN;
-  const x = (time: number) => plotX(time, start, end, plotWidth);
+  const x = (time: number) => plotX(time, start - pad, end + pad, plotWidth);
   const y = (latency: number) => 138 - (latency / top) * 112;
   const date = (time: number) =>
     mode === "daily"
@@ -164,7 +180,7 @@ export function LatencyChart({
       // Between a resize and the next measurement the viewBox can be letterboxed.
       const scale = Math.min(
         chart.width / plotWidth,
-        chart.height / PLOT_HEIGHT,
+        chart.height / plotHeight,
       );
       const anchor =
         chart.left -
@@ -185,11 +201,11 @@ export function LatencyChart({
     observer.observe(svg);
     observer.observe(tooltip);
     return () => observer.disconnect();
-  }, [activeX, activePoint, mode, plotWidth]);
+  }, [activeX, activePoint, mode, plotWidth, plotHeight]);
 
   const selectPointer = (event: PointerEvent<SVGSVGElement>) => {
     const chart = event.currentTarget.getBoundingClientRect();
-    const scale = Math.min(chart.width / plotWidth, chart.height / PLOT_HEIGHT);
+    const scale = Math.min(chart.width / plotWidth, chart.height / plotHeight);
     if (!scale) return;
     const chartX =
       (event.clientX - chart.left - (chart.width - plotWidth * scale) / 2) /
@@ -200,7 +216,10 @@ export function LatencyChart({
     );
     selectionSource.current = event.pointerType === "touch" ? "touch" : "mouse";
     setActiveIndex(
-      nearestLatencyPoint(series, start + fraction * (end - start)),
+      nearestLatencyPoint(
+        series,
+        start - pad + fraction * (end - start + 2 * pad),
+      ),
     );
   };
   const selectKey = (event: KeyboardEvent<SVGSVGElement>) => {
@@ -266,7 +285,7 @@ export function LatencyChart({
           ? "Daily average in milliseconds · UTC · today is partial. Gaps mean no recorded checks."
           : mode === "day"
             ? "Average per 15 minutes over the last 24 hours, in milliseconds. Gaps mean no recorded checks."
-            : "Recorded check duration in milliseconds, oldest to newest."}{" "}
+            : "Recorded check duration in milliseconds, oldest to newest; the bar underneath shows whether each check passed."}{" "}
         Includes failed checks and timeouts.
       </p>
       {!hasPoints ? (
@@ -309,9 +328,9 @@ export function LatencyChart({
                 selectionSource.current = null;
               }}
               onKeyDown={selectKey}
-              viewBox={`0 0 ${plotWidth} ${PLOT_HEIGHT}`}
+              viewBox={`0 0 ${plotWidth} ${plotHeight}`}
               role="img"
-              aria-label={`${name}: ${rangeLabel} latency, ${points.length} ${countLabel}, between ${Math.round(Math.min(...points.map((point) => point.latencyMs)))} and ${Math.round(maximum)} milliseconds. ${gapLabel} Use Left and Right arrow keys to explore, Home or End to jump, and Escape to dismiss. Full values are available in the latency data table.`}
+              aria-label={`${name}: ${rangeLabel} latency, ${points.length} ${countLabel}, between ${Math.round(Math.min(...points.map((point) => point.latencyMs)))} and ${Math.round(maximum)} milliseconds.${aggregated ? "" : ` ${failed} ${failed === 1 ? "check" : "checks"} failed.`} ${gapLabel} Use Left and Right arrow keys to explore, Home or End to jump, and Escape to dismiss. Full values are available in the latency data table.`}
             >
               {[0, top / 2, top].map((value) => (
                 <g key={value}>
@@ -351,7 +370,7 @@ export function LatencyChart({
               ))}
               {points.map((point, index) => (
                 <circle
-                  className="latency-point"
+                  className={`latency-point${point.ok === false ? " is-failed" : ""}`}
                   key={`${point.time}-${index}`}
                   cx={x(point.time)}
                   cy={y(point.latencyMs)}
@@ -360,10 +379,28 @@ export function LatencyChart({
                       ? 4
                       : mode === "day"
                         ? 1.5
-                        : 2.5
+                        : point.ok === false
+                          ? 3.5
+                          : 2.5
                   }
                 />
               ))}
+              {!aggregated &&
+                railSegments(
+                  points.map((point) => x(point.time)),
+                  PLOT_LEFT,
+                  right,
+                ).map((segment, index) => (
+                  <rect
+                    key={`rail-${points[index].time}-${index}`}
+                    className={`latency-rail${points[index].ok === false ? " is-failed" : ""}${points[index] === activePoint ? " is-active" : ""}`}
+                    x={segment.x}
+                    y={RAIL_TOP}
+                    width={segment.width}
+                    height={RAIL_HEIGHT}
+                    rx={2}
+                  />
+                ))}
               {activePoint && activeX !== null && (
                 <g aria-hidden="true">
                   <line
@@ -371,20 +408,25 @@ export function LatencyChart({
                     x1={activeX}
                     x2={activeX}
                     y1={26}
-                    y2={138}
+                    y2={aggregated ? 138 : RAIL_TOP}
                   />
                   <circle
-                    className="latency-point is-active"
+                    className={`latency-point is-active${activePoint.ok === false ? " is-failed" : ""}`}
                     cx={activeX}
                     cy={y(activePoint.latencyMs)}
                     r={5}
                   />
                 </g>
               )}
-              <text className="latency-axis" x={PLOT_LEFT} y={162}>
+              <text className="latency-axis" x={PLOT_LEFT} y={labelY}>
                 {axisDate(start)}
               </text>
-              <text className="latency-axis" x={right} y={162} textAnchor="end">
+              <text
+                className="latency-axis"
+                x={right}
+                y={labelY}
+                textAnchor="end"
+              >
                 {axisDate(end)}
               </text>
             </svg>
@@ -417,12 +459,12 @@ export function LatencyChart({
                     <span>{activePoint.checks} checks</span>
                   </>
                 ) : (
-                  <span>
-                    {activePoint.ok ? "Passed" : "Failed"}
-                    {activePoint.statusCode != null
-                      ? ` · HTTP ${activePoint.statusCode}`
-                      : ""}
-                  </span>
+                  <>
+                    <span>{result(activePoint)}</span>
+                    {!activePoint.ok && activePoint.reason && (
+                      <span>{activePoint.reason}</span>
+                    )}
+                  </>
                 )}
               </div>
             )}
@@ -451,12 +493,14 @@ export function LatencyChart({
                     <th scope="col">
                       {aggregated ? "Average (ms)" : "Latency (ms)"}
                     </th>
-                    {aggregated && (
+                    {aggregated ? (
                       <>
                         <th scope="col">Min (ms)</th>
                         <th scope="col">Max (ms)</th>
                         <th scope="col">Checks</th>
                       </>
+                    ) : (
+                      <th scope="col">Result</th>
                     )}
                   </tr>
                 </thead>
@@ -465,12 +509,19 @@ export function LatencyChart({
                     <tr key={`${point.time}-${index}`}>
                       <td>{date(point.time)}</td>
                       <td>{Math.round(point.latencyMs)}</td>
-                      {aggregated && (
+                      {aggregated ? (
                         <>
                           <td>{Math.round(point.minLatencyMs)}</td>
                           <td>{Math.round(point.maxLatencyMs)}</td>
                           <td>{point.checks}</td>
                         </>
+                      ) : (
+                        <td>
+                          {result(point)}
+                          {!point.ok && point.reason
+                            ? ` · ${point.reason}`
+                            : ""}
+                        </td>
                       )}
                     </tr>
                   ))}

@@ -6,7 +6,6 @@ import { serviceStats } from "../lib/service-stats";
 import { HealthServiceStats, HealthStatsInfo } from "./HealthServiceStats";
 import { LatencyChart } from "./LatencyChart";
 import { ServiceStatusStrip } from "./ServiceStatusStrip";
-import { ProbeCheckStrip } from "./ProbeCheckStrip";
 import { UptimeStrip } from "./UptimeStrip";
 import { formatUptime, uptimeDays } from "../lib/uptime";
 import "./service-health.css";
@@ -145,10 +144,6 @@ export function PublicHealthList({
                       daily={probe.latencyHistory}
                       windows={probe.latency24h}
                       now={now}
-                    />
-                    <ProbeCheckStrip
-                      name={probe.name}
-                      history={probe.history}
                     />
                     <details className="health-timeline">
                       <summary>State-change timeline</summary>

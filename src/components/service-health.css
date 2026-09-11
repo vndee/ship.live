@@ -190,37 +190,6 @@
   font-size: 12px;
   font-weight: 400;
 }
-.health-history {
-  display: flex;
-  align-items: stretch;
-  gap: 4px;
-  height: 23px;
-  margin: 13px 0;
-}
-.health-history > span:not(.health-no-history) {
-  flex: 1;
-  min-width: 0;
-  border-radius: 2px;
-}
-.health-pass {
-  background: var(--success);
-}
-.health-fail {
-  background: var(--danger-strong);
-}
-.health-none {
-  background: var(--neutral-track);
-}
-@media (max-width: 600px) {
-  /* Phones show the newest 20 checks. */
-  .health-history > span:not(.health-no-history):nth-child(-n + 20) {
-    display: none;
-  }
-}
-.health-no-history {
-  color: var(--muted);
-  font-size: 13px;
-}
 .health-timeline {
   color: var(--muted);
   font-size: 13px;
@@ -542,6 +511,21 @@
 }
 .latency-point {
   fill: var(--info);
+}
+.latency-point.is-failed {
+  fill: var(--danger-strong);
+}
+/* Recent checks: each check's result, under its point. */
+.latency-rail {
+  fill: var(--success);
+}
+.latency-rail.is-failed {
+  fill: var(--danger-strong);
+}
+.latency-rail.is-active {
+  stroke: var(--text);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
 }
 .latency-chart-empty {
   padding: 24px 0;

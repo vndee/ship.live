@@ -18,7 +18,6 @@ import { moveService } from "../lib/service-order";
 import { LatencyChart } from "./LatencyChart";
 import { ServiceStatusStrip } from "./ServiceStatusStrip";
 import { HealthServiceStats, HealthStatsInfo } from "./HealthServiceStats";
-import { ProbeCheckStrip } from "./ProbeCheckStrip";
 import { UptimeStrip } from "./UptimeStrip";
 import { formatUptime, uptimeDays } from "../lib/uptime";
 
@@ -828,10 +827,6 @@ export function ServiceHealth({
                               daily={probe.latencyHistory}
                               windows={probe.latency24h}
                               now={now}
-                            />
-                            <ProbeCheckStrip
-                              name={probe.name}
-                              history={probe.history}
                             />
                             <details className="health-timeline">
                               <summary>State-change timeline</summary>
