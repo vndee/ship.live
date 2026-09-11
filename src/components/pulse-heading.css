@@ -1,0 +1,74 @@
+/* The Pulse heading, with its edit button and optional subtitle. */
+.heading-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.heading-edit {
+  flex: 0 0 auto;
+  color: var(--muted);
+  opacity: 0.55;
+  transition: opacity 140ms ease;
+}
+.heading-line:hover .heading-edit,
+.heading-edit:focus-visible {
+  opacity: 1;
+}
+.page-subtitle {
+  max-width: 70ch;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.pulse-heading-form {
+  display: grid;
+  gap: 14px;
+}
+.pulse-heading-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--text);
+  font-size: 13px;
+}
+.pulse-heading-form input,
+.pulse-heading-form textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface-inset);
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+.pulse-heading-form input:focus-visible,
+.pulse-heading-form textarea:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.pulse-heading-form small {
+  justify-self: end;
+  color: var(--subtle);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.pulse-heading-form .field-hint {
+  margin: -6px 0 0;
+}
+.pulse-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pulse-heading-actions span {
+  flex: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .heading-edit {
+    transition: none;
+  }
+}

@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   BookOpen,
   Check,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -35,6 +36,7 @@ import type { Kind } from "./components/event-kinds";
 import { HealthSharePanel } from "./components/HealthSharePanel";
 import { LiveLeaderboard } from "./components/LiveLeaderboard";
 import { Modal } from "./components/Modal";
+import { PulseHeadingForm } from "./components/PulseHeadingForm";
 import { RepositoryList } from "./components/RepositoryList";
 import { RouteLink } from "./components/RouteLink";
 import { ScoringRules } from "./components/ScoringRules";
@@ -76,6 +78,17 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   const route = useRoute();
   const page = route.page;
   const personal = feed.workspace?.kind === "personal";
+  const defaultPulseTitle = personal
+    ? "Your week, in motion."
+    : "Great work. Shared momentum.";
+  // Members edit their workspace's heading; the demo keeps its own.
+  const canEditHeading =
+    page === "pulse" &&
+    !feed.demo &&
+    Boolean(
+      feed.workspace &&
+      (feed.workspace.kind === "team" || feed.workspace.owner),
+    );
   const canWriteNote = Boolean(
     personal && feed.workspace?.owner && feed.operation?.status !== "pending",
   );
@@ -107,7 +120,14 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   const [wall, setWall] = useState(false);
   const [celebrations, setCelebrations] = useState(true);
   const [modal, setModal] = useState<
-    "connect" | "rules" | "settings" | "note" | "share" | "health-share" | null
+    | "connect"
+    | "rules"
+    | "settings"
+    | "note"
+    | "share"
+    | "health-share"
+    | "heading"
+    | null
   >(null);
   useEffect(() => {
     if (!feed.session.user || !feed.workspace) return;
@@ -445,22 +465,37 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                 })}
               </p>
             )}
-            <h1>
-              {
+            <div className="heading-line">
+              <h1>
                 {
-                  pulse: personal
-                    ? "Your week, in motion."
-                    : "Great work. Shared momentum.",
-                  feed: personal
-                    ? "The shipping journal."
-                    : "The activity log.",
-                  health: "Service Health",
-                  webhooks: "Webhooks",
-                  team: "The people behind it.",
-                  milestones: "Built, together.",
-                }[page]
-              }
-            </h1>
+                  {
+                    pulse: feed.workspace?.pulseTitle || defaultPulseTitle,
+                    feed: personal
+                      ? "The shipping journal."
+                      : "The activity log.",
+                    health: "Service Health",
+                    webhooks: "Webhooks",
+                    team: "The people behind it.",
+                    milestones: "Built, together.",
+                  }[page]
+                }
+              </h1>
+              {canEditHeading && (
+                <button
+                  type="button"
+                  className="icon-button heading-edit"
+                  aria-label="Edit Pulse heading"
+                  onClick={() => setModal("heading")}
+                >
+                  <Pencil size={16} />
+                </button>
+              )}
+            </div>
+            {page === "pulse" &&
+              !feed.demo &&
+              feed.workspace?.pulseSubtitle && (
+                <p className="page-subtitle">{feed.workspace.pulseSubtitle}</p>
+              )}
           </div>
           <div className="page-tools">
             {feed.demo && page === "pulse" && (
@@ -842,6 +877,21 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             onToggleWall={() => {
               setModal(null);
               void toggleWall();
+            }}
+          />
+        </Modal>
+      )}
+      {modal === "heading" && feed.workspace && (
+        <Modal title="Edit Pulse heading" onClose={() => setModal(null)}>
+          <PulseHeadingForm
+            title={feed.workspace.pulseTitle}
+            subtitle={feed.workspace.pulseSubtitle}
+            defaultTitle={defaultPulseTitle}
+            team={feed.workspace.kind === "team"}
+            onCancel={() => setModal(null)}
+            onSave={async (title, subtitle) => {
+              await feed.updatePulseHeading(title, subtitle);
+              setModal(null);
             }}
           />
         </Modal>

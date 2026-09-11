@@ -176,6 +176,10 @@ function workspaceShareRouter(
         .map(({ body: _body, ...event }) => event),
       organization: workspace.name,
       source: "workspace",
+      ...(workspace.pulseTitle ? { pulseTitle: workspace.pulseTitle } : {}),
+      ...(workspace.pulseSubtitle
+        ? { pulseSubtitle: workspace.pulseSubtitle }
+        : {}),
       updatedAt: new Date().toISOString(),
       expiresAt: current.share.expires_at.toISOString(),
       wall: {

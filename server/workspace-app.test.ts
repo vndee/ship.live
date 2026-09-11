@@ -2324,3 +2324,50 @@ test("private health reads recheck installation access after fetching the snapsh
     }
   });
 });
+
+test("members set their workspace's Pulse heading, and shared links show it", async (t) => {
+  await withApp(t, async ({ workspaces, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const path = `/api/workspaces/${workspace.id}/pulse`;
+    const patch = (body: unknown, user = users[0]) =>
+      request(path, user, { method: "PATCH", body: JSON.stringify(body) });
+    assert.equal((await patch({ title: "x".repeat(81) })).status, 400);
+    assert.equal((await patch({ title: 7 })).status, 400);
+    assert.equal((await patch({ title: "Hi" }, users[1])).status, 404);
+    assert.equal(
+      (
+        await request(path, users[0], {
+          method: "PATCH",
+          body: JSON.stringify({ title: "Hi" }),
+          headers: { "x-csrf-token": "bad" },
+        })
+      ).status,
+      403,
+    );
+    const saved = await patch({
+      title: "  Ship  it,\n together ",
+      subtitle: "Platform team",
+    });
+    assert.equal(saved.status, 200);
+    const { workspace: updated } = await saved.json();
+    assert.equal(updated.pulseTitle, "Ship it, together");
+    assert.equal(updated.pulseSubtitle, "Platform team");
+    const link = await (
+      await request(`/api/workspaces/${workspace.id}/share`, users[0], {
+        method: "POST",
+        body: JSON.stringify({ expiresIn: 86400 }),
+      })
+    ).json();
+    const shared = await (
+      await request("/api/shared/feed", null, {
+        headers: { "x-dashboard-share": link.token },
+      })
+    ).json();
+    assert.equal(shared.pulseTitle, "Ship it, together");
+    assert.equal(shared.pulseSubtitle, "Platform team");
+    // Clearing a field brings back the default.
+    const cleared = await (await patch({ title: "", subtitle: " " })).json();
+    assert.equal(cleared.workspace.pulseTitle, undefined);
+    assert.equal(cleared.workspace.pulseSubtitle, undefined);
+  });
+});

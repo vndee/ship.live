@@ -60,6 +60,8 @@ interface WorkspaceRow {
   owner_user_id: string | null;
   installation_id: string | null;
   github_account: string | null;
+  pulse_title?: string | null;
+  pulse_subtitle?: string | null;
 }
 interface NoteRow {
   id: string;
@@ -74,6 +76,8 @@ function workspace(row: WorkspaceRow, userId: string): Workspace {
     name: row.name,
     kind: row.kind,
     owner: row.owner_user_id === userId,
+    ...(row.pulse_title ? { pulseTitle: row.pulse_title } : {}),
+    ...(row.pulse_subtitle ? { pulseSubtitle: row.pulse_subtitle } : {}),
     ...(row.installation_id
       ? {
           installationId: Number(row.installation_id),
@@ -214,6 +218,39 @@ export class WorkspaceStore {
       [userId, id],
     );
     if (!result.rows[0]) throw new AuthError(404, "Workspace not found.");
+    return workspace(result.rows[0], userId);
+  }
+  /** A workspace's own Pulse heading; empty fields fall back to the default. */
+  async setPulseHeading(
+    userId: string,
+    workspaceId: string,
+    input: unknown,
+  ): Promise<Workspace> {
+    const current = await this.get(userId, workspaceId);
+    if (current.kind === "personal" && !current.owner)
+      throw new AuthError(404, "Workspace not found.");
+    const data = (input && typeof input === "object" ? input : {}) as Record<
+      string,
+      unknown
+    >;
+    const field = (value: unknown, max: number, label: string) => {
+      if (value === undefined || value === null) return null;
+      if (typeof value !== "string")
+        throw new AuthError(400, `Invalid ${label}.`);
+      const text = value
+        .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if ([...text].length > max)
+        throw new AuthError(400, `Keep the ${label} to ${max} characters.`);
+      return text || null;
+    };
+    const title = field(data.title, 80, "title");
+    const subtitle = field(data.subtitle, 200, "subtitle");
+    const result = await this.pool.query<WorkspaceRow>(
+      "UPDATE ship_live_workspaces SET pulse_title=$2,pulse_subtitle=$3 WHERE id=$1 RETURNING *",
+      [workspaceId, title, subtitle],
+    );
     return workspace(result.rows[0], userId);
   }
   private async personal(userId: string, id: string): Promise<Workspace> {

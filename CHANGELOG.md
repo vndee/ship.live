@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Let members rename the Pulse title and add a subtitle. The heading is saved per workspace, so the team, the wall display, and shared links all see it; clearing a field brings back the default.
+- Upgrade note: migration 018 adds the Pulse title and subtitle to workspaces.
+
 - Show the active share link again, with **Copy link**, to the member who created it. Tokens are kept encrypted with `TOKEN_ENCRYPTION_KEY`; links created before this version need one rotation to become copyable.
 - Show uptime and check success to four decimals (99.9305%), rounded down, so 99.99999% never reads as 100%.
 - Keep the leaderboard's leading card clear of the divider below it.
