@@ -314,7 +314,7 @@ function demoProbe(
         ? 1480 - index * 90
         : latencyMs + ((index * 37) % 23) - 11,
       statusCode: failing ? 503 : 200,
-      reason: failing ? "HTTP 503" : "",
+      reason: failing ? "HTTP status is outside the accepted range." : "",
       status: failing ? "degraded" : "healthy",
     };
   });
