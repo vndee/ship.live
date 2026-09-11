@@ -31,6 +31,8 @@ export function SharePanel({
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [duration, setDuration] = useState(86400);
+  // Rotating an active link keeps its expiry unless another lifetime is chosen.
+  const [keep, setKeep] = useState(true);
   const [now, setNow] = useState(Date.now());
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -59,6 +61,7 @@ export function SharePanel({
   const noExpiration = Boolean(
     share && !expired && isEffectivelyNoExpiration(share.expiresAt, now),
   );
+  const keeping = Boolean(share && !expired && keep);
   // A link just created, or the active link the server can show again.
   const token = link && share?.id === link.id ? link.token : share?.token;
   const url =
@@ -75,7 +78,11 @@ export function SharePanel({
         setShare(null);
         setMessage("Link revoked. Viewers can no longer access this Pulse.");
       } else {
-        const created = await feed.createShare(duration, action === "rotate");
+        const created = await feed.createShare(
+          duration,
+          action === "rotate",
+          keeping,
+        );
         setShare(created);
         onLink(created);
         setMessage(
@@ -185,11 +192,29 @@ export function SharePanel({
               once to get a link you can copy.
             </p>
           ) : null}
+          {share && !expired && (
+            <label className="share-keep">
+              <input
+                type="checkbox"
+                checked={keep}
+                disabled={busy}
+                onChange={(event) => setKeep(event.target.checked)}
+              />
+              <span>
+                Keep the current expiry
+                <small>
+                  {noExpiration
+                    ? "No expiration"
+                    : new Date(share.expiresAt).toLocaleString()}
+                </small>
+              </span>
+            </label>
+          )}
           <ExpirationPicker
             label={share && !expired ? "New link lifetime" : "Link lifetime"}
             ariaLabel="Link expiration"
             value={duration}
-            disabled={busy}
+            disabled={busy || keeping}
             onChange={setDuration}
           />
           <div className="share-actions">
@@ -222,8 +247,9 @@ export function SharePanel({
             )}
           </div>
           <p className="field-hint">
-            Rotating invalidates your previous link immediately and starts a new
-            expiration. Other members manage their own links.
+            Rotating invalidates your previous link immediately
+            {keeping ? " and keeps its expiry" : " and starts a new expiration"}
+            . Other members manage their own links.
           </p>
         </>
       )}

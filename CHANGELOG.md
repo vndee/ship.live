@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Rotating a share link keeps its current expiry by default, so a long-lived link is not cut to the default 24 hours; untick **Keep the current expiry** to choose another lifetime.
 - Let members rename the Pulse title and add a subtitle. The heading is saved per workspace, so the team, the wall display, and shared links all see it; clearing a field brings back the default.
 - Upgrade note: migration 018 adds the Pulse title and subtitle to workspaces.
 - Open a repository's details over Pulse instead of jumping to the Live feed: its rank and activity this week, a 12-week heatmap, daily contributions, top contributors (each opens their profile), a breakdown and recent activity, and, for team workspaces, open pull requests and the latest deployments. **View all activity** still opens its feed.

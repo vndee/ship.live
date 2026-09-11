@@ -65,11 +65,28 @@ async function open(t, current) {
   );
   await page.goto("http://ship.test/health");
   await page.evaluate((current) => {
-    window.fetch = async () =>
-      new Response(JSON.stringify({ share: current }), {
+    // Records each request; a POST answers with a new link.
+    window.requests = [];
+    window.fetch = async (url, init = {}) => {
+      const method = init.method ?? "GET";
+      window.requests.push({
+        url: String(url),
+        method,
+        body: init.body ? JSON.parse(init.body) : null,
+      });
+      const body =
+        method === "POST"
+          ? {
+              ...current,
+              id: `s${window.requests.length}`,
+              token: "n".repeat(43),
+            }
+          : { share: current };
+      return new Response(JSON.stringify(body), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
+    };
   }, current);
   await page.addScriptTag({ content: script });
   return page;
@@ -98,4 +115,32 @@ test("a link from before tokens were kept asks for one rotation", async (t) => {
       .count(),
     0,
   );
+});
+
+test("rotating keeps the current expiry unless another lifetime is chosen", async (t) => {
+  const page = await open(t, share({ token: TOKEN }));
+  const keep = page.getByRole("checkbox", { name: /Keep the current expiry/ });
+  assert.equal(await keep.isChecked(), true);
+  const lifetime = page.getByRole("button", {
+    name: /^Health link expiration/,
+  });
+  assert.equal(await lifetime.isDisabled(), true);
+  const posts = () =>
+    page.evaluate(() =>
+      window.requests.filter((item) => item.method === "POST"),
+    );
+  await page.getByRole("button", { name: "Rotate link" }).click();
+  await page.waitForFunction(() =>
+    window.requests.some((item) => item.method === "POST"),
+  );
+  const [kept] = await posts();
+  assert.match(kept.url, /\/health\/share\/rotate$/);
+  assert.deepEqual(kept.body, { keepExpiry: true });
+  await keep.uncheck();
+  assert.equal(await lifetime.isDisabled(), false);
+  await page.getByRole("button", { name: "Rotate link" }).click();
+  await page.waitForFunction(
+    () => window.requests.filter((item) => item.method === "POST").length === 2,
+  );
+  assert.deepEqual((await posts())[1].body, { expiresIn: 86400 });
 });

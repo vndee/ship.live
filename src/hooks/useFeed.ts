@@ -833,10 +833,11 @@ export function useFeed() {
       request<{ share: DashboardShare | null }>(
         `/api/workspaces/${encodeURIComponent(workspace!.id)}/share`,
       ),
-    createShare: (expiresIn: number, rotate: boolean) =>
+    /** Rotating can keep the current link's expiry instead of a new lifetime. */
+    createShare: (expiresIn: number, rotate: boolean, keepExpiry = false) =>
       mutate<CreatedDashboardShare>(
         `/api/workspaces/${encodeURIComponent(workspace!.id)}/share${rotate ? "/rotate" : ""}`,
-        { expiresIn },
+        rotate && keepExpiry ? { keepExpiry: true } : { expiresIn },
       ),
     revokeShare: () =>
       mutate<void>(
