@@ -37,14 +37,97 @@ For Supabase-hosted PostgreSQL, verify application tables have RLS enabled and n
 - **Default branch:** `main`
 - **Website:** Leave blank until a public demo or project site exists. The product name does not imply ownership of the matching domain.
 
-## Publish the reviewed release
+## Publish a stable release
 
-Push the approved history to the existing repository:
+The public repository and a normal self-hosted installation do not need access
+to the managed `vndee/ship.live` production environment. The following is the
+release path for this repository. It builds and publishes an immutable GHCR
+image, and can deploy only the managed ship.live service when its separately
+configured production gate is enabled. For a general local self-host update,
+use [the Docker self-host guide](self-host-docker.md) instead.
+
+Follow this exact operator sequence:
+
+1. Update `package.json` and `package-lock.json` to `X.Y.Z`.
+2. Move `CHANGELOG.md` entries into the dated release.
+3. Merge and wait for CI on `main`.
+4. Create annotated tag `vX.Y.Z` on that exact `main` commit.
+5. Publish a non-prerelease GitHub Release.
+6. Follow the release workflow through validate, gates, publish, compatibility, and production health.
+
+The release workflow accepts only a published, non-draft, non-prerelease
+stable tag whose version matches `package.json`, resolves to the release event
+commit, and is already in `main` history. It then runs format, deployment
+policy, PostgreSQL, build, browser, image smoke, and previous-release schema
+compatibility gates. The image is built once, labelled with the version,
+revision, and schema range, copied with Skopeo under both `vX.Y.Z` and
+`sha-<40-character-commit>` immutable tags, and rechecked by digest before it
+can be handed to deployment.
+
+Pushing a tag alone, saving a draft, publishing a prerelease, or pushing
+`main` does not deploy. A published stable Release publishes an image, but the
+managed deployment job runs only when the repository variable
+`PRODUCTION_DEPLOY_ENABLED` is exactly `true`; release jobs are serialized by
+the `production` concurrency group. The first stable release must be
+bootstrapped with that flag disabled because there is no previous release to
+prove schema rollback compatibility.
+
+Before relying on the managed path, follow the host and GitHub bootstrap in
+[Managed ship.live production operations](self-host-docker.md#managed-shiplive-production-operations).
+Verify the README images render and retain GitHub private vulnerability
+reporting before relying on the private reporting link in `SECURITY.md`.
+
+## Recover a partially published immutable image
+
+If copying `vX.Y.Z` succeeded but copying `sha-<revision>` failed, treat the
+successful version tag as immutable. Preserve the originally tested
+`sha256:<digest>` from the release workflow log before doing anything else.
+Do not delete or repoint the version tag, and do not rerun a rebuild hoping it
+will produce the same bytes: a changed digest is a different release and must
+not be substituted for the tested one.
+
+With an authenticated GHCR credential that can write this package, prove that
+the existing version tag still names the recorded digest, verify its release
+labels, and copy that digest to the missing SHA tag. Replace the placeholders
+with the original values; `EXPECTED_DIGEST` is the digest recorded by the
+failed workflow, not a newly built image.
 
 ```sh
-git push origin main
+set -euo pipefail
+IMAGE_REPOSITORY=ghcr.io/vndee/ship.live
+VERSION=vX.Y.Z
+REVISION=<40-character-commit>
+EXPECTED_DIGEST=sha256:<64-lowercase-hex-digest>
+AUTHFILE="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
+
+skopeo inspect --authfile "$AUTHFILE" --raw \
+  "docker://$IMAGE_REPOSITORY:$VERSION" > version-manifest.json
+test "$(skopeo manifest-digest version-manifest.json)" = "$EXPECTED_DIGEST"
+skopeo inspect --authfile "$AUTHFILE" --config \
+  "docker://$IMAGE_REPOSITORY@$EXPECTED_DIGEST" | jq -e \
+  --arg version "$VERSION" --arg revision "$REVISION" '
+  .architecture == "amd64" and .os == "linux" and
+  .config.Labels["org.opencontainers.image.source"] == "https://github.com/vndee/ship.live" and
+  .config.Labels["org.opencontainers.image.version"] == $version and
+  .config.Labels["org.opencontainers.image.revision"] == $revision'
+if skopeo inspect --authfile "$AUTHFILE" --raw \
+  "docker://$IMAGE_REPOSITORY:sha-$REVISION" > existing-sha-manifest.json 2> sha-tag-error; then
+  test "$(skopeo manifest-digest existing-sha-manifest.json)" = "$EXPECTED_DIGEST"
+elif ! grep -Eq 'MANIFEST_UNKNOWN|NAME_UNKNOWN|manifest unknown|name unknown' sha-tag-error; then
+  echo 'Could not establish whether the immutable SHA tag exists.' >&2
+  exit 1
+fi
+skopeo copy --preserve-digests --authfile "$AUTHFILE" \
+  "docker://$IMAGE_REPOSITORY@$EXPECTED_DIGEST" \
+  "docker://$IMAGE_REPOSITORY:sha-$REVISION"
+skopeo inspect --authfile "$AUTHFILE" --raw \
+  "docker://$IMAGE_REPOSITORY:sha-$REVISION" > sha-manifest.json
+test "$(skopeo manifest-digest sha-manifest.json)" = "$EXPECTED_DIGEST"
 ```
 
-Verify the README images render and the CI workflow passes for that exact commit, including its PostgreSQL integration tests. Check that GitHub private vulnerability reporting remains enabled before relying on the private reporting link in `SECURITY.md`.
-
-Once CI is green, move the relevant changelog entries into a dated release, tag the chosen version, and prepare GitHub release notes from [CHANGELOG.md](../CHANGELOG.md). Call out the required Supabase/GitHub App setup and the removal of legacy organization/key access for existing installations.
+The command copies only when `sha-$REVISION` is absent or already resolves to
+`EXPECTED_DIGEST`; a different digest is an immutable-tag conflict and needs
+investigation. Once both tags and labels verify, either leave production
+unchanged or have an authorized managed-production operator perform the
+explicit manual digest deployment documented below. A failed publish never
+authorizes deployment of unverified bytes.
