@@ -1914,6 +1914,34 @@ textarea:focus-visible {
   gap: 10px;
   min-width: 0;
 }
+.installation-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  cursor: pointer;
+}
+.installation-pick input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.installation-pick:has(input:disabled) {
+  cursor: default;
+}
+.connection-save {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+.connection-save small {
+  color: var(--muted);
+  font-size: 12px;
+}
 .installation-choice strong,
 .installation-choice small {
   display: block;

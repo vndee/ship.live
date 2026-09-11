@@ -23,6 +23,7 @@ import { normalizeWebhook, object } from "./normalize.js";
 import type { PostgresEventStore } from "./postgres-store.js";
 import { verifyAccessKey, verifyWebhookSignature } from "./security.js";
 import { log } from "./logger.js";
+import { combineEvents } from "./store.js";
 import {
   httpDuration,
   httpRequests,
@@ -33,6 +34,7 @@ import {
 import { MemoryRateLimiter, type RateLimiter } from "./rate-limit.js";
 import type {
   AccessibleInstallation,
+  ScopedEvent,
   WorkspaceStore,
 } from "./workspace-store.js";
 import { healthRouter } from "./health-app.js";
@@ -65,9 +67,18 @@ interface WorkspaceAppOptions {
   /** Encrypts share links, so their creators can copy them again. */
   secrets?: SecretBox;
 }
+/** An installation a viewer reads, with the repositories they may see in it. */
+interface Source {
+  installationId: number;
+  repositories: Repo[];
+}
 interface Viewer {
   workspace: Workspace;
   repositories: Repo[];
+  /** Every installation this view reads: a team's own, or a journal's chosen ones. */
+  sources: Source[];
+  /** Lowercased GitHub login when a journal shows only its owner's activity. */
+  author?: string;
   notice?: string;
 }
 const positiveId = (value: unknown): value is number =>
@@ -209,7 +220,12 @@ export function createWorkspaceApp({
     const workspace = await workspaces.get(principal.user.id, workspaceId);
     if (workspace.kind !== "personal" || !workspace.owner) throw accessDenied();
     await auth.assertActive(principal);
-    return { workspace, repositories: [], ...(notice ? { notice } : {}) };
+    return {
+      workspace,
+      repositories: [],
+      sources: [],
+      ...(notice ? { notice } : {}),
+    };
   }
   function unavailable(
     principal: Principal,
@@ -231,6 +247,8 @@ export function createWorkspaceApp({
   ): Promise<Viewer> {
     if (!sessionAlreadyVerified) await auth.assertActive(principal);
     const workspace = await workspaces.get(principal.user.id, workspaceId);
+    if (workspace.kind === "personal")
+      return personalViewer(principal, workspace);
     if (!workspace.installationId) {
       return notesOnly(principal, workspaceId);
     }
@@ -243,7 +261,50 @@ export function createWorkspaceApp({
         : undefined;
     if (!repositories) return unavailable(principal, workspace);
     await auth.assertActive(principal);
-    return { workspace, repositories };
+    return {
+      workspace,
+      repositories,
+      sources: [{ installationId: workspace.installationId, repositories }],
+    };
+  }
+  /** A journal reads its chosen, connected installations from the owner's synced access. */
+  async function personalViewer(
+    principal: Principal,
+    workspace: Workspace,
+  ): Promise<Viewer> {
+    if (!workspace.owner) throw accessDenied();
+    const chosen: Awaited<ReturnType<WorkspaceStore["personalSources"]>> =
+      github && workspace.sources
+        ? await workspaces.personalSources(
+            principal.user.id,
+            workspace.sources.installationIds,
+          )
+        : { sources: [] };
+    const synced = chosen.sources.flatMap(({ installationId, repositories }) =>
+      repositories ? [{ installationId, repositories }] : [],
+    );
+    const mineOnly = workspace.sources?.mineOnly ?? false;
+    const author = mineOnly ? chosen.login?.toLowerCase() : undefined;
+    // Showing only the owner's activity needs their login.
+    const sources = mineOnly && !author ? [] : synced;
+    const missing = chosen.sources.length > synced.length;
+    await auth.assertActive(principal);
+    return {
+      workspace,
+      repositories:
+        sources.find(
+          (source) => source.installationId === workspace.installationId,
+        )?.repositories ?? [],
+      sources,
+      ...(author ? { author } : {}),
+      ...(missing
+        ? {
+            notice: sources.length
+              ? "Sync GitHub activity to load repository access for every source."
+              : "Sync GitHub activity to load repository access. Showing private notes only.",
+          }
+        : {}),
+    };
   }
   /**
    * The only read of repository access from GitHub: connect, refresh, sync, and
@@ -293,18 +354,29 @@ export function createWorkspaceApp({
   function refreshAccess(principal: Principal) {
     return syncAccess(principal.user.id, () => auth.assertActive(principal));
   }
-  function visible(
-    events: ActivityEvent[],
-    current: Viewer,
-    previous: Workspace,
-  ): ActivityEvent[] {
-    const allowed = new Set(current.repositories.map((repo) => repo.id));
-    return events.filter((event) =>
-      event.type === "note"
-        ? current.workspace.kind === "personal" && current.workspace.owner
-        : current.workspace.installationId === previous.installationId &&
-          positiveId(event.repositoryId) &&
-          allowed.has(event.repositoryId),
+  /**
+   * What the viewer may see now: notes in their own journal, and each event from
+   * a current source's allowed repository, by the author when one is set.
+   */
+  function visible(events: ScopedEvent[], current: Viewer): ActivityEvent[] {
+    const allowed = new Map(
+      current.sources.map((source) => [
+        source.installationId,
+        new Set(source.repositories.map((repo) => repo.id)),
+      ]),
+    );
+    return events.flatMap(({ installationId, event }) =>
+      (
+        event.type === "note"
+          ? current.workspace.kind === "personal" && current.workspace.owner
+          : installationId !== undefined &&
+            positiveId(event.repositoryId) &&
+            allowed.get(installationId)?.has(event.repositoryId) === true &&
+            (!current.author ||
+              event.actor.login.toLowerCase() === current.author)
+      )
+        ? [event]
+        : [],
     );
   }
   // Removed repositories leave every viewer's snapshot at once. GitHub's removed
@@ -460,7 +532,7 @@ export function createWorkspaceApp({
   async function backfill(principal: Principal, workspaceId: string) {
     const client = githubApp();
     const initial = await viewer(principal, workspaceId);
-    if (!initial.workspace.installationId)
+    if (!initial.sources.length)
       throw new AuthError(400, "Connect a GitHub installation before syncing.");
     const totals: BackfillResult = {
       synced: 0,
@@ -469,44 +541,48 @@ export function createWorkspaceApp({
       failed: 0,
       skipped: 0,
     };
-    // The GitHub client bounds each batch to 20; all selected repositories get a turn.
-    for (let offset = 0; offset < initial.repositories.length; offset += 20) {
-      const current = await viewer(principal, workspaceId);
-      if (current.workspace.installationId !== initial.workspace.installationId)
-        throw accessDenied();
-      const allowed = new Set(current.repositories.map((repo) => repo.id));
-      const batch = initial.repositories
-        .slice(offset, offset + 20)
-        .filter((repo) => allowed.has(repo.id));
-      if (!batch.length) continue;
-      const batchIds = new Set(batch.map((repo) => repo.id));
-      const installation = initial.workspace.installationId;
-      const result = await client.backfill(
-        installation,
-        batch,
-        async (events) => {
-          await auth.assertActive(principal);
-          // Canonical event IDs deduplicate the resume overlap and webhook deliveries.
-          await store.merge(
-            `installation-${installation}`,
-            events.filter(
-              (event) =>
-                positiveId(event.repositoryId) &&
-                batchIds.has(event.repositoryId),
-            ),
-            { restricted: true, preferExisting: true },
-          );
-        },
-        {
-          // Watermarks use the database clock so every replica agrees.
-          startedAt: await workspaces.clock(),
-          since: await workspaces.syncWatermarks(installation, [...batchIds]),
-          onSynced: (repositoryId, syncedAt) =>
-            workspaces.markSynced(installation, repositoryId, syncedAt),
-        },
-      );
-      for (const key of Object.keys(totals) as (keyof BackfillResult)[])
-        totals[key] += result[key];
+    // A journal imports each of its sources in turn.
+    for (const source of initial.sources) {
+      const installation = source.installationId;
+      // The GitHub client bounds each batch to 20; all selected repositories get a turn.
+      for (let offset = 0; offset < source.repositories.length; offset += 20) {
+        const current = (await viewer(principal, workspaceId)).sources.find(
+          (item) => item.installationId === installation,
+        );
+        if (!current) throw accessDenied();
+        const allowed = new Set(current.repositories.map((repo) => repo.id));
+        const batch = source.repositories
+          .slice(offset, offset + 20)
+          .filter((repo) => allowed.has(repo.id));
+        if (!batch.length) continue;
+        const batchIds = new Set(batch.map((repo) => repo.id));
+        const result = await client.backfill(
+          installation,
+          batch,
+          async (events) => {
+            await auth.assertActive(principal);
+            // Canonical event IDs deduplicate the resume overlap and webhook deliveries.
+            await store.merge(
+              `installation-${installation}`,
+              events.filter(
+                (event) =>
+                  positiveId(event.repositoryId) &&
+                  batchIds.has(event.repositoryId),
+              ),
+              { restricted: true, preferExisting: true },
+            );
+          },
+          {
+            // Watermarks use the database clock so every replica agrees.
+            startedAt: await workspaces.clock(),
+            since: await workspaces.syncWatermarks(installation, [...batchIds]),
+            onSynced: (repositoryId, syncedAt) =>
+              workspaces.markSynced(installation, repositoryId, syncedAt),
+          },
+        );
+        for (const key of Object.keys(totals) as (keyof BackfillResult)[])
+          totals[key] += result[key];
+      }
     }
     await viewer(principal, workspaceId);
     return { synced: totals.synced, notice: backfillNotice(totals) };
@@ -755,11 +831,16 @@ export function createWorkspaceApp({
       return undefined;
     }
   }
-  const installationChoice = (item: AccessibleInstallation) => ({
+  const installationChoice = (
+    item: AccessibleInstallation,
+    githubUserId?: number,
+  ) => ({
     id: item.id,
     account: item.account,
     kind: item.kind,
     repositories: item.repositories,
+    connectable:
+      item.kind === "Organization" || item.accountId === githubUserId,
   });
 
   app.get("/api/workspaces", async (request, response) => {
@@ -831,11 +912,14 @@ export function createWorkspaceApp({
   app.get("/api/github/installations", async (request, response) => {
     const principal = await auth.authenticate(request, response);
     const client = githubApp();
-    if (!(await workspaces.connection(principal.user.id))) throw accessDenied();
+    const connection = await workspaces.connection(principal.user.id);
+    if (!connection) throw accessDenied();
     const installations = (await currentAccess(principal)) ?? [];
     await auth.assertActive(principal);
     response.json({
-      installations: installations.map(installationChoice),
+      installations: installations.map((item) =>
+        installationChoice(item, connection.githubUserId),
+      ),
       installUrl: client.installUrl(),
     });
   });
@@ -843,44 +927,111 @@ export function createWorkspaceApp({
     const principal = await auth.requireMutation(request, response);
     const client = githubApp();
     const installations = await refreshAccess(principal);
+    const connection = await workspaces.connection(principal.user.id);
     response.json({
-      installations: installations.map(installationChoice),
+      installations: installations.map((item) =>
+        installationChoice(item, connection?.githubUserId),
+      ),
       installUrl: client.installUrl(),
     });
   });
+  /** Connects an installation the user can access, checked against the App's own view. */
+  async function connectAvailable(
+    principal: Principal,
+    connection: NonNullable<Awaited<ReturnType<WorkspaceStore["connection"]>>>,
+    available: AccessibleInstallation[],
+    id: number,
+  ) {
+    const listed = available.find((item) => item.id === id);
+    if (!listed) throw accessDenied();
+    const installation = await githubApp().installation(id);
+    if (
+      installation.suspended ||
+      installation.accountId !== listed.accountId ||
+      installation.kind !== listed.kind
+    )
+      throw accessDenied();
+    await assertConnection(principal, connection);
+    await auth.assertActive(principal);
+    return workspaces.connectInstallation(
+      principal.user,
+      installation,
+      connection.githubUserId,
+      connection.generation,
+    );
+  }
   app.post(
     "/api/github/installations/:id/connect",
     async (request, response) => {
       const principal = await auth.requireMutation(request, response);
       const id = installationId(request.params.id);
-      const client = githubApp();
+      githubApp();
       const connection = await workspaces.connection(principal.user.id);
       if (!connection) throw accessDenied();
       // Connecting is an explicit sync of the user's access.
-      const available = (await refreshAccess(principal)).find(
-        (item) => item.id === id,
-      );
-      if (!available) throw accessDenied();
-      const installation = await client.installation(id);
-      if (
-        installation.suspended ||
-        installation.accountId !== available.accountId ||
-        installation.kind !== available.kind
-      )
-        throw accessDenied();
-      await assertConnection(principal, connection);
-      await auth.assertActive(principal);
-      const workspace = await workspaces.connectInstallation(
-        principal.user,
-        installation,
-        connection.githubUserId,
-        connection.generation,
+      const workspace = await connectAvailable(
+        principal,
+        connection,
+        await refreshAccess(principal),
+        id,
       );
       // Access was just refreshed; history imports in the background.
       const run = await startSync(principal, workspace.id, false);
       response.json({ workspace, run });
     },
   );
+  /**
+   * Connects the ticked installations and leaves the unticked ones, reading the
+   * user's GitHub access once for all the new ones.
+   */
+  app.put("/api/github/installations", async (request, response) => {
+    const principal = await auth.requireMutation(request, response);
+    const body = object(request.body);
+    const ids = (value: unknown) => {
+      if (
+        !Array.isArray(value) ||
+        value.length > 100 ||
+        !value.every(positiveId)
+      )
+        throw new AuthError(400, "Choose installations to connect or leave.");
+      return [...new Set(value)];
+    };
+    const connect = ids(body.connect ?? []);
+    const leave = ids(body.disconnect ?? []);
+    if (connect.some((id) => leave.includes(id)))
+      throw new AuthError(400, "Choose installations to connect or leave.");
+    githubApp();
+    const connection = await workspaces.connection(principal.user.id);
+    if (!connection) throw accessDenied();
+    const connected = new Set(
+      await workspaces.connectedInstallations(principal.user.id),
+    );
+    const added = connect.filter((id) => !connected.has(id));
+    const runs = [];
+    if (added.length) {
+      const available = await refreshAccess(principal);
+      for (const id of added) {
+        const workspace = await connectAvailable(
+          principal,
+          connection,
+          available,
+          id,
+        );
+        // History imports in the background.
+        runs.push(await startSync(principal, workspace.id, false));
+      }
+    }
+    for (const id of leave)
+      if (connected.has(id))
+        await workspaces.disconnectInstallation(principal.user.id, id);
+    await auth.assertActive(principal);
+    response.json({
+      installationIds: await workspaces.connectedInstallations(
+        principal.user.id,
+      ),
+      runs,
+    });
+  });
   app.post("/api/github/disconnect", async (request, response) => {
     const principal = await auth.requireMutation(request, response);
     await workspaces.disconnect(principal.user.id);
@@ -893,7 +1044,14 @@ export function createWorkspaceApp({
       request.params.id,
     );
     githubApp();
-    if (!workspace.installationId)
+    // A journal syncs every installation its owner connected; sync reloads access.
+    const installations =
+      workspace.kind === "personal"
+        ? await workspaces.connectedInstallations(principal.user.id)
+        : workspace.installationId
+          ? [workspace.installationId]
+          : [];
+    if (!installations.length)
       throw new AuthError(400, "Connect a GitHub installation before syncing.");
     response.status(202).json(await startSync(principal, workspace.id, true));
   });
@@ -929,6 +1087,16 @@ export function createWorkspaceApp({
     await auth.assertActive(principal);
     response.json({ workspace });
   });
+  app.patch("/api/workspaces/:id/sources", async (request, response) => {
+    const principal = await auth.requireMutation(request, response);
+    const workspace = await workspaces.setPersonalSources(
+      principal.user.id,
+      request.params.id,
+      request.body,
+    );
+    await auth.assertActive(principal);
+    response.json({ workspace });
+  });
   app.delete("/api/workspaces/:id/notes/:noteId", async (request, response) => {
     const principal = await auth.requireMutation(request, response);
     await workspaces.deleteNote(
@@ -946,7 +1114,11 @@ export function createWorkspaceApp({
     const saved = await workspaces.feed(
       principal.user.id,
       initial.workspace,
-      initial.repositories.map((repo) => repo.id),
+      initial.sources.map((source) => ({
+        installationId: source.installationId,
+        repositoryIds: source.repositories.map((repo) => repo.id),
+      })),
+      initial.author,
     );
     // Inbound alerts belong to the whole team rather than to a repository.
     const alerts =
@@ -956,7 +1128,7 @@ export function createWorkspaceApp({
     // An upstream read or database query can overlap logout, disconnect, or an
     // access change. Recheck the original session and filter against fresh IDs.
     const current = await viewer(principal, initial.workspace.id, true);
-    const events = visible(saved, current, initial.workspace);
+    const events = combineEvents(visible(saved, current));
     if (alerts.length && current.workspace.kind === "team") {
       events.push(...alerts);
       events.sort(
@@ -1035,10 +1207,15 @@ export function createWorkspaceApp({
     }
     async function revalidate() {
       const signature = (view: Viewer) =>
-        `${view.workspace.installationId || ""}:${view.repositories
-          .map((repo) => repo.id)
-          .sort()
-          .join(",")}:${view.notice || ""}`;
+        `${view.sources
+          .map(
+            (source) =>
+              `${source.installationId}=${source.repositories
+                .map((repo) => repo.id)
+                .sort()
+                .join(",")}`,
+          )
+          .join(";")}:${view.author || ""}:${view.notice || ""}`;
       const previous = signature(current);
       current = await viewer(principal, current.workspace.id);
       const changed = signature(current) !== previous;
@@ -1073,12 +1250,10 @@ export function createWorkspaceApp({
         ![
           `workspace-${current.workspace.id}`,
           `account-${principal.user.id}`,
-          ...(current.workspace.installationId
-            ? [
-                `installation-${current.workspace.installationId}`,
-                `wall-installation-${current.workspace.installationId}`,
-              ]
-            : []),
+          ...current.sources.flatMap((source) => [
+            `installation-${source.installationId}`,
+            `wall-installation-${source.installationId}`,
+          ]),
         ].includes(scope)
       )
         return;
@@ -1091,15 +1266,17 @@ export function createWorkspaceApp({
             );
           return;
         }
-        if (scope !== `installation-${current.workspace.installationId}`)
-          return;
-        const previous = current.workspace;
+        const source = current.sources.find(
+          (item) => scope === `installation-${item.installationId}`,
+        );
+        if (!source) return;
         const event = await store.get(scope, eventId);
         await revalidate();
         if (
           event &&
           event.type !== "note" &&
-          visible([event], current, previous).length
+          visible([{ installationId: source.installationId, event }], current)
+            .length
         )
           write(`event: activity\ndata: ${JSON.stringify(event)}\n\n`);
       });

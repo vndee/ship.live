@@ -1,0 +1,75 @@
+.sources-form {
+  display: grid;
+  gap: 16px;
+}
+.sources-form .modal-description,
+.sources-form .notice {
+  margin: 0;
+}
+.sources-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  cursor: pointer;
+}
+.sources-toggle input,
+.sources-list input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+.sources-toggle strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+}
+.sources-toggle small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.sources-choice {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.sources-choice legend {
+  padding: 0 6px;
+  color: var(--subtle);
+  font-size: 12px;
+}
+.sources-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 0 26px;
+  padding: 0;
+  list-style: none;
+}
+.sources-list label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.sources-list label > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sources-list small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.sources-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}

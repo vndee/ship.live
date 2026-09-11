@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Search,
   Share2,
+  SlidersHorizontal,
   Sparkles,
 } from "lucide-react";
 import type { CreatedDashboardShare } from "../shared/shares";
@@ -37,6 +38,7 @@ import type { Kind } from "./components/event-kinds";
 import { HealthSharePanel } from "./components/HealthSharePanel";
 import { LiveLeaderboard } from "./components/LiveLeaderboard";
 import { Modal } from "./components/Modal";
+import { PersonalSourcesForm } from "./components/PersonalSourcesForm";
 import { PulseHeadingForm } from "./components/PulseHeadingForm";
 import { RepositoryList } from "./components/RepositoryList";
 import { RouteLink } from "./components/RouteLink";
@@ -128,6 +130,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     | "share"
     | "health-share"
     | "heading"
+    | "sources"
     | null
   >(null);
   useEffect(() => {
@@ -523,6 +526,17 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                 <Sparkles size={15} /> Try live activity
               </button>
             )}
+            {personal &&
+              feed.workspace?.owner &&
+              !feed.demo &&
+              (page === "pulse" || page === "feed") && (
+                <button
+                  className="button secondary"
+                  onClick={() => setModal("sources")}
+                >
+                  <SlidersHorizontal size={15} /> Data sources
+                </button>
+              )}
             {!personal &&
               page !== "webhooks" &&
               !(feed.demo && page === "health") && (
@@ -906,6 +920,32 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             onCancel={() => setModal(null)}
             onSave={async (title, subtitle) => {
               await feed.updatePulseHeading(title, subtitle);
+              setModal(null);
+            }}
+          />
+        </Modal>
+      )}
+      {modal === "sources" && feed.workspace?.sources && (
+        <Modal title="Dashboard sources" onClose={() => setModal(null)}>
+          <PersonalSourcesForm
+            sources={feed.workspace.sources}
+            options={feed.workspaces.flatMap((workspace) =>
+              workspace.installationId
+                ? [
+                    {
+                      id: workspace.installationId,
+                      name:
+                        workspace.kind === "personal"
+                          ? (workspace.githubAccount ?? "Your account")
+                          : workspace.name,
+                      kind: workspace.kind,
+                    },
+                  ]
+                : [],
+            )}
+            onCancel={() => setModal(null)}
+            onSave={async (sources) => {
+              await feed.updateSources(sources);
               setModal(null);
             }}
           />
