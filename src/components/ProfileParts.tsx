@@ -7,6 +7,7 @@ import {
   MessageSquare,
   NotebookPen,
   Rocket,
+  Siren,
 } from "lucide-react";
 import type { ActivityType } from "../../shared/types";
 import { HEATMAP_WEEKS, type ContributorDay } from "../lib/contributor";
@@ -20,6 +21,7 @@ export const ACTIVITY_ICONS: Record<ActivityType, ElementType> = {
   release: Rocket,
   pr: GitPullRequest,
   note: NotebookPen,
+  alert: Siren,
 };
 const WEEKDAYS = ["Mon", "", "Wed", "", "Fri", "", ""];
 

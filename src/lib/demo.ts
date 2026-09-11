@@ -17,7 +17,7 @@ const REPOS = [
   "infrastructure",
 ];
 
-type DemoActivityType = Exclude<ActivityEvent["type"], "note">;
+type DemoActivityType = Exclude<ActivityEvent["type"], "note" | "alert">;
 type Template = Pick<ActivityEvent, "title" | "repo"> & {
   type: DemoActivityType;
   login: string;

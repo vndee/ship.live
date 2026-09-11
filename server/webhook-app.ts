@@ -11,6 +11,7 @@ import type { Workspace } from "../shared/workspaces.js";
 import { AuthError, type AuthService, type Principal } from "./auth.js";
 import type { Repo } from "./github-app.js";
 import { publicHttpUrl, sendOutbound } from "./outbound.js";
+import { ACTIVITY_CHANNEL } from "./postgres-notifications.js";
 import { verifyWebhookSignature } from "./security.js";
 import { recordWorkspaceEvent } from "./webhook-outbox.js";
 import type { WebhookStore } from "./webhook-store.js";
@@ -284,6 +285,14 @@ export function inboundReceiver({
         },
       });
       await webhooks.receipt(hook.id, true, title, null);
+      // Open Live activity views refetch and show the alert.
+      await pool.query("SELECT pg_notify($1,$2)", [
+        ACTIVITY_CHANNEL,
+        JSON.stringify({
+          organization: `workspace-${hook.workspaceId}`,
+          eventId: "refresh",
+        }),
+      ]);
       response.status(202).json({ accepted: true });
     },
   );

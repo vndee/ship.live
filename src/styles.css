@@ -531,6 +531,9 @@ h1 {
 .event-icon.release {
   color: var(--accent);
 }
+.event-icon.alert {
+  color: var(--danger);
+}
 .event-actor {
   min-width: 0;
   color: var(--muted);

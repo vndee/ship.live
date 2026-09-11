@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Show inbound alerts in a team's Live activity as they arrive, named after their endpoint, with the mapped title, details, and link; the **Alert** activity type filters them. Alerts earn no XP and never count toward the leaderboard, milestones, or celebrations, and shared links don't show them. Inbound requests are now kept even when no outbound webhook listens.
+- Collapse each outbound and inbound webhook to a one-line summary with its status. Opening one shows its full setup, its last delivery or recent requests (now **Accepted** or **Rejected**), and its actions.
+- Upgrade note: migration 019 adds an index for recent inbound alerts.
+
 - Rotating a share link keeps its current expiry by default, so a long-lived link is not cut to the default 24 hours; untick **Keep the current expiry** to choose another lifetime.
 - Let members rename the Pulse title and add a subtitle. The heading is saved per workspace, so the team, the wall display, and shared links all see it; clearing a field brings back the default.
 - Upgrade note: migration 018 adds the Pulse title and subtitle to workspaces.

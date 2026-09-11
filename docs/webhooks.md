@@ -151,7 +151,9 @@ Requests must be JSON, up to 256 KiB. The mapping's text templates read the body
 | Link        | `{{payload.url}}`; kept only when it renders an `https` URL          |
 | Delivery ID | `{{payload.id}}`; requests with the same ID count once               |
 
-A request whose title renders empty is rejected with 422. Each accepted request becomes an `inbound.<slug>` event with the title as its summary, the details in `data.body`, and the payload in `data.payload` when it is under 16 KiB. The page lists each endpoint's recent requests, accepted or not.
+A request whose title renders empty is rejected with 422. Each accepted request becomes an `inbound.<slug>` event with the title as its summary, the details in `data.body`, and the payload in `data.payload` when it is under 16 KiB. Open an endpoint on the Webhooks page to see its mapping and its recent requests, **Accepted** or **Rejected**.
+
+Accepted requests also appear in the team's Live activity as alerts, as they arrive: named after the endpoint, with the title, details, and link. Filter them with the **Alert** activity type. Alerts earn no XP and never count toward the leaderboard, contributions, milestones, or celebrations, and shared links don't show them. Like other webhook events, they are kept for 30 days, whether or not an outbound webhook listens.
 
 ## Weekly digest
 

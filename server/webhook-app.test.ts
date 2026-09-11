@@ -251,3 +251,64 @@ test("inbound endpoints accept signed JSON, map it, and deduplicate by the sende
     assert.match(receipts[0].error, /title mapping/);
   });
 });
+
+test("inbound alerts are kept without an outbound webhook and refresh Live activity", async (t) => {
+  await withApi(t, "team", async ({ request, pool, workspace }) => {
+    const created = await request(
+      `/api/workspaces/${workspace}/inbound`,
+      post({
+        name: "Grafana",
+        slug: "grafana",
+        mapping: {
+          title: "{{payload.title}}",
+          body: "{{payload.message}}",
+          url: "{{payload.link}}",
+          id: "",
+        },
+      }),
+    );
+    assert.equal(created.status, 201);
+    const { endpoint } = await created.json();
+    const listener = await pool.connect();
+    const notifications: unknown[] = [];
+    listener.on("notification", (message) =>
+      notifications.push(JSON.parse(message.payload ?? "null")),
+    );
+    await listener.query("LISTEN ship_live_event_changes");
+    try {
+      const sent = await request(new URL(endpoint).pathname, {
+        method: "POST",
+        body: JSON.stringify({
+          title: "API latency",
+          message: "p95 above 800 ms",
+          link: "https://grafana.example.com/d/1",
+        }),
+      });
+      assert.equal(sent.status, 202);
+      for (let wait = 0; wait < 50 && !notifications.length; wait++)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.deepEqual(notifications, [
+        { organization: `workspace-${workspace}`, eventId: "refresh" },
+      ]);
+    } finally {
+      await listener.query("UNLISTEN *");
+      listener.release();
+    }
+    const alerts = await new WebhookStore(
+      pool,
+      new SecretBox("11".repeat(32)),
+    ).alerts(workspace);
+    assert.equal(alerts.length, 1);
+    const { id, occurredAt, ...alert } = alerts[0];
+    assert.match(id, /^alert:/);
+    assert.ok(Math.abs(Date.parse(occurredAt) - Date.now()) < 60_000);
+    assert.deepEqual(alert, {
+      type: "alert",
+      actor: { login: "Grafana" },
+      repo: "inbound.grafana",
+      title: "API latency",
+      url: "https://grafana.example.com/d/1",
+      body: "p95 above 800 ms",
+    });
+  });
+});

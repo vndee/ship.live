@@ -18,11 +18,14 @@ export interface OutboxEvent {
 const plural = (count: number, word: string) =>
   `${count} ${word}${count === 1 ? "" : "s"}`;
 
-/** Activity as it is credited: notes stay private and never leave. */
+/**
+ * Activity as it is credited: notes stay private and never leave, and alerts
+ * are already inbound.<slug> events.
+ */
 export function activityOutboxEvent(
   event: ActivityEvent,
 ): OutboxEvent | undefined {
-  if (event.type === "note") return undefined;
+  if (event.type === "note" || event.type === "alert") return undefined;
   const who = event.actor.login;
   const number = event.number ? `#${event.number} ` : "";
   const summary = {

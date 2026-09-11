@@ -46,6 +46,7 @@ const KINDS: readonly Kind[] = [
   "release",
   "pr",
   "note",
+  "alert",
 ];
 const PERIODS: readonly Period[] = ["24h", "7d", "30d"];
 // owner/name as GitHub allows it, or a bare name for sources without an owner.

@@ -20,10 +20,10 @@ const payload = (event: OutboxEvent) =>
   });
 
 // Events are stored only for team workspaces with a webhook listening, so an
-// unused feature adds no rows.
-const LISTENING = `EXISTS (SELECT 1 FROM ship_live_webhooks h
-  WHERE h.workspace_id = w.id AND h.enabled
-    AND ($2::text = ANY(h.events) OR ($2::text LIKE 'inbound.%' AND 'inbound' = ANY(h.events))))`;
+// unused feature adds no rows. Inbound alerts are always kept: Live activity
+// shows them too.
+const LISTENING = `($2::text LIKE 'inbound.%' OR EXISTS (SELECT 1 FROM ship_live_webhooks h
+  WHERE h.workspace_id = w.id AND h.enabled AND $2::text = ANY(h.events)))`;
 
 /**
  * Stores a workspace event in the caller's transaction, so it commits or

@@ -191,7 +191,13 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     [feed.events, range.start, range.end],
   );
   const allRepositories = useMemo(
-    () => [...new Set(feed.events.map((e) => e.repo))].sort(),
+    // Alerts name their inbound endpoint, not a repository.
+    () =>
+      [
+        ...new Set(
+          feed.events.filter((e) => e.type !== "alert").map((e) => e.repo),
+        ),
+      ].sort(),
     [feed.events],
   );
   const visible = useMemo(

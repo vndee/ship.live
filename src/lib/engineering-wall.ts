@@ -245,7 +245,7 @@ function deploymentWithRepository(
 function windowSummary(events: ActivityEvent[], start: number, now: number) {
   const current = events.filter((event) => {
     const at = Date.parse(event.occurredAt);
-    return at >= start && at <= now;
+    return event.type !== "alert" && at >= start && at <= now;
   });
   return {
     total: current.length,

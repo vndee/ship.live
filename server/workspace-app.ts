@@ -948,11 +948,23 @@ export function createWorkspaceApp({
       initial.workspace,
       initial.repositories.map((repo) => repo.id),
     );
+    // Inbound alerts belong to the whole team rather than to a repository.
+    const alerts =
+      webhooks && initial.workspace.kind === "team"
+        ? await webhooks.alerts(initial.workspace.id)
+        : [];
     // An upstream read or database query can overlap logout, disconnect, or an
     // access change. Recheck the original session and filter against fresh IDs.
     const current = await viewer(principal, initial.workspace.id, true);
+    const events = visible(saved, current, initial.workspace);
+    if (alerts.length && current.workspace.kind === "team") {
+      events.push(...alerts);
+      events.sort(
+        (a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
+      );
+    }
     const result: FeedResponse = {
-      events: visible(saved, current, initial.workspace),
+      events,
       organization: current.workspace.name,
       source: "workspace",
       updatedAt: new Date().toISOString(),

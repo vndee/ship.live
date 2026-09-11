@@ -266,7 +266,8 @@ export function ActivityFeed({
                       target="_blank"
                       rel="noreferrer"
                     >
-                      GitHub <ExternalLink size={12} />
+                      {event.type === "alert" ? "Open link" : "GitHub"}{" "}
+                      <ExternalLink size={12} />
                     </a>
                   )}
                 </div>
