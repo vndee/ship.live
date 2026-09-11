@@ -2371,3 +2371,38 @@ test("members set their workspace's Pulse heading, and shared links show it", as
     assert.equal(cleared.workspace.pulseSubtitle, undefined);
   });
 });
+
+test("rotating a share can keep its expiry, but not once it has expired", async (t) => {
+  await withApp(t, async ({ store, workspaces, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const path = `/api/workspaces/${workspace.id}/share`;
+    const post = (url: string, body: unknown) =>
+      request(url, users[0], { method: "POST", body: JSON.stringify(body) });
+    const first = await (await post(path, { expiresIn: 604800 })).json();
+    // Creating needs a lifetime; only a rotation can keep one.
+    assert.equal((await post(path, { keepExpiry: true })).status, 400);
+    const rotated = await post(`${path}/rotate`, { keepExpiry: true });
+    assert.equal(rotated.status, 200);
+    const second = await rotated.json();
+    assert.notEqual(second.token, first.token);
+    assert.ok(
+      Math.abs(Date.parse(second.expiresAt) - Date.parse(first.expiresAt)) <
+        5_000,
+      "the new link expires when the old one would have",
+    );
+    assert.equal(
+      (
+        await request("/api/shared/feed", null, {
+          headers: { "x-dashboard-share": first.token },
+        })
+      ).status,
+      410,
+    );
+    await store.pool.query(
+      "UPDATE ship_live_dashboard_shares SET expires_at=now()-interval '1 second'",
+    );
+    const expired = await post(`${path}/rotate`, { keepExpiry: true });
+    assert.equal(expired.status, 409);
+    assert.match((await expired.json()).error, /Choose a lifetime/);
+  });
+});
