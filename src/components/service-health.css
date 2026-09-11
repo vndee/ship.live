@@ -712,3 +712,60 @@
 .health-service-toggle:has(+ .health-info-button) {
   padding-right: 4px;
 }
+.health-incidents {
+  margin-bottom: 18px;
+}
+.health-incidents h4 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+.health-incidents ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.health-incidents li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+.health-incident-state {
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: 12px;
+}
+.health-incident-state.open {
+  color: var(--danger);
+  border-color: var(--danger-border);
+  background: var(--danger-surface);
+}
+.health-incident-state.resolved {
+  color: var(--success);
+  border-color: var(--success-border);
+  background: var(--success-surface);
+}
+.health-incident-text {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.health-incident-text strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.health-incidents time {
+  color: var(--muted);
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .health-incidents li {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .health-incidents time {
+    grid-column: 2;
+  }
+}

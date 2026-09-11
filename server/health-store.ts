@@ -9,6 +9,7 @@ import type {
   HealthStatus,
   HealthSnapshot,
   HealthCheck,
+  HealthIncident,
   DailyLatency,
   LatencyStats,
   LatencyWindow,
@@ -17,6 +18,8 @@ import type {
 } from "../shared/health.js";
 import { AuthError } from "./auth.js";
 import { ACTIVITY_CHANNEL } from "./postgres-notifications.js";
+import { healthOutboxEvents, type IncidentChange } from "./webhook-events.js";
+import { recordWorkspaceEvent } from "./webhook-outbox.js";
 
 interface ProbeRow {
   id: string;
@@ -259,8 +262,10 @@ export class HealthStore {
         );
         if (reset) {
           // New rules reset current state; recorded measurements stay available.
+          // A down probe stays down, so its open incident still waits for the
+          // recovery threshold rather than resolving on the first pass.
           await c.query(
-            "UPDATE ship_live_health_probes SET state='unknown',failures=0,successes=0,last_checked_at=NULL,last_result=NULL WHERE id=$1",
+            "UPDATE ship_live_health_probes SET state=CASE WHEN state='down' THEN 'down' ELSE 'unknown' END,failures=0,successes=0,last_checked_at=NULL,last_result=NULL WHERE id=$1",
             [id],
           );
         }
@@ -329,6 +334,7 @@ export class HealthStore {
         checks: number;
         rate: number | null;
       })[];
+      incidents: HealthIncident[];
     }>(
       `SELECT s.id,s.name,coalesce((SELECT jsonb_agg(to_jsonb(p)-'headers_encrypted'||jsonb_build_object('has_headers',p.headers_encrypted IS NOT NULL,
     'history',coalesce((SELECT jsonb_agg(h.entry ORDER BY h.checked_at DESC,h.id DESC) FROM (SELECT c.id,c.checked_at,c.result||jsonb_build_object('checkedAt',c.checked_at,'status',c.state) AS entry FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '30 days' ORDER BY c.checked_at DESC,c.id DESC LIMIT 120) h),'[]'::jsonb),
@@ -337,7 +343,9 @@ export class HealthStore {
     'latencyStats24h',(SELECT CASE WHEN count(x.l)>0 THEN jsonb_build_object('mean',round(avg(x.l),2),'sd',round(coalesce(stddev_pop(x.l),0),2),'checks',count(x.l)) END FROM (SELECT (c.result->>'latencyMs')::numeric AS l FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '24 hours') x),
     'checks',(SELECT count(*) FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '24 hours'),
     'rate',(SELECT round(100.0*avg(CASE WHEN (c.result->>'ok')::boolean THEN 1 ELSE 0 END),1) FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '24 hours')
-    ) ORDER BY p.config->>'name',p.id) FROM ship_live_health_probes p WHERE p.service_id=s.id),'[]'::jsonb) AS probes FROM ship_live_health_services s WHERE s.workspace_id=$1 ORDER BY s.display_order,s.created_at,s.id`,
+    ) ORDER BY p.config->>'name',p.id) FROM ship_live_health_probes p WHERE p.service_id=s.id),'[]'::jsonb) AS probes,
+    coalesce((SELECT jsonb_agg(jsonb_build_object('id',i.id,'probeId',i.probe_id,'probeName',p.config->>'name','openedAt',i.opened_at,'resolvedAt',i.resolved_at,'reason',i.reason) ORDER BY i.opened_at DESC) FROM (SELECT * FROM ship_live_health_incidents WHERE service_id=s.id AND (resolved_at IS NULL OR opened_at>now()-interval '30 days') ORDER BY opened_at DESC LIMIT 20) i JOIN ship_live_health_probes p ON p.id=i.probe_id),'[]'::jsonb) AS incidents
+    FROM ship_live_health_services s WHERE s.workspace_id=$1 ORDER BY s.display_order,s.created_at,s.id`,
       [workspaceId],
     );
     const now = Date.now();
@@ -382,6 +390,7 @@ export class HealthStore {
           name: service.name,
           status: aggregate(probes.map((p) => p.status)),
           probes,
+          incidents: service.incidents,
         };
       }),
     };
@@ -450,6 +459,59 @@ export class HealthStore {
         "INSERT INTO ship_live_health_checks(probe_id,result,state) VALUES($1,$2,$3)",
         [p.id, result, status],
       );
+      // An incident spans a probe's time down. Its opening and resolution, and
+      // other state changes, become webhook events in this same transaction.
+      let incident: IncidentChange | undefined;
+      if (status === "down" && p.state !== "down") {
+        const opened = await c.query<{ id: string; opened_at: Date }>(
+          `INSERT INTO ship_live_health_incidents (id, workspace_id, service_id, probe_id, reason)
+           VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id, opened_at`,
+          [randomUUID(), p.workspace_id, p.service_id, p.id, result.reason],
+        );
+        if (opened.rows[0])
+          incident = {
+            id: opened.rows[0].id,
+            openedAt: opened.rows[0].opened_at.toISOString(),
+            resolvedAt: null,
+          };
+      } else if (status === "healthy") {
+        const resolved = await c.query<{
+          id: string;
+          opened_at: Date;
+          resolved_at: Date;
+        }>(
+          `UPDATE ship_live_health_incidents SET resolved_at = now()
+           WHERE probe_id = $1 AND resolved_at IS NULL RETURNING id, opened_at, resolved_at`,
+          [p.id],
+        );
+        if (resolved.rows[0])
+          incident = {
+            id: resolved.rows[0].id,
+            openedAt: resolved.rows[0].opened_at.toISOString(),
+            resolvedAt: resolved.rows[0].resolved_at.toISOString(),
+          };
+      }
+      if (status !== p.state || incident) {
+        const service = await c.query<{ name: string }>(
+          "SELECT name FROM ship_live_health_services WHERE id=$1",
+          [p.service_id],
+        );
+        for (const event of healthOutboxEvents(
+          {
+            service: {
+              id: p.service_id,
+              name: service.rows[0]?.name ?? "Service",
+            },
+            probe: { id: p.id, name: p.config.name },
+          },
+          p.state,
+          status,
+          result,
+          new Date().toISOString(),
+          incident,
+        ))
+          await recordWorkspaceEvent(c, p.workspace_id, event);
+      }
       await c.query(
         `INSERT INTO ship_live_health_latency_daily(probe_id,day,checks,total_latency,min_latency,max_latency) VALUES($1,(now() AT TIME ZONE 'UTC')::date,1,$2,$2,$2)
          ON CONFLICT(probe_id,day) DO UPDATE SET checks=ship_live_health_latency_daily.checks+1,total_latency=ship_live_health_latency_daily.total_latency+EXCLUDED.total_latency,min_latency=least(ship_live_health_latency_daily.min_latency,EXCLUDED.min_latency),max_latency=greatest(ship_live_health_latency_daily.max_latency,EXCLUDED.max_latency)`,

@@ -39,6 +39,10 @@ import { healthRouter } from "./health-app.js";
 import { dashboardShareRouter, healthShareRouter } from "./share-app.js";
 import { normalizeWallWebhook } from "./wall-normalize.js";
 import { WallStore } from "./wall-store.js";
+import { activityOutboxEvent } from "./webhook-events.js";
+import { recordInstallationEvent } from "./webhook-outbox.js";
+import { inboundReceiver, webhookRouter } from "./webhook-app.js";
+import type { WebhookStore } from "./webhook-store.js";
 
 interface WorkspaceAppOptions {
   store: PostgresEventStore;
@@ -55,6 +59,8 @@ interface WorkspaceAppOptions {
   metricsToken?: string;
   /** Headers added to every response, such as the production security policy. */
   responseHeaders?: Readonly<Record<string, string>>;
+  /** Outbound and inbound webhooks; without it their routes are absent. */
+  webhooks?: WebhookStore;
 }
 interface Viewer {
   workspace: Workspace;
@@ -97,6 +103,7 @@ export function createWorkspaceApp({
   rateLimits,
   metricsToken,
   responseHeaders,
+  webhooks,
 }: WorkspaceAppOptions): Express {
   if (
     !Number.isSafeInteger(trustProxyHops) ||
@@ -533,7 +540,9 @@ export function createWorkspaceApp({
       next();
       return;
     }
-    const webhook = request.path === "/webhooks/github";
+    // Machines deliver GitHub events and inbound alerts in bursts.
+    const webhook =
+      request.path === "/webhooks/github" || request.path.startsWith("/hooks/");
     if (await withinLimit(request, response, webhook ? "webhook" : "api"))
       next();
   });
@@ -653,7 +662,22 @@ export function createWorkspaceApp({
       const result = await store.merge(
         `installation-${installation.id}`,
         events,
-        { restricted: true, deliveryId },
+        {
+          restricted: true,
+          deliveryId,
+          // Live activity, never imported history, reaches team webhooks.
+          afterWrite: async (client, added) => {
+            for (const event of added) {
+              const outbound = activityOutboxEvent(event);
+              if (outbound)
+                await recordInstallationEvent(
+                  client,
+                  installation.id,
+                  outbound,
+                );
+            }
+          },
+        },
       );
       // Wall deliveries have their own transaction and deduplication table. Apply
       // on retries too so a transient wall write failure can repair itself even
@@ -672,10 +696,13 @@ export function createWorkspaceApp({
     },
   );
 
+  // Inbound webhook signatures cover raw bytes, so this precedes JSON parsing.
+  if (webhooks) app.use(inboundReceiver({ webhooks, pool: store.pool }));
   app.use(express.json({ limit: "64kb" }));
   app.use(auth.router);
   app.use(dashboardShareRouter({ auth, store, workspaces, github, viewer }));
   app.use(healthRouter({ auth, store, workspaces, viewer }));
+  if (webhooks) app.use(webhookRouter({ auth, webhooks, viewer }));
   app.use(healthShareRouter({ auth, store, workspaces, github, viewer }));
 
   // Authorizations that predate stored access, or whose first sync failed, get

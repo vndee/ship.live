@@ -81,6 +81,7 @@ test("PostgreSQL migrations serialize concurrent startup and preserve connection
       { version: 12 },
       { version: 13 },
       { version: 14 },
+      { version: 15 },
     ]);
     await stores[0].merge("team", [event]);
     assert.deepEqual(await stores[1].list("team"), [event]);

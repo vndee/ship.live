@@ -18,6 +18,36 @@ import { moveService } from "../lib/service-order";
 import { LatencyChart } from "./LatencyChart";
 import { ServiceStatusStrip } from "./ServiceStatusStrip";
 import { HealthServiceStats, HealthStatsInfo } from "./HealthServiceStats";
+
+/** Paused probes are not checked, so their open incidents wait for them. */
+function incidentState(
+  incident: { probeId: string; resolvedAt: string | null },
+  probes: { id: string; enabled: boolean }[],
+) {
+  if (incident.resolvedAt) return "Resolved";
+  const paused = probes.some(
+    (probe) => probe.id === incident.probeId && !probe.enabled,
+  );
+  return paused ? "Ongoing · probe paused" : "Ongoing";
+}
+
+/** How long an incident lasted, or has lasted so far. */
+function incidentLength(
+  incident: { openedAt: string; resolvedAt: string | null },
+  now: number,
+) {
+  const minutes = Math.max(
+    1,
+    Math.round(
+      ((incident.resolvedAt ? Date.parse(incident.resolvedAt) : now) -
+        Date.parse(incident.openedAt)) /
+        60_000,
+    ),
+  );
+  return minutes < 60
+    ? `${minutes} min`
+    : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
 import { serviceStats } from "../lib/service-stats";
 import { createHealthRefresh } from "../lib/health-refresh";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -617,6 +647,32 @@ export function ServiceHealth({
                     </div>
                     {expanded && (
                       <div className="health-service-details">
+                        {Boolean(service.incidents?.length) && (
+                          <div className="health-incidents">
+                            <h4>Recent incidents</h4>
+                            <ul>
+                              {service.incidents!.map((incident) => (
+                                <li key={incident.id}>
+                                  <span
+                                    className={`health-incident-state ${incident.resolvedAt ? "resolved" : "open"}`}
+                                  >
+                                    {incidentState(incident, service.probes)}
+                                  </span>
+                                  <span className="health-incident-text">
+                                    <strong>{incident.probeName}</strong>{" "}
+                                    {incident.reason}
+                                  </span>
+                                  <time dateTime={incident.openedAt}>
+                                    {new Date(
+                                      incident.openedAt,
+                                    ).toLocaleString()}{" "}
+                                    · {incidentLength(incident, now)}
+                                  </time>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                         {!service.probes.length && (
                           <p className="health-empty">
                             No probes yet. Add a public endpoint to check this

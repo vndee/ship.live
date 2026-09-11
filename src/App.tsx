@@ -48,6 +48,7 @@ import { DemoHealthPage } from "./pages/DemoHealthPage";
 import { FeedTimeline } from "./pages/FeedTimeline";
 import { MilestonesPage } from "./pages/MilestonesPage";
 import { TeamPage } from "./pages/TeamPage";
+import { WebhooksPage } from "./pages/WebhooksPage";
 
 const DEFAULT_TITLE = "ship.live — Great work. Shared momentum.";
 const REPOSITORY_NOTE =
@@ -85,6 +86,8 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   // live in the URL, so a filtered feed can be bookmarked and shared.
   const [pulseKind, setPulseKind] = useState<Kind | "">("");
   const onFeed = page === "feed";
+  // Service Health and Webhooks have their own status; other pages follow the feed.
+  const activity = page !== "health" && page !== "webhooks";
   const kind = onFeed ? (route.kind ?? "") : pulseKind;
   const repo = onFeed ? (route.repo ?? "") : "";
   const query = onFeed ? (route.query ?? "") : "";
@@ -227,7 +230,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   // Personal journals have no Service Health; a link to it shows Pulse.
   useEffect(() => {
     if (
-      page === "health" &&
+      (page === "health" || page === "webhooks") &&
       !feed.demo &&
       feed.workspace &&
       feed.workspace.kind !== "team"
@@ -422,6 +425,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                     ? "The shipping journal."
                     : "The activity log.",
                   health: "Service Health",
+                  webhooks: "Webhooks",
                   team: "The people behind it.",
                   milestones: "Built, together.",
                 }[page]
@@ -439,17 +443,19 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                 <Sparkles size={15} /> Try live activity
               </button>
             )}
-            {!personal && !(feed.demo && page === "health") && (
-              <button
-                className="button secondary share-dashboard-button"
-                onClick={() =>
-                  setModal(page === "health" ? "health-share" : "share")
-                }
-              >
-                <Share2 size={15} />{" "}
-                {page === "health" ? "Share service health" : "Share Pulse"}
-              </button>
-            )}
+            {!personal &&
+              page !== "webhooks" &&
+              !(feed.demo && page === "health") && (
+                <button
+                  className="button secondary share-dashboard-button"
+                  onClick={() =>
+                    setModal(page === "health" ? "health-share" : "share")
+                  }
+                >
+                  <Share2 size={15} />{" "}
+                  {page === "health" ? "Share service health" : "Share Pulse"}
+                </button>
+              )}
             {onFeed && (
               <>
                 <label className="search-box">
@@ -544,7 +550,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             )}
           </div>
         )}
-        {page !== "health" && feed.error && !feed.operation && (
+        {activity && feed.error && !feed.operation && (
           <div className="notice error-notice" role="alert">
             <span>{feed.error}</span>
             <button className="text-button" onClick={openConnect}>
@@ -559,7 +565,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             </button>
           </div>
         )}
-        {page !== "health" && !feed.error && !feed.operation && feed.notice && (
+        {activity && !feed.error && !feed.operation && feed.notice && (
           <div className="notice">
             <span>{feed.notice}</span>
           </div>
@@ -674,6 +680,27 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
         {page === "milestones" && (
           <MilestonesPage achievements={achievements} />
         )}
+        {page === "webhooks" &&
+          (!feed.demo &&
+          feed.workspace?.kind === "team" &&
+          feed.session.csrfToken ? (
+            <WebhooksPage
+              workspace={{ id: feed.workspace.id, name: feed.workspace.name }}
+              csrfToken={feed.session.csrfToken}
+            />
+          ) : (
+            <div className="empty-state">
+              <h3>Webhooks belong to team workspaces</h3>
+              <p>
+                Sign in and choose a team workspace to send its activity, CI,
+                deployments, and incidents to Slack, Discord, Teams, Google
+                Chat, Lark, or any URL.
+              </p>
+              <button className="button secondary" onClick={openConnect}>
+                {feed.session.user ? "Choose team workspace" : "Sign in"}
+              </button>
+            </div>
+          ))}
         <footer className="app-footer">
           <span>
             {feed.demo
@@ -682,7 +709,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                 ? "Private journal · visible only to you"
                 : `${feed.organization} · Private workspace`}
           </span>
-          {page !== "health" && (
+          {activity && (
             <div>
               <span>
                 {feed.demo

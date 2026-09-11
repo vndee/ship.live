@@ -20,6 +20,10 @@ import { createWorkspaceApp } from "./workspace-app.js";
 import { HealthStore } from "./health-store.js";
 import { startHealthWorker } from "./health-worker.js";
 import { WorkspaceStore } from "./workspace-store.js";
+import { SecretBox } from "./secret-box.js";
+import type { AccessCheck } from "./webhook-outbox.js";
+import { WebhookStore } from "./webhook-store.js";
+import { startWebhookWorker } from "./webhook-worker.js";
 
 const poolConnections = metrics.gauge(
   "ship_live_db_pool_connections",
@@ -62,10 +66,15 @@ async function main(): Promise<void> {
       store.pool,
       process.env.TOKEN_ENCRYPTION_KEY?.trim(),
     );
+    const webhooks = new WebhookStore(
+      store.pool,
+      new SecretBox(process.env.TOKEN_ENCRYPTION_KEY?.trim()),
+    );
     const app = createWorkspaceApp({
       auth,
       store,
       workspaces,
+      webhooks,
       github: githubConfig ? new GitHubApp(githubConfig) : undefined,
       webhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim(),
       trustProxyHops: trustProxyHopsFromEnv(),
@@ -103,6 +112,29 @@ async function main(): Promise<void> {
     });
     const stopHealth = startHealthWorker(new HealthStore(store.pool));
     const stopRetention = startRetention(store.pool, retention);
+    // Webhooks follow their owner's current membership and repository access.
+    const access: AccessCheck = async (userId, workspaceId) => {
+      try {
+        const workspace = await workspaces.get(userId, workspaceId);
+        if (!workspace.installationId) return new Set<number>();
+        if (!(await workspaces.installationActive(workspace.installationId)))
+          return undefined;
+        const repositories = await workspaces.repositoryAccess(
+          userId,
+          workspace.installationId,
+        );
+        return repositories
+          ? new Set(repositories.map((repository) => repository.id))
+          : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    const stopWebhooks = startWebhookWorker({
+      pool: store.pool,
+      store: webhooks,
+      access,
+    });
     const server = app.listen(port, () =>
       log.info(`ship.live listening on http://localhost:${port}`, {
         eventRetentionDays: retention.eventDays || "indefinite",
@@ -124,6 +156,7 @@ async function main(): Promise<void> {
       stopPoolMetrics();
       await stopHealth();
       await stopRetention();
+      await stopWebhooks();
       await store.close();
       clearTimeout(timeout);
       process.exitCode = exitCode;

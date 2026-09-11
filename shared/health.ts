@@ -60,11 +60,22 @@ export interface HealthProbe extends ProbeInput {
   latency24h: LatencyWindow[];
   latencyStats24h: LatencyStats | null;
 }
+/** A period when a probe was down. */
+export interface HealthIncident {
+  id: string;
+  probeId: string;
+  probeName: string;
+  openedAt: string;
+  resolvedAt: string | null;
+  reason: string;
+}
 export interface HealthService {
   id: string;
   name: string;
   status: HealthStatus;
   probes: HealthProbe[];
+  /** Open incidents and those from the last 30 days, newest first. */
+  incidents?: HealthIncident[];
 }
 export interface HealthSnapshot {
   services: HealthService[];

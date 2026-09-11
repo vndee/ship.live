@@ -7,6 +7,7 @@ test("each page has its own path, and unknown paths show Pulse", () => {
   assert.deepEqual(parseRoute("/health/", ""), { page: "health" });
   assert.deepEqual(parseRoute("/team", ""), { page: "team" });
   assert.deepEqual(parseRoute("/milestones", ""), { page: "milestones" });
+  assert.deepEqual(parseRoute("/webhooks", ""), { page: "webhooks" });
   assert.deepEqual(parseRoute("/pulse", ""), { page: "pulse" });
   assert.deepEqual(parseRoute("/nowhere", "?repo=a/b"), { page: "pulse" });
 });

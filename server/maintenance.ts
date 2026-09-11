@@ -30,6 +30,35 @@ function tasks(policy: RetentionPolicy): Task[] {
       table: "ship_live_rate_limits",
       condition: "window_start < now() - interval '1 hour'",
     },
+    {
+      table: "ship_live_webhook_cooldowns",
+      condition: "until < now()",
+    },
+    // Webhook logs keep 30 days; an event waits while a delivery is pending.
+    {
+      table: "ship_live_webhook_deliveries",
+      condition:
+        "created_at < now() - interval '30 days' AND status <> 'pending'",
+    },
+    {
+      table: "ship_live_webhook_events",
+      condition: `created_at < now() - interval '30 days' AND routed_at IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM ship_live_webhook_deliveries d
+          WHERE d.event_id = ship_live_webhook_events.id AND d.status = 'pending')`,
+    },
+    {
+      table: "ship_live_inbound_receipts",
+      condition: "received_at < now() - interval '30 days'",
+    },
+    // Incident history feeds uptime reports, so it stays for a year.
+    {
+      table: "ship_live_health_incidents",
+      condition: "resolved_at < now() - interval '1 year'",
+    },
+    {
+      table: "ship_live_digest_runs",
+      condition: "week_start < now() - interval '1 year'",
+    },
   ];
   if (policy.deliveryDays > 0)
     list.push(

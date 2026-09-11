@@ -47,6 +47,12 @@ function pipelineStatus(status: unknown, conclusion: unknown): PipelineStatus {
   return "neutral";
 }
 
+/** A run's branch, when GitHub reports one. */
+const branchOf = (value: unknown) => {
+  const branch = text(value, 255);
+  return branch ? { branch } : {};
+};
+
 function deploymentStatus(value: unknown): DeploymentStatus {
   const state = text(value).toLowerCase();
   if (["queued", "pending", "waiting"].includes(state)) return "queued";
@@ -161,6 +167,7 @@ export function normalizeWallWebhook(
           name,
           provider: text(object(run.app).slug, 100) || "github-check",
           headSha,
+          ...branchOf(object(run.check_suite).head_branch),
           status: pipelineStatus(run.status, run.conclusion),
           url: safeGithubUrl(run.details_url),
           startedAt: run.started_at
@@ -218,6 +225,7 @@ export function normalizeWallWebhook(
           name,
           provider: "github-actions",
           headSha,
+          ...branchOf(run.head_branch),
           status: pipelineStatus(run.status, run.conclusion),
           url: safeGithubUrl(run.html_url),
           startedAt: run.run_started_at

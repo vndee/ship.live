@@ -1,6 +1,7 @@
 import type { ActivityEvent } from "../../shared/types";
 
-export type Page = "pulse" | "feed" | "team" | "milestones" | "health";
+export type Page =
+  "pulse" | "feed" | "team" | "milestones" | "health" | "webhooks";
 export type Period = "24h" | "7d" | "30d";
 type Kind = ActivityEvent["type"];
 
@@ -22,6 +23,7 @@ const PATHS: Record<Page, string> = {
   team: "/team",
   milestones: "/milestones",
   health: "/health",
+  webhooks: "/webhooks",
 };
 export const PAGE_TITLES: Record<Page, string> = {
   pulse: "Pulse",
@@ -29,6 +31,7 @@ export const PAGE_TITLES: Record<Page, string> = {
   team: "Team",
   milestones: "Milestones",
   health: "Service Health",
+  webhooks: "Webhooks",
 };
 const KINDS: readonly Kind[] = [
   "merge",
