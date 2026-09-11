@@ -16,7 +16,13 @@ import type {
 import { AuthError } from "./auth.js";
 import type { GitHubGrant, InstallationInfo, Repo } from "./github-app.js";
 import { ACTIVITY_CHANNEL } from "./postgres-notifications.js";
-import { combineEvents, FEED_LIMIT } from "./store.js";
+import { FEED_LIMIT } from "./store.js";
+
+/** An event with the installation it was read from; notes have none. */
+export interface ScopedEvent {
+  installationId?: number;
+  event: ActivityEvent;
+}
 
 export interface AccessibleInstallation extends InstallationInfo {
   repositories: Repo[];
@@ -62,6 +68,8 @@ interface WorkspaceRow {
   github_account: string | null;
   pulse_title?: string | null;
   pulse_subtitle?: string | null;
+  source_installation_ids?: string[] | null;
+  source_mine_only?: boolean;
 }
 interface NoteRow {
   id: string;
@@ -78,6 +86,16 @@ function workspace(row: WorkspaceRow, userId: string): Workspace {
     owner: row.owner_user_id === userId,
     ...(row.pulse_title ? { pulseTitle: row.pulse_title } : {}),
     ...(row.pulse_subtitle ? { pulseSubtitle: row.pulse_subtitle } : {}),
+    ...(row.kind === "personal" && row.owner_user_id === userId
+      ? {
+          sources: {
+            installationIds: row.source_installation_ids
+              ? row.source_installation_ids.map(Number)
+              : null,
+            mineOnly: row.source_mine_only ?? true,
+          },
+        }
+      : {}),
     ...(row.installation_id
       ? {
           installationId: Number(row.installation_id),
@@ -665,6 +683,8 @@ export class WorkspaceStore {
         );
       }
       await this.notify(client, `workspace-${rows.rows[0].id}`);
+      // The owner's journal may follow every connected installation.
+      await this.notify(client, `account-${user.id}`);
       return workspace(rows.rows[0], user.id);
     });
   }
@@ -798,6 +818,121 @@ export class WorkspaceStore {
       [userId, installationId],
     );
     return result.rows[0]?.repositories;
+  }
+  /** Installations the user has connected: their journal's and their teams'. */
+  async connectedInstallations(userId: string): Promise<number[]> {
+    const result = await this.pool.query<{ installation_id: string }>(
+      `SELECT w.installation_id FROM ship_live_workspaces w
+      WHERE w.installation_id IS NOT NULL AND (w.owner_user_id=$1 OR EXISTS(SELECT 1 FROM ship_live_workspace_members m WHERE m.workspace_id=w.id AND m.user_id=$1))
+      ORDER BY w.installation_id`,
+      [userId],
+    );
+    return result.rows.map((row) => Number(row.installation_id));
+  }
+  /**
+   * A journal's sources in one read: each chosen, connected, active installation
+   * with the owner's synced repositories (null before a sync), and their login.
+   */
+  async personalSources(
+    userId: string,
+    chosen: number[] | null,
+  ): Promise<{
+    login?: string;
+    sources: { installationId: number; repositories: Repo[] | null }[];
+  }> {
+    const result = await this.pool.query<{
+      installation_id: string;
+      repositories: Repo[] | null;
+      login: string | null;
+    }>(
+      `SELECT w.installation_id, a.repositories, c.login
+      FROM ship_live_workspaces w
+      JOIN ship_live_installations i ON i.id=w.installation_id AND i.active
+      LEFT JOIN ship_live_github_connections c ON c.user_id=$1
+      LEFT JOIN ship_live_github_access a ON a.user_id=c.user_id
+        AND a.generation=c.generation AND a.installation_id=w.installation_id
+      WHERE w.installation_id IS NOT NULL AND ($2::bigint[] IS NULL OR w.installation_id=ANY($2))
+        AND (w.owner_user_id=$1 OR EXISTS(SELECT 1 FROM ship_live_workspace_members m WHERE m.workspace_id=w.id AND m.user_id=$1))
+      ORDER BY w.installation_id`,
+      [userId, chosen],
+    );
+    return {
+      login: result.rows[0]?.login ?? undefined,
+      sources: result.rows.map((row) => ({
+        installationId: Number(row.installation_id),
+        repositories: row.repositories,
+      })),
+    };
+  }
+  /** Chooses a journal's GitHub sources among the owner's connected installations. */
+  async setPersonalSources(
+    userId: string,
+    workspaceId: string,
+    input: unknown,
+  ): Promise<Workspace> {
+    await this.personal(userId, workspaceId);
+    const data = (input && typeof input === "object" ? input : {}) as Record<
+      string,
+      unknown
+    >;
+    const ids = data.installationIds;
+    if (
+      typeof data.mineOnly !== "boolean" ||
+      (ids !== null &&
+        (!Array.isArray(ids) ||
+          ids.length > 100 ||
+          !ids.every((id) => Number.isSafeInteger(id) && id > 0)))
+    )
+      throw new AuthError(400, "Invalid dashboard sources.");
+    const chosen =
+      ids === null ? null : [...new Set(ids as number[])].sort((a, b) => a - b);
+    if (chosen) {
+      const connected = new Set(await this.connectedInstallations(userId));
+      if (chosen.some((id) => !connected.has(id)))
+        throw new AuthError(400, "Choose installations you have connected.");
+    }
+    return this.transaction(async (client) => {
+      const result = await client.query<WorkspaceRow>(
+        `UPDATE ship_live_workspaces SET source_installation_ids=$3,source_mine_only=$4
+        WHERE id=$1 AND owner_user_id=$2 AND kind='personal' RETURNING *`,
+        [workspaceId, userId, chosen, data.mineOnly],
+      );
+      if (!result.rows[0]) throw new AuthError(404, "Journal not found.");
+      await this.notify(client, `workspace-${workspaceId}`);
+      return workspace(result.rows[0], userId);
+    });
+  }
+  /**
+   * Leaves an installation's team, or detaches it from the journal. Its stored
+   * activity stays, so connecting it again brings everything back.
+   */
+  async disconnectInstallation(
+    userId: string,
+    installationId: number,
+  ): Promise<void> {
+    await this.transaction(async (client) => {
+      await this.lockUser(client, userId);
+      const left = await client.query<{ id: string }>(
+        `DELETE FROM ship_live_workspace_members m USING ship_live_workspaces w
+        WHERE m.workspace_id=w.id AND w.installation_id=$2 AND m.user_id=$1 RETURNING w.id`,
+        [userId, installationId],
+      );
+      const detached = await client.query<{ id: string }>(
+        `UPDATE ship_live_workspaces SET installation_id=NULL,github_account=NULL
+        WHERE owner_user_id=$1 AND installation_id=$2 RETURNING id`,
+        [userId, installationId],
+      );
+      if (!left.rowCount && !detached.rowCount)
+        throw new AuthError(404, "That installation is not connected.");
+      await client.query(
+        `UPDATE ship_live_workspaces SET source_installation_ids=array_remove(source_installation_ids,$2::bigint)
+        WHERE owner_user_id=$1 AND kind='personal'`,
+        [userId, installationId],
+      );
+      for (const row of [...left.rows, ...detached.rows])
+        await this.notify(client, `workspace-${row.id}`);
+      await this.notify(client, `account-${userId}`);
+    });
   }
   /** Narrow every viewer's snapshot: keep only, or remove, the given repository IDs. */
   async restrictAccess(
@@ -952,32 +1087,61 @@ export class WorkspaceStore {
       [installationId, repositoryId, new Date(syncedAt)],
     );
   }
+  /**
+   * A workspace's notes (journals only) and each source's events, newest first:
+   * only the source's allowed repositories, and only the author's when set.
+   */
   async feed(
     userId: string,
     selected: Workspace,
-    allowedRepoIds: number[],
-  ): Promise<ActivityEvent[]> {
+    sources: { installationId: number; repositoryIds: number[] }[],
+    author?: string,
+  ): Promise<ScopedEvent[]> {
     const current = await this.get(userId, selected.id);
-    const personalNotes =
-      current.kind === "personal" ? await this.notes(userId, current.id) : [];
-    if (!current.installationId || !allowedRepoIds.length) return personalNotes;
-    if (!(await this.installationActive(current.installationId)))
-      throw new AuthError(
-        403,
-        "This GitHub App installation is no longer available.",
-      );
-    const rows = await this.pool.query<{ event: ActivityEvent }>(
-      `SELECT event FROM ship_live_events WHERE organization=$1
-      AND event->>'repositoryId'=ANY($2::text[]) ORDER BY occurred_at DESC,event_id LIMIT $3`,
+    const notes: ScopedEvent[] =
+      current.kind === "personal"
+        ? (await this.notes(userId, current.id)).map((event) => ({ event }))
+        : [];
+    const read = sources.filter((source) => source.repositoryIds.length);
+    if (!read.length) return notes;
+    for (const source of read)
+      if (!(await this.installationActive(source.installationId)))
+        throw new AuthError(
+          403,
+          "This GitHub App installation is no longer available.",
+        );
+    // One read: each source uses its own (organization, repository) index.
+    const rows = await this.pool.query<{
+      organization: string;
+      event: ActivityEvent;
+    }>(
+      `SELECT e.organization, e.event FROM jsonb_each($1::jsonb) AS s(scope, repositories)
+      CROSS JOIN LATERAL (
+        SELECT organization, event, occurred_at, event_id FROM ship_live_events
+        WHERE organization=s.scope
+          AND event->>'repositoryId'=ANY(ARRAY(SELECT jsonb_array_elements_text(s.repositories)))
+          AND ($2::text IS NULL OR lower(event->'actor'->>'login')=$2)
+        ORDER BY occurred_at DESC,event_id LIMIT $3
+      ) e ORDER BY e.occurred_at DESC,e.event_id LIMIT $3`,
       [
-        `installation-${current.installationId}`,
-        allowedRepoIds.map(String),
+        JSON.stringify(
+          Object.fromEntries(
+            read.map((source) => [
+              `installation-${source.installationId}`,
+              source.repositoryIds.map(String),
+            ]),
+          ),
+        ),
+        author?.toLowerCase() ?? null,
         FEED_LIMIT,
       ],
     );
-    return combineEvents(
-      personalNotes,
-      rows.rows.map((row) => row.event),
-    );
+    return [
+      ...notes,
+      ...rows.rows.map((row) => ({
+        installationId: Number(row.organization.slice("installation-".length)),
+        event: row.event,
+      })),
+    ];
   }
 }

@@ -8,6 +8,7 @@ import type {
 } from "../../shared/shares";
 import type {
   InstallationChoice,
+  PersonalSources,
   ShipNoteInput,
   SyncRun,
   Workspace,
@@ -672,7 +673,8 @@ export function useFeed() {
   const syncRunning = syncRun?.status === "running";
   useEffect(() => {
     setSyncRun(null);
-    if (demo || !workspace?.installationId) return;
+    // A journal can sync its sources without an installation of its own.
+    if (demo || !workspace) return;
     const id = workspace.id;
     let cancelled = false;
     void request<{ run: SyncRun | null }>(
@@ -752,6 +754,29 @@ export function useFeed() {
     });
     await refreshWorkspaces();
   }
+  /** Connects the ticked installations and leaves the unticked ones. */
+  async function saveConnections(connect: number[], disconnect: number[]) {
+    await mutate(
+      "/api/github/installations",
+      { connect, disconnect },
+      "PUT",
+      180_000,
+    );
+    await refreshWorkspaces();
+  }
+  /** Chooses which connected installations feed the personal dashboard. */
+  async function updateSources(sources: PersonalSources) {
+    const active = currentWorkspace.current;
+    if (!active || active.kind !== "personal")
+      throw new Error("Choose your personal dashboard first.");
+    await mutate(
+      `/api/workspaces/${encodeURIComponent(active.id)}/sources`,
+      sources,
+      "PATCH",
+    );
+    await refreshWorkspaces();
+    await refresh();
+  }
   const retry = () => {
     if (operationPending.current) return;
     dispatchOperation({ type: "reset", sequence: ++operationSequence.current });
@@ -824,6 +849,8 @@ export function useFeed() {
     installations,
     refreshInstallations,
     connectInstallation,
+    saveConnections,
+    updateSources,
     disconnectGithub,
     sync,
     syncRun,

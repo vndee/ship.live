@@ -96,6 +96,7 @@ export class PostgresEventStore implements EventStore {
         "017_share_link_reveal.sql",
         "018_pulse_heading.sql",
         "019_inbound_alerts.sql",
+        "020_personal_sources.sql",
       ].map((file) =>
         readFile(new URL(`./migrations/${file}`, import.meta.url), "utf8"),
       ),

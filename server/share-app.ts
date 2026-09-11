@@ -174,11 +174,15 @@ function workspaceShareRouter(
       response.json(result);
       return;
     }
-    const events = await workspaces.feed(
-      initial.share.creator_user_id,
-      workspace,
-      initial.repositories.map((repo) => repo.id),
-    );
+    // A link reads only its pinned installation.
+    const events = (
+      await workspaces.feed(initial.share.creator_user_id, workspace, [
+        {
+          installationId: Number(initial.share.installation_id),
+          repositoryIds: initial.repositories.map((repo) => repo.id),
+        },
+      ])
+    ).map(({ event }) => event);
     const wallSnapshot = await wall.snapshot(
       Number(initial.share.installation_id),
       initial.repositories.map((repo) => repo.id),

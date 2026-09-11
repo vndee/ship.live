@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Connect as many GitHub accounts and organizations as you like. **Account and GitHub connections** lists every installation you can access with a checkbox, and **Save connections** connects the ticked ones and leaves the unticked ones. Leaving an organization removes it from your workspaces; its team keeps its activity, and you can connect it again.
+- Show GitHub activity on the personal dashboard, not only journal notes. **Data sources** chooses which connected accounts and organizations feed it (every connected one by default), and **Only my activity**, on by default, keeps it to your own merges, reviews, pull requests, and pushes. Sync imports every source, and live updates arrive from each.
+- Upgrade note: migration 020 adds the personal dashboard's sources. Existing journals follow every connected installation and show only their owner's activity; turn off **Only my activity** to see collaborators' activity in your own repositories again.
+
 - Show inbound alerts in a team's Live activity as they arrive, named after their endpoint, with the mapped title, details, and link; the **Alert** activity type filters them. Alerts earn no XP and never count toward the leaderboard, milestones, or celebrations, and shared links don't show them. Inbound requests are now kept even when no outbound webhook listens.
 - Collapse each outbound and inbound webhook to a one-line summary with its status. Opening one shows its full setup, its last delivery or recent requests (now **Accepted** or **Rejected**), and its actions.
 - Upgrade note: migration 019 adds an index for recent inbound alerts.

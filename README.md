@@ -53,7 +53,7 @@ See the [webhook guide](docs/webhooks.md).
 
 ## Also included
 
-- **Personal journal.** Keep private notes about launches, experiments, decisions, and progress. Add GitHub activity from selected repositories when you are ready. Group notes with #tags, filter the feed by tag, and export any view as Markdown.
+- **Personal journal.** Keep private notes about launches, experiments, decisions, and progress. Add your GitHub activity when you are ready: **Data sources** chooses which connected accounts and organizations feed your dashboard, and **Only my activity** keeps it to work you did yourself. Group notes with #tags, filter the feed by tag, and export any view as Markdown.
 - **Google or GitHub sign-in.** Supabase Auth handles identity. A separate GitHub App connection grants repository access, including for someone who signed in with Google.
 - **Live activity and replay.** Follow merges, reviews, releases, pushes, issues, journal entries, and inbound alerts. Filter by repository, type, time, or text; replay the last 24 hours, 7 days, or 30 days.
 - **Shared recognition.** Weekly contributor spotlights and team milestones celebrate outcomes and collaboration. New commits earn a small per-commit credit; personal notes earn no XP.
@@ -83,7 +83,7 @@ To use real workspaces:
 
 1. Create a Supabase project and enable its Google and GitHub providers. Set `APP_URL`, `SUPABASE_URL`, and `SUPABASE_PUBLISHABLE_KEY` on the server.
 2. Sign in to get a private personal journal. Google-only users can write notes without connecting GitHub.
-3. Register and configure a GitHub App, then connect it from ship.live and install it on a personal account or organization. Choose the repositories it may access.
+3. Register and configure a GitHub App, then connect it from ship.live and install it on a personal account or any number of organizations. Choose the repositories it may access, then tick the accounts and organizations to connect; you can add or leave them later.
 
 The full [configuration guide](docs/configuration.md) distinguishes the Supabase sign-in callback from the GitHub App connection callback. Creating OAuth clients, provider secrets, a GitHub App, and a public webhook URL is part of self-hosting; this repository does not provision those external accounts.
 

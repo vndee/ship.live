@@ -171,8 +171,11 @@ function upstream() {
       }));
       return Response.json({ total_count: repositories.length, repositories });
     }
-    if (url.pathname === `/app/installations/${team.id}`)
-      return Response.json(install(team));
+    const appInstallation = /^\/app\/installations\/(\d+)$/.exec(url.pathname);
+    const known = [team, otherTeam, ...[...accessible.values()].flat()].find(
+      (item) => item.id === Number(appInstallation?.[1]),
+    );
+    if (known) return Response.json(install(known));
     if (url.pathname.endsWith("/access_tokens"))
       return Response.json({
         token: "installation-token",
@@ -984,7 +987,12 @@ test("workspace discovery follows synced access and journals keep synced activit
       title: "An offline reflection",
       body: "Still private",
     });
-    await store.merge("installation-71", [event("synced-before-outage", 101)], {
+    // A journal shows only its owner's activity by default.
+    const own = (id: string) => ({
+      ...event(id, 101),
+      actor: { login: "builder-1" },
+    });
+    await store.merge("installation-71", [own("synced-before-outage")], {
       restricted: true,
     });
     const live = await stream(
@@ -993,11 +1001,10 @@ test("workspace discovery follows synced access and journals keep synced activit
     try {
       await live.frame("connected");
       provider.unavailable();
-      await store.merge(
-        "installation-71",
-        [event("new-event-during-outage", 101)],
-        { restricted: true, deliveryId: randomUUID() },
-      );
+      await store.merge("installation-71", [own("new-event-during-outage")], {
+        restricted: true,
+        deliveryId: randomUUID(),
+      });
       assert.match(await live.frame("activity"), /new-event-during-outage/);
       const feed = await (
         await request(`/api/workspaces/${journal.id}/feed`)
@@ -2435,5 +2442,128 @@ test("a team's feed adds its inbound alerts to repository activity", async (t) =
     );
     assert.equal(feed.events[0].actor.login, "Grafana");
     assert.equal(feed.events[1].id, "alpha");
+  });
+});
+
+test("a journal shows its owner's activity from every connected installation, and its sources are configurable", async (t) => {
+  await withApp(t, async ({ store, workspaces, users, request }) => {
+    await connect(workspaces, users[0], 1);
+    await connect(workspaces, users[0], 1, otherTeam, [
+      { id: 111, name: "other-team/app", private: true },
+    ]);
+    const by = (id: string, repositoryId: number, login = "Builder-1") => ({
+      ...event(id, repositoryId),
+      actor: { login },
+    });
+    await store.merge(
+      "installation-70",
+      [by("mine-70", 101), by("theirs-70", 101, "someone")],
+      { restricted: true },
+    );
+    await store.merge("installation-71", [by("mine-71", 111)], {
+      restricted: true,
+    });
+    const listed = (await (await request("/api/workspaces")).json())
+      .workspaces as Array<{ id: string; kind: string; sources?: unknown }>;
+    const journal = listed.find((item) => item.kind === "personal")!;
+    assert.deepEqual(journal.sources, {
+      installationIds: null,
+      mineOnly: true,
+    });
+    const ids = async () =>
+      (
+        (await (
+          await request(`/api/workspaces/${journal.id}/feed`)
+        ).json()) as FeedResponse
+      ).events
+        .map((item) => item.id)
+        .sort();
+    // Every connected installation, and only the owner's own activity.
+    assert.deepEqual(await ids(), ["mine-70", "mine-71"]);
+    const save = (body: unknown, user = users[0]) =>
+      request(`/api/workspaces/${journal.id}/sources`, user, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      });
+    assert.equal(
+      (await save({ installationIds: [70], mineOnly: false })).status,
+      200,
+    );
+    assert.deepEqual(await ids(), ["mine-70", "theirs-70"]);
+    assert.equal(
+      (await save({ installationIds: [999], mineOnly: true })).status,
+      400,
+    );
+    assert.equal((await save({ installationIds: null })).status, 400);
+    assert.equal(
+      (await save({ installationIds: null, mineOnly: true }, users[1])).status,
+      404,
+    );
+    // Live updates arrive from each source.
+    assert.equal(
+      (await save({ installationIds: null, mineOnly: true })).status,
+      200,
+    );
+    const live = await stream(
+      await request(`/api/workspaces/${journal.id}/events`),
+    );
+    try {
+      await live.frame("connected");
+      await store.merge("installation-71", [by("live-71", 111)], {
+        restricted: true,
+        deliveryId: randomUUID(),
+      });
+      assert.match(await live.frame("activity"), /live-71/);
+    } finally {
+      await live.close();
+    }
+  });
+});
+
+test("choosing installations connects the ticked ones in one GitHub read and leaves the rest", async (t) => {
+  await withApp(t, async ({ workspaces, users, provider, request }) => {
+    await workspaces.saveGrant(
+      users[0].id,
+      { id: 1, login: "builder-a" },
+      { accessToken: "token-a", expiresAt: Date.now() + 3600000 },
+    );
+    provider.accessible.set("token-a", [team, otherTeam]);
+    provider.github.backfill = async (_installation, repositories) => ({
+      synced: 0,
+      scanned: repositories.length,
+      resumed: 0,
+      failed: 0,
+      skipped: 0,
+    });
+    const save = (body: unknown) =>
+      request("/api/github/installations", users[0], {
+        method: "PUT",
+        body: JSON.stringify(body),
+      });
+    const listings = () =>
+      provider.calls.filter((call) => call.startsWith("/user/installations:"))
+        .length;
+    const teams = async () =>
+      (
+        (await (await request("/api/workspaces")).json()).workspaces as Array<{
+          kind: string;
+          installationId?: number;
+        }>
+      )
+        .filter((item) => item.kind === "team")
+        .map((item) => item.installationId)
+        .sort();
+    const before = listings();
+    const saved = await save({ connect: [70, 71], disconnect: [] });
+    assert.equal(saved.status, 200);
+    assert.deepEqual((await saved.json()).installationIds, [70, 71]);
+    assert.equal(listings() - before, 1);
+    assert.deepEqual(await teams(), [70, 71]);
+    const left = await save({ connect: [], disconnect: [71] });
+    assert.equal(left.status, 200);
+    assert.deepEqual((await left.json()).installationIds, [70]);
+    assert.deepEqual(await teams(), [70]);
+    assert.equal((await save({ connect: [70], disconnect: [70] })).status, 400);
+    assert.equal((await save({ connect: [999], disconnect: [] })).status, 403);
   });
 });

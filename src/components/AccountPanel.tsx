@@ -39,6 +39,33 @@ export function AccountPanel({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const connectedIds = feed.workspaces.flatMap((workspace) =>
+    workspace.installationId ? [workspace.installationId] : [],
+  );
+  const connectedKey = [...connectedIds].sort((a, b) => a - b).join(",");
+  // Ticked installations; saved changes reset them to what is connected.
+  const [picked, setPicked] = useState(() => new Set(connectedIds));
+  useEffect(
+    () => setPicked(new Set(connectedIds)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [connectedKey],
+  );
+  const toConnect = choices
+    .filter(
+      (choice) => picked.has(choice.id) && !connectedIds.includes(choice.id),
+    )
+    .map((choice) => choice.id);
+  const toLeave = choices.filter(
+    (choice) => !picked.has(choice.id) && connectedIds.includes(choice.id),
+  );
+  function toggle(id: number) {
+    setPicked((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   async function loadInstallations() {
     setBusy("Refreshing GitHub access…");
@@ -110,6 +137,25 @@ export function AccountPanel({
   }
   const user = feed.session.user;
   const operationPending = feed.operation?.status === "pending";
+  function saveConnections() {
+    if (
+      toLeave.length &&
+      !window.confirm(
+        `Leave ${toLeave.map((choice) => choice.account).join(", ")}? Its activity stays with the team, and you can connect it again at any time.`,
+      )
+    )
+      return;
+    void act(
+      toConnect.length
+        ? "Connecting and importing recent activity…"
+        : "Saving connections…",
+      () =>
+        feed.saveConnections(
+          toConnect,
+          toLeave.map((choice) => choice.id),
+        ),
+    );
+  }
   return (
     <>
       {feed.sessionError && (
@@ -275,6 +321,13 @@ export function AccountPanel({
               </button>
             ) : (
               <>
+                {choices.length > 0 && (
+                  <p className="field-hint">
+                    Tick the accounts and organizations to connect. Unticking
+                    one leaves it; its team keeps its activity, and you can tick
+                    it again at any time.
+                  </p>
+                )}
                 <div className="installation-list">
                   {choices.map((choice) => {
                     const connected = feed.workspaces.find(
@@ -282,7 +335,18 @@ export function AccountPanel({
                     );
                     return (
                       <div className="installation-choice" key={choice.id}>
-                        <div>
+                        <label className="installation-pick">
+                          <input
+                            type="checkbox"
+                            aria-label={`Connect ${choice.account}`}
+                            checked={picked.has(choice.id)}
+                            disabled={
+                              Boolean(busy) ||
+                              operationPending ||
+                              !choice.connectable
+                            }
+                            onChange={() => toggle(choice.id)}
+                          />
                           {choice.kind === "Organization" ? (
                             <Users size={16} />
                           ) : (
@@ -298,26 +362,24 @@ export function AccountPanel({
                               {choice.repositories.length === 1
                                 ? "repository"
                                 : "repositories"}
+                              {choice.connectable
+                                ? ""
+                                : " · only its owner can connect it"}
                             </small>
                           </span>
-                        </div>
-                        <button
-                          className="button secondary"
-                          disabled={Boolean(busy) || operationPending}
-                          onClick={() => {
-                            if (connected) {
+                        </label>
+                        {connected && (
+                          <button
+                            className="text-button"
+                            disabled={Boolean(busy) || operationPending}
+                            onClick={() => {
                               feed.selectWorkspace(connected);
                               onClose();
-                            } else
-                              void act(
-                                "Connecting and importing recent activity…",
-                                () => feed.connectInstallation(choice.id),
-                                true,
-                              );
-                          }}
-                        >
-                          {connected ? "Open" : "Connect"}
-                        </button>
+                            }}
+                          >
+                            Open
+                          </button>
+                        )}
                         {choice.repositories.length > 0 && (
                           <details>
                             <summary>Repository access</summary>
@@ -337,6 +399,32 @@ export function AccountPanel({
                     );
                   })}
                 </div>
+                {choices.length > 0 && (
+                  <div className="connection-save">
+                    <button
+                      className="button primary"
+                      disabled={
+                        Boolean(busy) ||
+                        operationPending ||
+                        !(toConnect.length || toLeave.length)
+                      }
+                      onClick={saveConnections}
+                    >
+                      Save connections
+                    </button>
+                    <small>
+                      {toConnect.length || toLeave.length
+                        ? [
+                            toConnect.length &&
+                              `${toConnect.length} to connect`,
+                            toLeave.length && `${toLeave.length} to leave`,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")
+                        : "No changes"}
+                    </small>
+                  </div>
+                )}
                 {loaded && !choices.length && (
                   <p className="field-hint">
                     No accessible installations yet. Install the app on your

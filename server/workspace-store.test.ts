@@ -247,13 +247,19 @@ test("repository authorization filters before the feed limit and legacy rows sta
     ]);
     await events.merge("team", [{ ...visible, id: "legacy-unclaimed" }]);
     assert.deepEqual(
-      (await work.feed(user.id, selected, [1])).map((event) => event.id),
+      (
+        await work.feed(user.id, selected, [
+          { installationId: 123, repositoryIds: [1] },
+        ])
+      ).map(({ event }) => event.id),
       ["visible"],
     );
     assert.deepEqual(await work.feed(user.id, selected, []), []);
     await work.setInstallationActive(123, false);
     await assert.rejects(
-      work.feed(user.id, selected, [1]),
+      work.feed(user.id, selected, [
+        { installationId: 123, repositoryIds: [1] },
+      ]),
       /no longer available/i,
     );
   } finally {
