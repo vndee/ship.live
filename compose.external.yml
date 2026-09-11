@@ -1,0 +1,58 @@
+version: "3.8"
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  app:
+    image: ${APP_IMAGE:?Set APP_IMAGE to an immutable GHCR digest}
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      APP_URL: https://${APP_DOMAIN:?Set APP_DOMAIN in .env.production}
+      TRUST_PROXY_HOPS: 1
+    expose:
+      - "3001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - ./secrets/supabase-ca.crt:/secrets/supabase-ca.crt:ro
+    networks:
+      - private
+    logging: *default-logging
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Set APP_DOMAIN in .env.production}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - private
+    logging: *default-logging
+
+networks:
+  private:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
