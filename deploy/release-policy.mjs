@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 const VERSION = /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 const REVISION = /^[0-9a-f]{40}$/;
+const TARGET_REVISION = /^[0-9a-f]{40}$/i;
 
 function fail(message) {
   throw new Error(message);
@@ -28,7 +29,7 @@ export function validateRelease({
   if (!VERSION.test(tag)) fail("Release tag must be stable SemVer");
   if (!REVISION.test(releaseSha))
     fail("Release SHA must be a full lowercase SHA");
-  if (REVISION.test(target) && target !== releaseSha)
+  if (TARGET_REVISION.test(target) && target.toLowerCase() !== releaseSha)
     fail("Release target must match the tagged release");
   if (packageVersion !== tag.slice(1))
     fail("Package version must match the release tag");

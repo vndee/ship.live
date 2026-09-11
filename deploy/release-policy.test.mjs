@@ -64,6 +64,18 @@ test("validateRelease rejects a full-SHA target that differs from the tagged rel
   );
 });
 
+test("validateRelease rejects an uppercase full-SHA target that differs from the tagged release", () => {
+  assert.throws(() =>
+    validateRelease({
+      tag: "v1.4.2",
+      target: "B".repeat(40),
+      releaseSha: sha,
+      mainContainsRelease: true,
+      packageVersion: "1.4.2",
+    }),
+  );
+});
+
 test("validateRelease permits a branch target after main advances", () => {
   assert.deepEqual(
     validateRelease({
