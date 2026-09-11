@@ -30,6 +30,7 @@
     "test:image-metadata": "node --import tsx --test deploy/image-metadata.test.mjs",
     "test:compose-external": "node --test deploy/compose-external.test.mjs",
     "test:release-policy": "node --test deploy/release-policy.test.mjs",
+    "test:host-deploy": "node --test deploy/ship-live-deploy.test.mjs",
     "test:docker": "node --import tsx --test deploy/runtime-image.test.mjs deploy/runtime-image-prebuilt.test.mjs",
     "check": "tsc --noEmit",
     "format": "prettier --write src server shared docs .github *.json *.ts *.md *.yaml index.html",

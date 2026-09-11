@@ -1,0 +1,246 @@
+#!/bin/bash
+set -eu
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+export LC_ALL=C
+umask 077
+APP_DIR=/opt/apps/ship-live
+STATE_DIR=/var/lib/ship-live-deploy
+IMAGE_RE='^ghcr\.io/vndee/ship\.live@sha256:[0-9a-f]{64}$'
+VERSION_RE='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+LABEL_FORMAT='{{index .Config.Labels "org.opencontainers.image.source"}}|{{index .Config.Labels "org.opencontainers.image.version"}}|{{index .Config.Labels "org.opencontainers.image.revision"}}|{{index .Config.Labels "io.ship-live.schema-version"}}|{{index .Config.Labels "io.ship-live.max-schema-version"}}|END'
+
+fail() { printf '%s\n' "$1" >&2; exit 1; }
+if [ "$#" -ne 1 ] || [[ ! $1 =~ $IMAGE_RE ]]; then fail 'Invalid deployment reference.'; fi
+[ "$(id -u)" -eq 0 ] || fail 'Deployment requires root.'
+requested_image=$1
+
+# Provision these directories and this executable root-owned. Sudo must use
+# env_reset, no SETENV, and allow only this executable. Never honor caller Docker
+# endpoints, Compose files/projects, Python imports, or credential locations.
+unset DOCKER_CONTEXT DOCKER_TLS_VERIFY DOCKER_CERT_PATH COMPOSE_FILE COMPOSE_PATH_SEPARATOR COMPOSE_PROFILES
+export DOCKER_HOST=unix:///var/run/docker.sock DOCKER_CONFIG=/root/.docker
+export COMPOSE_PROJECT_NAME=ship-live COMPOSE_HTTP_TIMEOUT=120
+mkdir -p "$STATE_DIR"
+chmod 700 "$STATE_DIR"
+exec 9>"$STATE_DIR/lock"
+flock -n 9 || fail 'Another deployment holds the lock.'
+cd "$APP_DIR"
+[ -f .env.production ] && [ -f compose.external.yml ] || fail 'Production configuration is missing.'
+
+# Never source state files. Python runs in isolated mode and reads a strictly
+# validated, bounded record. Atomic writes fsync the file and containing directory.
+state_io() {
+  python3 -I - "$@" <<'PY'
+import os
+import re
+import sys
+import tempfile
+
+mode, directory, *args = sys.argv[1:]
+image_re = r"ghcr\.io/vndee/ship\.live@sha256:[0-9a-f]{64}"
+version_re = r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+keys = ["IMAGE", "VERSION", "REVISION", "SCHEMA_VERSION", "MAX_SCHEMA_VERSION", "DEPLOYED_AT"]
+
+def read(name):
+    path = os.path.join(directory, name)
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="ascii") as f:
+        text = f.read(8193)
+    if len(text) > 8192:
+        raise ValueError("oversized state")
+    lines = text.splitlines()
+    if len(lines) != len(keys) or any(not line.startswith(key + "=") for key, line in zip(keys, lines)):
+        raise ValueError("invalid state fields")
+    values = [line.split("=", 1)[1] for line in lines]
+    patterns = [image_re, version_re, r"[0-9a-f]{40}", r"[1-9][0-9]*", r"[1-9][0-9]*", r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"]
+    if any(not re.fullmatch(pattern, value) for pattern, value in zip(patterns, values)):
+        raise ValueError("invalid state values")
+    if int(values[4]) < int(values[3]):
+        raise ValueError("invalid schema range")
+    return text
+
+def sync_directory():
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+def atomic(name, text):
+    if text is None:
+        path = os.path.join(directory, name)
+        if os.path.exists(path):
+            os.unlink(path)
+            sync_directory()
+        return
+    fd, temporary = tempfile.mkstemp(prefix=".tmp-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as f:
+            os.fchmod(f.fileno(), 0o600)
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, os.path.join(directory, name))
+        sync_directory()
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+try:
+    if mode == "read":
+        if read("previous") and not read("current"):
+            raise ValueError("previous state without current state")
+        for name in ["current", "previous"]:
+            text = read(name)
+            if name == "current" and text:
+                values = [line.split("=", 1)[1] for line in text.splitlines()]
+                print("|".join(values))
+    elif mode == "commit":
+        old = read("current")
+        old_previous = read("previous")
+        # Each record is atomic. Write previous first so an interruption never
+        # discards the last known healthy image; current remains authoritative.
+        try:
+            if old:
+                atomic("previous", old)
+            atomic("current", "".join(key + "=" + value + "\n" for key, value in zip(keys, args)))
+        except OSError:
+            # A directory fsync can fail after rename has become visible. Restore
+            # the snapshots before the shell rolls back the running container.
+            for name, text in [("current", old), ("previous", old_previous)]:
+                try:
+                    atomic(name, text)
+                except OSError:
+                    print("State restoration failed; operator intervention required.", file=sys.stderr)
+            raise
+    elif mode == "failure":
+        atomic("last-failure", "TARGET=" + args[0] + "\nPREVIOUS=" + args[1] + "\nFAILED_AT=" + args[2] + "\n")
+    else:
+        raise ValueError("invalid operation")
+except (OSError, ValueError, UnicodeError):
+    print("Deployment state operation failed.", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+schema_covers() {
+  python3 -I -c 'import sys; sys.exit(0 if int(sys.argv[1]) >= int(sys.argv[2]) else 1)' "$1" "$2"
+}
+
+validate_metadata() {
+  local value=$1 rest
+  # Sentinel preserves trailing label newlines across command substitution.
+  [[ $value == *'|END' ]] || return 1
+  value=${value%|END}
+  [[ $value != *$'\n'* ]] || return 1
+  IFS='|' read -r label_source label_version label_revision label_schema label_max rest <<< "$value"
+  [[ $value == "$label_source|$label_version|$label_revision|$label_schema|$label_max" ]] || return 1
+  [ "$label_source" = 'https://github.com/vndee/ship.live' ] || return 1
+  [[ $label_version =~ $VERSION_RE ]] || return 1
+  [[ $label_revision =~ ^[0-9a-f]{40}$ ]] || return 1
+  [[ $label_schema =~ ^[1-9][0-9]*$ && $label_max =~ ^[1-9][0-9]*$ ]] || return 1
+  schema_covers "$label_max" "$label_schema"
+}
+
+compose() { APP_IMAGE="$1" docker-compose --env-file .env.production -f compose.external.yml "${@:2}"; }
+
+healthy() {
+  local image=$1 container health status readiness restarts remaining wait_seconds body
+  local deadline=$((SECONDS + 120)) attempts=0
+  container=$(compose "$image" ps -q app 2>/dev/null) || return 1
+  [[ $container =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || return 1
+  # Attempt cap is a second bound if the wall clock is disrupted. Each inspect
+  # receives only the remaining time budget, capped at ten seconds.
+  while [ "$SECONDS" -lt "$deadline" ] && [ "$attempts" -lt 60 ]; do
+    remaining=$((deadline - SECONDS))
+    wait_seconds=$remaining
+    [ "$wait_seconds" -le 10 ] || wait_seconds=10
+    health=$(timeout "$wait_seconds" docker inspect --format '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}|{{.RestartCount}}' "$container" 2>/dev/null) || return 1
+    IFS='|' read -r status readiness restarts _ <<< "$health"
+    [[ $health == "$status|$readiness|$restarts" && $restarts =~ ^[0-9]+$ ]] || return 1
+    case "$status" in exited|dead|removing) return 1;; esac
+    # Reject large counts without unsafe shell arithmetic on untrusted digits.
+    [[ $restarts =~ ^[012]$ ]] || return 1
+    [ "$readiness" != unhealthy ] && [ "$readiness" != missing ] || return 1
+    if [ "$status" = running ] && [ "$readiness" = healthy ]; then
+      body=$(curl --fail --silent --show-error --connect-timeout 5 --max-time 10 https://ship.duy.dev/api/health 2>/dev/null) || return 1
+      [ "$body" = '{"status":"ok"}' ] || return 1
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    remaining=$((deadline - SECONDS))
+    [ "$remaining" -gt 0 ] || break
+    wait_seconds=2
+    [ "$remaining" -ge 2 ] || wait_seconds=$remaining
+    sleep "$wait_seconds"
+  done
+  return 1
+}
+
+prior_record=$(state_io read "$STATE_DIR") || fail 'Recorded deployment state is invalid.'
+prior_image='' prior_version=''
+if [ -n "$prior_record" ]; then IFS='|' read -r prior_image prior_version _ <<< "$prior_record"; fi
+mutated=0 committed=0
+
+on_exit() {
+  local result=$? previous_metadata
+  trap - EXIT HUP INT TERM
+  if [ "$mutated" -eq 1 ] && [ "$committed" -eq 0 ]; then
+    result=1
+    printf '%s\n' 'Target deployment failed; bounded app logs follow.' >&2
+    compose "$requested_image" logs --no-color --tail 100 app 2>&1 | tail -n 100 >&2 || true
+    state_io failure "$STATE_DIR" "$requested_image" "$prior_image" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
+    if [ -n "$prior_image" ] &&
+       previous_metadata=$(docker image inspect --format "$LABEL_FORMAT" "$prior_image" 2>/dev/null) &&
+       validate_metadata "$previous_metadata" && schema_covers "$label_max" "$target_schema"; then
+      if compose "$prior_image" config --quiet >/dev/null 2>&1 &&
+         compose "$prior_image" up -d --no-deps app >/dev/null 2>&1 && healthy "$prior_image"; then
+        printf '%s\n' 'Previous deployment restored and healthy.' >&2
+      else
+        printf '%s\n' 'Rollback failed; diagnostic state retained. Operator intervention required.' >&2
+      fi
+    else
+      printf '%s\n' 'Rollback refused: no verified schema-compatible previous image. Stopping app only.' >&2
+      compose "$requested_image" stop app >/dev/null 2>&1 || printf '%s\n' 'Failed to stop app; operator intervention required.' >&2
+    fi
+  fi
+  exit "$result"
+}
+trap on_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+docker pull "$requested_image" >/dev/null 2>&1 || fail 'Image pull failed.'
+target_metadata=$(docker image inspect --format "$LABEL_FORMAT" "$requested_image" 2>/dev/null) || fail 'Image label inspection failed.'
+validate_metadata "$target_metadata" || fail 'Image labels are invalid.'
+target_version=$label_version target_revision=$label_revision target_schema=$label_schema target_max=$label_max
+if [ -n "$prior_version" ]; then
+  [ "$target_version" != "$prior_version" ] || fail 'Target version must be newer than production.'
+  newest=$(printf '%s\n%s\n' "$prior_version" "$target_version" | sort -V | tail -n 1)
+  [ "$newest" = "$target_version" ] || fail 'Target version must be newer than production.'
+fi
+compose "$requested_image" config --quiet >/dev/null 2>&1 || fail 'Compose configuration validation failed.'
+mutated=1
+compose "$requested_image" up -d --no-deps app >/dev/null 2>&1 || fail 'App recreation failed.'
+healthy "$requested_image" || fail 'App health validation failed.'
+# Finish the short durable commit even if SSH disconnects here. A signal between
+# the file rename and the shell flag must not roll back an already committed app.
+trap '' HUP INT TERM
+state_io commit "$STATE_DIR" "$requested_image" "$target_version" "$target_revision" "$target_schema" "$target_max" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" || fail 'Deployment state commit failed.'
+committed=1
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Pruning is best-effort after the durable healthy commit; never broad system or
+# image prune. Even unexpected listing results must pass the exact image regex.
+images=$(docker image ls --digests --format '{{.Repository}}@{{.Digest}}' ghcr.io/vndee/ship.live 2>/dev/null) || images=
+while IFS= read -r candidate; do
+  [[ $candidate =~ $IMAGE_RE ]] || continue
+  [ "$candidate" != "$requested_image" ] && [ "$candidate" != "$prior_image" ] || continue
+  docker image rm "$candidate" >/dev/null 2>&1 || printf '%s\n' 'An unused ship.live image could not be pruned.' >&2
+done <<< "$images"
+printf '%s\n' 'Deployment healthy; state committed.'
