@@ -76,7 +76,10 @@ test("the production image loads the digest module and carries release labels", 
     "https://github.com/vndee/ship.live",
   );
   assert.match(labels["org.opencontainers.image.revision"], /^[0-9a-f]{40}$/);
-  assert.match(labels["org.opencontainers.image.version"], /^v\d+\.\d+\.\d+$/);
+  assert.match(
+    labels["org.opencontainers.image.version"],
+    /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/,
+  );
   assert.equal(labels["io.ship-live.schema-version"], String(SCHEMA_VERSION));
   assert.equal(
     labels["io.ship-live.max-schema-version"],
