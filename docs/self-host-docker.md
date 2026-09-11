@@ -146,14 +146,21 @@ Publish the first stable GitHub Release with the repository variable
 `docker login`:
 
 ```sh
-docker pull ghcr.io/vndee/ship.live@sha256:<digest-from-publish-job>
+set -euo pipefail
+umask 077
+anonymous_config="$(mktemp -d "${TMPDIR:-/tmp}/ship-live-anonymous-registry.XXXXXX")"
+trap 'rm -rf -- "$anonymous_config"' EXIT
+docker --config "$anonymous_config" pull \
+  ghcr.io/vndee/ship.live@sha256:<digest-from-publish-job>
 docker image inspect ghcr.io/vndee/ship.live@sha256:<digest-from-publish-job> \
   --format '{{ index .Config.Labels "org.opencontainers.image.version" }} {{ index .Config.Labels "org.opencontainers.image.revision" }} {{ index .Config.Labels "io.ship-live.schema-version" }} {{ index .Config.Labels "io.ship-live.max-schema-version" }}'
 ```
 
-The displayed version and revision must match the Release and its exact tag
-commit. Configure the GitHub `production` environment with exactly these four
-connection values:
+The empty temporary Docker config prevents a locally cached credential or
+credential helper from making a private package appear public; the trap removes
+it on success or failure. The displayed version and revision must match the
+Release and its exact tag commit. Configure the GitHub `production`
+environment with exactly these four connection values:
 
 | Kind     | Name                 | Value                                                                |
 | -------- | -------------------- | -------------------------------------------------------------------- |
@@ -270,12 +277,14 @@ the forced SSH boundary.
 ### Failure and recovery
 
 When a target deployment fails after the app was changed, the root script
-stores `last-failure`, prints at most 100 app log lines, and automatically
-attempts the recorded `previous` image only when that image's
+stores `last-failure`, prints at most 100 app log lines, and rolls back to the
+pre-attempt `current` image only when that image's
 `io.ship-live.max-schema-version` covers the target image's
-`io.ship-live.schema-version`. A successful rollback must itself pass the same
-Docker and public-health checks; `current` remains the last healthy committed
-release.
+`io.ship-live.schema-version`. `previous` is the older successful slot, not
+the automatic rollback source: after a successful `A` to `B` deployment, a
+failed `C` attempt restores `B` from `current` while `previous` still contains
+`A`. A successful rollback must itself pass the same Docker and public-health
+checks; `current` remains the last healthy committed release.
 
 If the schema range is incompatible, rollback is deliberately refused and the
 target app is stopped. Do not force an older image, edit the durable state, or

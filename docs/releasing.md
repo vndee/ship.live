@@ -80,29 +80,30 @@ reporting before relying on the private reporting link in `SECURITY.md`.
 ## Recover a partially published immutable image
 
 If copying `vX.Y.Z` succeeded but copying `sha-<revision>` failed, treat the
-successful version tag as immutable. Preserve the originally tested
-`sha256:<digest>` from the release workflow log before doing anything else.
-Do not delete or repoint the version tag, and do not rerun a rebuild hoping it
-will produce the same bytes: a changed digest is a different release and must
-not be substituted for the tested one.
+successful version tag as immutable. The workflow does not guarantee that its
+in-memory expected digest is persisted before the second copy, so derive the
+original digest from the immutable published `vX.Y.Z` tag. Do not delete or
+repoint that tag, and do not rerun a rebuild hoping it will produce the same
+bytes: a changed digest is a different release and must not be substituted for
+the tested one.
 
 With an authenticated GHCR credential that can write this package, prove that
-the existing version tag still names the recorded digest, verify its release
-labels, and copy that digest to the missing SHA tag. Replace the placeholders
-with the original values; `EXPECTED_DIGEST` is the digest recorded by the
-failed workflow, not a newly built image.
+the version tag exists, derive its digest, verify its release labels, and copy
+that exact digest to the missing SHA tag. A missing version tag, invalid
+manifest, or label mismatch is a conflict: stop and investigate rather than
+copying or rebuilding anything.
 
 ```sh
 set -euo pipefail
 IMAGE_REPOSITORY=ghcr.io/vndee/ship.live
 VERSION=vX.Y.Z
 REVISION=<40-character-commit>
-EXPECTED_DIGEST=sha256:<64-lowercase-hex-digest>
 AUTHFILE="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
 
 skopeo inspect --authfile "$AUTHFILE" --raw \
   "docker://$IMAGE_REPOSITORY:$VERSION" > version-manifest.json
-test "$(skopeo manifest-digest version-manifest.json)" = "$EXPECTED_DIGEST"
+EXPECTED_DIGEST="$(skopeo manifest-digest version-manifest.json)"
+[[ "$EXPECTED_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
 skopeo inspect --authfile "$AUTHFILE" --config \
   "docker://$IMAGE_REPOSITORY@$EXPECTED_DIGEST" | jq -e \
   --arg version "$VERSION" --arg revision "$REVISION" '
@@ -125,9 +126,11 @@ skopeo inspect --authfile "$AUTHFILE" --raw \
 test "$(skopeo manifest-digest sha-manifest.json)" = "$EXPECTED_DIGEST"
 ```
 
-The command copies only when `sha-$REVISION` is absent or already resolves to
-`EXPECTED_DIGEST`; a different digest is an immutable-tag conflict and needs
-investigation. Once both tags and labels verify, either leave production
-unchanged or have an authorized managed-production operator perform the
-explicit manual digest deployment documented below. A failed publish never
-authorizes deployment of unverified bytes.
+The command derives `EXPECTED_DIGEST` only from the published version tag and
+copies only when `sha-$REVISION` is absent or already resolves to that digest.
+A missing or mismatched version tag, or a different SHA-tag digest, is an
+immutable-tag conflict and needs investigation. Once both tags and labels
+verify, either leave production unchanged or have an authorized
+managed-production operator perform the explicit manual digest deployment
+documented below. A failed publish never authorizes deployment of unverified
+bytes.
