@@ -141,3 +141,36 @@ test("the Markdown export groups by day with notes first and links activity", ()
     ].join("\n"),
   );
 });
+
+test("exported links escape titles, and URL fragments are never tags", () => {
+  const markdown = journalMarkdown(
+    [
+      {
+        id: "m1",
+        type: "merge",
+        actor: { login: "sarahpark" },
+        repo: "acme/api",
+        title: "Fix ] and [x](y)",
+        url: "https://github.com/acme/api/pull/1",
+        occurredAt: "2026-09-10T08:00:00Z",
+      },
+    ],
+    { title: "Acme activity", generatedAt: "2026-09-10T09:00:00Z" },
+  );
+  assert.ok(
+    markdown.includes(
+      String.raw`[Fix \] and \[x\]\(y\)](https://github.com/acme/api/pull/1)`,
+    ),
+  );
+  assert.deepEqual(
+    noteTags(
+      note(
+        "n4",
+        "Links",
+        "See https://example.test/?q=#release and www.example.test/#x, then #real",
+        "2026-09-10T08:00:00Z",
+      ),
+    ),
+    ["real"],
+  );
+});

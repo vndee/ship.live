@@ -5,6 +5,9 @@ import type { ActivityEvent } from "../../shared/types";
 const TAG =
   /(?:^|[^\p{L}\p{N}_&#/])#([\p{L}\p{N}][\p{L}\p{M}\p{N}_-]{0,39})(?![\p{L}\p{M}\p{N}_-])/gu;
 
+// A # inside a link belongs to the link, never a tag.
+const URL_TEXT = /\b(?:https?:\/\/|www\.)\S+/giu;
+
 /** A tag's single form: lowercased and composed, so notes and URLs agree. */
 const normalizeTag = (value: string) => value.toLowerCase().normalize("NFC");
 
@@ -24,6 +27,7 @@ export function noteTags(
   const tags: string[] = [];
   for (const match of `${event.title}\n${event.body ?? ""}`
     .normalize("NFC")
+    .replace(URL_TEXT, " ")
     .matchAll(TAG)) {
     const tag = normalizeTag(match[1]);
     if (!tags.includes(tag)) tags.push(tag);
@@ -60,8 +64,12 @@ const VERBS: Record<Exclude<ActivityEvent["type"], "note">, string> = {
 };
 const line = (value: string) => value.replace(/\s*\n\s*/g, " ").trim();
 const time = (value: string) => `${value.slice(11, 16)} UTC`;
+// Link text escapes what would end or restructure the link.
+const linkText = (value: string) => value.replace(/[\\[\]()]/g, "\\$&");
 const link = (text: string, url?: string) =>
-  url?.startsWith("https://") ? `[${text}](${url})` : text;
+  url?.startsWith("https://")
+    ? `[${linkText(text)}](${url.replace(/[()\s]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`)})`
+    : text;
 
 /**
  * A Markdown document of the given events: newest day first, ship notes
