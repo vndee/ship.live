@@ -309,6 +309,14 @@ test("every action in both workflows is pinned to a full lowercase commit", () =
   }
 });
 
+test("production concurrency retains pending releases instead of replacing them", () => {
+  const concurrency = release().match(/^concurrency:\n(?:  .+\n)+/m)?.[0];
+  assert.ok(concurrency, "Missing workflow-level production concurrency");
+  assert.match(concurrency, /^  group: production$/m);
+  assert.match(concurrency, /^  cancel-in-progress: false$/m);
+  assert.match(concurrency, /^  queue: max$/m);
+});
+
 test("validation binds the event commit to the checked-out tag and main ancestry", () => {
   const validate = job(release(), "validate");
   assert.match(validate, /ref: \$\{\{ github\.event\.release\.tag_name \}\}/);
