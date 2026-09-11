@@ -35,18 +35,20 @@ export interface ContributorProfile {
 
 const dayKey = (time: number) => new Date(time).toISOString().slice(0, 10);
 
-/** One person's view of received activity, credited like the weekly board. */
-export function getContributorProfile(
-  events: ActivityEvent[],
-  login: string,
-  now = Date.now(),
-): ContributorProfile {
-  const key = login.toLowerCase();
-  const mine = getCreditedEvents(events, now).filter(
-    ({ event }) => event.actor.login.toLowerCase() === key,
-  );
+/**
+ * Daily counts and XP for credited activity: HEATMAP_WEEKS whole weeks ending
+ * this week (future days null), and the last XP_HISTORY_DAYS days.
+ */
+export function activityDays(
+  items: { event: ActivityEvent; points: number }[],
+  now: number,
+): {
+  heatmap: (ContributorDay | null)[];
+  history: ContributorDay[];
+  since: number;
+} {
   const days = new Map<string, ContributorDay>();
-  for (const { event, points } of mine) {
+  for (const { event, points } of items) {
     const date = dayKey(Date.parse(event.occurredAt));
     const day = days.get(date) ?? { date, count: 0, xp: 0 };
     day.count += 1;
@@ -63,9 +65,23 @@ export function getContributorProfile(
     return time > today ? null : dayAt(time);
   });
   const since = today - (XP_HISTORY_DAYS - 1) * DAY;
-  const xpHistory = Array.from({ length: XP_HISTORY_DAYS }, (_, index) =>
+  const history = Array.from({ length: XP_HISTORY_DAYS }, (_, index) =>
     dayAt(since + index * DAY),
   );
+  return { heatmap, history, since };
+}
+
+/** One person's view of received activity, credited like the weekly board. */
+export function getContributorProfile(
+  events: ActivityEvent[],
+  login: string,
+  now = Date.now(),
+): ContributorProfile {
+  const key = login.toLowerCase();
+  const mine = getCreditedEvents(events, now).filter(
+    ({ event }) => event.actor.login.toLowerCase() === key,
+  );
+  const { heatmap, history: xpHistory, since } = activityDays(mine, now);
   const lastMonth = mine.filter(
     ({ event }) => Date.parse(event.occurredAt) >= since,
   );

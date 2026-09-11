@@ -18,6 +18,8 @@ export interface Route {
   period?: Period;
   /** A contributor profile open over the page. */
   person?: string;
+  /** A repository's details open over the page. */
+  repository?: string;
 }
 
 const PATHS: Record<Page, string> = {
@@ -46,6 +48,8 @@ const KINDS: readonly Kind[] = [
   "note",
 ];
 const PERIODS: readonly Period[] = ["24h", "7d", "30d"];
+// owner/name as GitHub allows it, or a bare name for sources without an owner.
+const REPOSITORY = /^[\w.-]{1,100}(?:\/[\w.-]{1,100})?$/;
 // GitHub logins, including app accounts such as dependabot[bot].
 const LOGIN = /^[A-Za-z\d](?:[A-Za-z\d-]{0,38})(?:\[bot\])?$/;
 
@@ -80,6 +84,8 @@ export function parseRoute(pathname: string, search: string): Route {
   }
   const person = params.get("person");
   if (person && LOGIN.test(person)) route.person = person;
+  const repository = params.get("repository");
+  if (repository && REPOSITORY.test(repository)) route.repository = repository;
   return route;
 }
 
@@ -94,6 +100,7 @@ export function routeHref(route: Route): string {
       params.set("period", route.period);
   }
   if (route.person) params.set("person", route.person);
+  if (route.repository) params.set("repository", route.repository);
   const search = params.toString();
   return `${PATHS[route.page]}${search ? `?${search}` : ""}`;
 }

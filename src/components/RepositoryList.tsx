@@ -82,7 +82,7 @@ export function RepositoryList({
                   <button
                     type="button"
                     className="scene-row"
-                    aria-label={`Open activity for ${item.repository}`}
+                    aria-label={`Open details for ${item.repository}`}
                     onClick={() => onSelect(item.repository)}
                   >
                     {content}
