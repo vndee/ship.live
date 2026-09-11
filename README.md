@@ -53,7 +53,7 @@ See the [webhook guide](docs/webhooks.md).
 
 ## Also included
 
-- **Personal journal.** Keep private notes about launches, experiments, decisions, and progress. Add your GitHub activity when you are ready: **Data sources** chooses which connected accounts and organizations feed your dashboard, and **Only my activity** keeps it to work you did yourself. Group notes with #tags, filter the feed by tag, and export any view as Markdown.
+- **Personal journal.** Keep private notes about launches, experiments, decisions, and progress. Add your GitHub activity when you are ready: **Data sources** chooses which connected accounts and organizations feed your dashboard, and **Only my activity** keeps it to work you did yourself. It is a full workspace too, with every Pulse scene across your sources, your own Service Health, and webhooks. Group notes with #tags, filter the feed by tag, and export any view as Markdown.
 - **Google or GitHub sign-in.** Supabase Auth handles identity. A separate GitHub App connection grants repository access, including for someone who signed in with Google.
 - **Live activity and replay.** Follow merges, reviews, releases, pushes, issues, journal entries, and inbound alerts. Filter by repository, type, time, or text; replay the last 24 hours, 7 days, or 30 days.
 - **Shared recognition.** Weekly contributor spotlights and team milestones celebrate outcomes and collaboration. New commits earn a small per-commit credit; personal notes earn no XP.

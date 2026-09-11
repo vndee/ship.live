@@ -21,7 +21,12 @@ import { HealthStore } from "./health-store.js";
 import { WorkspaceStore } from "./workspace-store.js";
 import { WallStore } from "./wall-store.js";
 import { SecretBox } from "./secret-box.js";
-import { recordWorkspaceEvent } from "./webhook-outbox.js";
+import {
+  recordInstallationEvent,
+  recordWorkspaceEvent,
+} from "./webhook-outbox.js";
+import { activityOutboxEvent } from "./webhook-events.js";
+import { WEBHOOK_PRESETS } from "../shared/webhooks.js";
 import { WebhookStore } from "./webhook-store.js";
 
 const APP_URL = "http://localhost:3000";
@@ -2015,10 +2020,15 @@ test("team health UI routes enforce access and CSRF, validate public probes and 
       controller.abort();
       await reader.cancel().catch(() => {});
     }
+    // A journal has its own Service Health, for its owner only.
     const personal = await workspaces.ensurePersonal(users[0]);
     assert.equal(
       (await request(`/api/workspaces/${personal.id}/health`)).status,
-      403,
+      200,
+    );
+    assert.equal(
+      (await request(`/api/workspaces/${personal.id}/health`, users[1])).status,
+      404,
     );
     assert.equal(
       (await mutate(`/services/${service.id}`, "DELETE")).status,
@@ -2565,5 +2575,104 @@ test("choosing installations connects the ticked ones in one GitHub read and lea
     assert.deepEqual(await teams(), [70]);
     assert.equal((await save({ connect: [70], disconnect: [70] })).status, 400);
     assert.equal((await save({ connect: [999], disconnect: [] })).status, 403);
+  });
+});
+
+test("a journal is a full workspace: combined wall signals, its own Service Health, and webhook events from its sources", async (t) => {
+  await withApp(t, async ({ store, workspaces, users, request }) => {
+    await connect(workspaces, users[0], 1);
+    await connect(workspaces, users[0], 1, otherTeam, [
+      { id: 111, name: "other-team/app", private: true },
+    ]);
+    const listed = (await (await request("/api/workspaces")).json())
+      .workspaces as Array<{ id: string; kind: string }>;
+    const journal = listed.find((item) => item.kind === "personal")!;
+    const base = `/api/workspaces/${journal.id}`;
+
+    // Wall signals from both sources, with only the owner's pull requests.
+    const wall = new WallStore(store.pool);
+    const pull = (number: number, author: string) => ({
+      kind: "pull_request" as const,
+      observedAt: "2026-09-10T12:00:00Z",
+      value: {
+        number,
+        title: `PR ${number}`,
+        url: `https://github.com/x/y/pull/${number}`,
+        author,
+        headSha: String(number).repeat(40),
+        state: "open" as const,
+        draft: false,
+        createdAt: "2026-09-10T11:00:00Z",
+        updatedAt: "2026-09-10T12:00:00Z",
+      },
+    });
+    await wall.apply(70, 101, "team/alpha", randomUUID(), [
+      pull(1, "Builder-1"),
+      pull(2, "someone"),
+    ]);
+    await wall.apply(71, 111, "other-team/app", randomUUID(), [
+      pull(3, "builder-1"),
+    ]);
+    const signals = await (await request(`${base}/wall`)).json();
+    assert.deepEqual(
+      signals.repositories
+        .map(
+          (repository: {
+            repository: string;
+            pullRequests: { number: number }[];
+          }) => [
+            repository.repository,
+            repository.pullRequests.map((item) => item.number),
+          ],
+        )
+        .sort(),
+      [
+        ["other-team/app", [3]],
+        ["team/alpha", [1]],
+      ],
+    );
+
+    // Service Health belongs to the journal and only its owner.
+    const service = await request(`${base}/health/services`, users[0], {
+      method: "POST",
+      body: JSON.stringify({ name: "Side project" }),
+    });
+    assert.equal(service.status, 201);
+    const health = await (await request(`${base}/health`)).json();
+    assert.deepEqual(
+      health.services.map((item: { name: string }) => item.name),
+      ["Side project"],
+    );
+    assert.equal((await request(`${base}/health`, users[1])).status, 404);
+
+    // Its webhooks receive its sources' activity, only the owner's by default.
+    const hook = await request(`${base}/webhooks`, users[0], {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Mine",
+        preset: "slack",
+        url: "https://hooks.slack.com/services/T/B/x",
+        template: WEBHOOK_PRESETS.slack.template,
+        events: ["activity.merge"],
+      }),
+    });
+    assert.equal(hook.status, 201);
+    for (const [id, login] of [
+      ["mine", "builder-1"],
+      ["theirs", "someone"],
+    ])
+      await recordInstallationEvent(
+        store.pool,
+        71,
+        activityOutboxEvent({ ...event(id, 111), actor: { login } })!,
+      );
+    const stored = await store.pool.query<{ dedupe_key: string }>(
+      "SELECT dedupe_key FROM ship_live_webhook_events WHERE workspace_id=$1 ORDER BY dedupe_key",
+      [journal.id],
+    );
+    assert.deepEqual(
+      stored.rows.map((row) => row.dedupe_key),
+      ["activity:mine"],
+    );
   });
 });

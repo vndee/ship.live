@@ -38,7 +38,7 @@ export async function scheduleDigests(
     const { rows } = await client.query<{ workspace_id: string }>(
       `INSERT INTO ship_live_digest_runs (workspace_id, week_start)
        SELECT w.id, $1::date FROM ship_live_workspaces w
-       WHERE w.kind = 'team' AND EXISTS (
+       WHERE EXISTS (
          SELECT 1 FROM ship_live_webhooks h
          WHERE h.workspace_id = w.id AND h.enabled
            AND 'digest.weekly' = ANY(h.events) AND h.created_at <= $2)

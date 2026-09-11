@@ -31,7 +31,13 @@ export function AppHeader({
   onSettings: () => void;
   onToggleWall: () => void;
 }) {
-  const team = !feed.demo && feed.workspace?.kind === "team";
+  // Teams, and a journal's owner, have every page.
+  const team =
+    !feed.demo &&
+    Boolean(
+      feed.workspace &&
+      (feed.workspace.kind === "team" || feed.workspace.owner),
+    );
   const pages = (
     [
       ["pulse", "Pulse"],

@@ -96,7 +96,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     personal && feed.workspace?.owner && feed.operation?.status !== "pending",
   );
   const engineering = useEngineeringWall(
-    feed.workspace?.kind === "team" ? feed.workspace.id : undefined,
+    feed.demo ? undefined : feed.workspace?.id,
     page === "pulse",
   );
   // Pulse's activity list keeps its own type filter; the Live feed's filters
@@ -291,13 +291,14 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     () => (feed.demo ? createDemoHealth(demoMinute * 60_000) : null),
     [feed.demo, demoMinute],
   );
-  // Personal journals have no Service Health; a link to it shows Pulse.
+  // Only members, and a journal's owner, see Service Health and Webhooks.
   useEffect(() => {
     if (
       (page === "health" || page === "webhooks") &&
       !feed.demo &&
       feed.workspace &&
-      feed.workspace.kind !== "team"
+      feed.workspace.kind !== "team" &&
+      !feed.workspace.owner
     )
       navigate({ page: "pulse" }, { replace: true });
   }, [page, feed.demo, feed.workspace]);
@@ -666,64 +667,41 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
         )}
         {page === "pulse" && (
           <div className="dashboard-layout">
-            {!personal ? (
-              <EngineeringWall
-                snapshot={feed.demo ? demoSignals().snapshot : engineering.data}
-                health={feed.demo ? demoSignals().health : engineering.health}
-                events={feed.events}
-                now={now}
-                demo={feed.demo}
-                displayName={displayName}
-                preferencesKey={feed.demo ? "demo" : feed.workspace?.id}
-                moving={moving}
-                // Signed-out visitors and the wall display slide by default.
-                autoplayDefault={(!feed.session.user || wall) && moving}
-                loading={feed.loading || engineering.loading}
-                onToggleMotion={() => setMoving(!moving)}
-                onRules={() => setModal("rules")}
-                onMilestones={() => navigate({ page: "milestones" })}
-                onOpenHealth={
-                  feed.demo ? undefined : () => navigate({ page: "health" })
-                }
-                onSelectPerson={openProfile}
-                onOpenTeam={() => navigate({ page: "team" })}
-                onSelectRepository={openRepository}
-                repositoryNote={feed.demo ? undefined : REPOSITORY_NOTE}
-                status={
-                  feed.demo
-                    ? ""
-                    : feed.paused
-                      ? "Paused"
-                      : feed.streaming
-                        ? "Live"
-                        : feed.loading
-                          ? "Syncing"
-                          : "Polling"
-                }
-              />
-            ) : (
-              <div className="dashboard-main">
-                <LiveLeaderboard
-                  events={feed.events}
-                  now={now}
-                  demo={feed.demo}
-                  onSelect={openProfile}
-                  moving={moving}
-                  loading={feed.loading}
-                  onToggleMotion={() => setMoving(!moving)}
-                  onRules={() => setModal("rules")}
-                  status={status}
-                />
-                <RepositoryList
-                  events={feed.events}
-                  now={now}
-                  title="Sources"
-                  framed
-                  note={feed.demo ? undefined : SOURCES_NOTE}
-                  onSelect={openRepository}
-                />
-              </div>
-            )}
+            <EngineeringWall
+              snapshot={feed.demo ? demoSignals().snapshot : engineering.data}
+              health={feed.demo ? demoSignals().health : engineering.health}
+              events={feed.events}
+              now={now}
+              demo={feed.demo}
+              personal={personal}
+              displayName={displayName}
+              preferencesKey={feed.demo ? "demo" : feed.workspace?.id}
+              moving={moving}
+              // Signed-out visitors and the wall display slide by default.
+              autoplayDefault={(!feed.session.user || wall) && moving}
+              loading={feed.loading || engineering.loading}
+              onToggleMotion={() => setMoving(!moving)}
+              onRules={() => setModal("rules")}
+              onMilestones={() => navigate({ page: "milestones" })}
+              onOpenHealth={
+                feed.demo ? undefined : () => navigate({ page: "health" })
+              }
+              onSelectPerson={openProfile}
+              onOpenTeam={() => navigate({ page: "team" })}
+              onSelectRepository={openRepository}
+              repositoryNote={feed.demo ? undefined : REPOSITORY_NOTE}
+              status={
+                feed.demo
+                  ? ""
+                  : feed.paused
+                    ? "Paused"
+                    : feed.streaming
+                      ? "Live"
+                      : feed.loading
+                        ? "Syncing"
+                        : "Polling"
+              }
+            />
             <aside className="dashboard-sidebar">
               <ActivityFeed {...feedProps} />
             </aside>
@@ -752,7 +730,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
         )}
         {page === "health" &&
           !feed.demo &&
-          feed.workspace?.kind === "team" &&
+          (feed.workspace?.kind === "team" || feed.workspace?.owner) &&
           feed.session.csrfToken && (
             <ServiceHealth
               workspaceId={feed.workspace.id}
@@ -776,7 +754,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
         )}
         {page === "webhooks" &&
           (!feed.demo &&
-          feed.workspace?.kind === "team" &&
+          (feed.workspace?.kind === "team" || feed.workspace?.owner) &&
           feed.session.csrfToken ? (
             <WebhooksPage
               workspace={{ id: feed.workspace.id, name: feed.workspace.name }}

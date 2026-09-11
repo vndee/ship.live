@@ -129,7 +129,7 @@ export class HealthStore {
   private async lockWorkspace(client: PoolClient, id: string) {
     if (!validId(id)) throw missing();
     const found = await client.query(
-      "SELECT id FROM ship_live_workspaces WHERE id=$1 AND kind='team' FOR UPDATE",
+      "SELECT id FROM ship_live_workspaces WHERE id=$1 FOR UPDATE",
       [id],
     );
     if (!found.rowCount) throw missing();

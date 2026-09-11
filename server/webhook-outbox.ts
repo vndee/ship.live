@@ -25,6 +25,16 @@ const payload = (event: OutboxEvent) =>
 const LISTENING = `($2::text LIKE 'inbound.%' OR EXISTS (SELECT 1 FROM ship_live_webhooks h
   WHERE h.workspace_id = w.id AND h.enabled AND $2::text = ANY(h.events)))`;
 
+// A journal follows an installation its owner connected and chose as a source.
+// When it keeps only its owner's activity, others' activity is not stored for it.
+const FOLLOWING = `(w.kind = 'personal'
+  AND (w.source_installation_ids IS NULL OR $1::bigint = ANY(w.source_installation_ids))
+  AND EXISTS (SELECT 1 FROM ship_live_workspaces c WHERE c.installation_id = $1
+    AND (c.owner_user_id = w.owner_user_id OR EXISTS (SELECT 1 FROM ship_live_workspace_members m
+      WHERE m.workspace_id = c.id AND m.user_id = w.owner_user_id)))
+  AND (NOT w.source_mine_only OR $6::text IS NULL OR EXISTS (SELECT 1 FROM ship_live_github_connections g
+    WHERE g.user_id = w.owner_user_id AND lower(g.login) = lower($6))))`;
+
 /**
  * Stores a workspace event in the caller's transaction, so it commits or
  * rolls back with the change that caused it.
@@ -37,7 +47,7 @@ export async function recordWorkspaceEvent(
   await client.query(
     `INSERT INTO ship_live_webhook_events (id, workspace_id, type, payload, dedupe_key, repository_id)
      SELECT gen_random_uuid(), w.id, $2, $3, $4, $5 FROM ship_live_workspaces w
-     WHERE w.id = $1 AND w.kind = 'team' AND ${LISTENING}
+     WHERE w.id = $1 AND ${LISTENING}
      ON CONFLICT (workspace_id, dedupe_key) DO NOTHING`,
     [
       workspaceId,
@@ -58,7 +68,7 @@ export async function recordInstallationEvent(
   await client.query(
     `INSERT INTO ship_live_webhook_events (id, workspace_id, type, payload, dedupe_key, repository_id)
      SELECT gen_random_uuid(), w.id, $2, $3, $4, $5 FROM ship_live_workspaces w
-     WHERE w.installation_id = $1 AND w.kind = 'team' AND ${LISTENING}
+     WHERE ${LISTENING} AND ((w.kind = 'team' AND w.installation_id = $1) OR ${FOLLOWING})
      ON CONFLICT (workspace_id, dedupe_key) DO NOTHING`,
     [
       installationId,
@@ -66,6 +76,7 @@ export async function recordInstallationEvent(
       payload(event),
       event.dedupeKey,
       event.repositoryId ?? null,
+      event.actor ?? null,
     ],
   );
 }

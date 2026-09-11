@@ -115,6 +115,19 @@ async function main(): Promise<void> {
     const access: AccessCheck = async (userId, workspaceId) => {
       try {
         const workspace = await workspaces.get(userId, workspaceId);
+        // A journal's webhooks see every source's repositories.
+        if (workspace.kind === "personal") {
+          if (!workspace.owner) return undefined;
+          const { sources } = await workspaces.personalSources(
+            userId,
+            workspace.sources?.installationIds ?? null,
+          );
+          return new Set(
+            sources.flatMap((source) =>
+              (source.repositories ?? []).map((repository) => repository.id),
+            ),
+          );
+        }
         if (!workspace.installationId) return new Set<number>();
         if (!(await workspaces.installationActive(workspace.installationId)))
           return undefined;
