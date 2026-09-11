@@ -114,6 +114,17 @@
 .health-service-details {
   animation: health-expand 160ms ease-out;
 }
+/* Sections above the probes, such as the uptime strip, incidents, and
+   maintenance, share the probes' inset instead of touching the card edges. */
+.health-service-details > :not(.health-probe, .health-empty) {
+  margin: 16px 20px;
+}
+@media (max-width: 600px) {
+  /* Probes use 16px here too. */
+  .health-service-details > :not(.health-probe, .health-empty) {
+    margin: 14px 16px;
+  }
+}
 .health-service h3 {
   font-size: 15px;
   margin: 0;
