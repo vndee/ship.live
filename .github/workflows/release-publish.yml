@@ -325,31 +325,83 @@ jobs:
 
   deploy:
     name: Deploy verified digest to production
-    needs: [checks, browser, publish]
+    needs: [validate, checks, browser, publish]
     if: ${{ vars.PRODUCTION_DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: production
+    permissions:
+      contents: read
+      deployments: write
+    environment:
+      name: production
+      deployment: false
     env:
       APP_IMAGE: ${{ needs.publish.outputs.image }}
+      REVISION: ${{ needs.validate.outputs.revision }}
+      VERSION: ${{ needs.validate.outputs.tag }}
       DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
       DEPLOY_USER: ${{ vars.DEPLOY_USER }}
     steps:
       - name: Verify public image access and send only its digest to forced SSH
         id: deploy
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
           [[ "$APP_IMAGE" =~ ^ghcr\.io/vndee/ship\.live@sha256:[0-9a-f]{64}$ ]] || exit 1
+          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 1
           [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || exit 1
           [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || exit 1
           umask 077
           anonymous_config="$(mktemp -d "$RUNNER_TEMP/anonymous-registry.XXXXXX")"
-          trap 'rm -f "$RUNNER_TEMP/deploy_key" "$RUNNER_TEMP/known_hosts" "$anonymous_config/config.json"; rmdir "$anonymous_config"' EXIT
+          deployment_id=""
+          report_status() {
+            jq -n --arg state "$1" \
+              --arg log_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              '{state: $state, log_url: $log_url, auto_inactive: false}' \
+              > "$RUNNER_TEMP/deployment-status.json" || return
+            gh api --method POST -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/deployments/$deployment_id/statuses" \
+              --input "$RUNNER_TEMP/deployment-status.json" > /dev/null
+          }
+          finish() {
+            local result=$? state=failure
+            trap - EXIT
+            if [[ "$result" == 0 ]]; then state=success; fi
+            if [[ -n "$deployment_id" ]] && ! report_status "$state"; then
+              echo 'Could not record final deployment status; reconcile the host and deployment record before retrying' >&2
+              result=1
+            fi
+            rm -f "$RUNNER_TEMP/deploy_key" "$RUNNER_TEMP/known_hosts" "$anonymous_config/config.json"
+            rmdir "$anonymous_config"
+            exit "$result"
+          }
+          trap finish EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
           printf '%s\n' '{"auths":{"ghcr.io":{}}}' > "$anonymous_config/config.json"
           env -u DOCKER_AUTH_CONFIG docker --config "$anonymous_config" manifest inspect "$APP_IMAGE" > /dev/null
+          # workflow_run's SHA is main's workflow revision, not the release.
+          # Track the already-validated release explicitly without auto-merging.
+          jq -n --arg revision "$REVISION" --arg image "$APP_IMAGE" --arg tag "$VERSION" '
+            {ref: $revision, auto_merge: false, required_contexts: [],
+             environment: "production", production_environment: true,
+             payload: {image: $image, tag: $tag}}
+          ' > "$RUNNER_TEMP/deployment-request.json"
+          gh api --method POST -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/deployments" \
+            --input "$RUNNER_TEMP/deployment-request.json" > "$RUNNER_TEMP/deployment-response.json"
+          jq -e --arg revision "$REVISION" --arg image "$APP_IMAGE" --arg tag "$VERSION" '
+            .sha == $revision and .ref == $revision and .environment == "production" and
+            .payload.image == $image and .payload.tag == $tag and
+            (.id | type == "number" and . > 0 and . == floor)
+          ' "$RUNNER_TEMP/deployment-response.json" > /dev/null
+          deployment_id="$(jq -er '.id' "$RUNNER_TEMP/deployment-response.json")"
+          [[ "$deployment_id" =~ ^[1-9][0-9]{0,19}$ ]] || exit 1
+          report_status in_progress
           printf '%s\n' "$DEPLOY_SSH_KEY" > "$RUNNER_TEMP/deploy_key"
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
           chmod 0600 "$RUNNER_TEMP/deploy_key" "$RUNNER_TEMP/known_hosts"

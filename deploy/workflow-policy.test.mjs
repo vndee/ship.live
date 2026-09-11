@@ -57,7 +57,7 @@ test("trusted publisher receives only an exact-run artifact and owns the reviewe
   assert.match(validate, /path: \$\{\{ runner.temp \}\}\/release-signal/);
   assert.doesNotMatch(validate, /cache:|actions\/cache/);
   assert.match(job(source, "publish"), /packages: write/);
-  assert.match(job(source, "deploy"), /environment: production/);
+  assert.match(job(source, "deploy"), /environment:\n      name: production/);
 });
 
 // Removing the trusted consumer's provenance/API checks must let these hostile
@@ -315,10 +315,22 @@ if (command === 'skopeo') {
   for (const file of ['deploy_key', 'known_hosts']) {
     if ((fs.statSync(path.join(directory, file)).mode & 0o777) !== 0o600) process.exit(94);
   }
+  if (scenario === 'ssh-failed') process.exit(23);
+} else if (command === 'gh') {
+  const route = args.find(arg => arg.startsWith('repos/'));
+  const body = JSON.parse(fs.readFileSync(args[args.indexOf('--input') + 1], 'utf8'));
+  fs.appendFileSync(path.join(directory, 'calls.jsonl'), JSON.stringify(['deployment-api', route, body]) + '\\n');
+  if (route.endsWith('/deployments')) {
+    if (scenario === 'deployment-api-failed') process.exit(1);
+    console.log(JSON.stringify({id: 42, sha: scenario === 'deployment-wrong-sha' ? process.env.GITHUB_SHA : body.ref, ref: body.ref, environment: body.environment, payload: body.payload}));
+  } else if (route.endsWith('/deployments/42/statuses')) {
+    if (scenario === 'deployment-status-failed' && body.state === 'success') process.exit(1);
+    console.log(JSON.stringify({id: 100, state: body.state}));
+  } else process.exit(101);
 } else process.exit(95);
 `;
   try {
-    for (const command of ["skopeo", "docker", "git", "ssh"])
+    for (const command of ["skopeo", "docker", "git", "ssh", "gh"])
       writeFileSync(join(directory, command), program, { mode: 0o755 });
     writeFileSync(join(directory, "local-manifest.json"), manifest);
     const script = step(job(publisher(), jobName), stepId)
@@ -336,6 +348,10 @@ if (command === 'skopeo') {
         IMAGE_REPOSITORY: "ghcr.io/vndee/ship.live",
         VERSION: "v1.2.3",
         REVISION: "a".repeat(40),
+        GITHUB_SHA: "b".repeat(40),
+        GITHUB_REPOSITORY: "vndee/ship.live",
+        GITHUB_SERVER_URL: "https://github.com",
+        GITHUB_RUN_ID: "12345",
         PREVIOUS_TAG: "v1.2.2",
         PREVIOUS_REVISION: "c".repeat(40),
         LOCAL_IMAGE: "ship-live-release:fixture",
@@ -362,6 +378,94 @@ if (command === 'skopeo') {
     rmSync(directory, { recursive: true, force: true });
   }
 }
+
+test("deployment provenance records the validated release SHA and digest when consumer main has advanced", () => {
+  const result = runWorkflowStep("deploy", "deploy");
+  assert.equal(result.status, 0, result.stderr);
+  const requests = result.calls.filter((call) => call[0] === "deployment-api");
+  assert.equal(
+    requests.length,
+    3,
+    "Deployment creation plus in_progress and success must be recorded explicitly",
+  );
+  assert.deepEqual(requests[0], [
+    "deployment-api",
+    "repos/vndee/ship.live/deployments",
+    {
+      ref: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      auto_merge: false,
+      required_contexts: [],
+      environment: "production",
+      production_environment: true,
+      payload: {
+        image: `ghcr.io/vndee/ship.live@${result.expectedDigest}`,
+        tag: "v1.2.3",
+      },
+    },
+  ]);
+  assert.deepEqual(
+    requests.slice(1).map((call) => [call[1], call[2].state]),
+    [
+      ["repos/vndee/ship.live/deployments/42/statuses", "in_progress"],
+      ["repos/vndee/ship.live/deployments/42/statuses", "success"],
+    ],
+  );
+  assert.ok(
+    result.calls.findIndex((call) => call[0] === "ssh") >
+      result.calls.findIndex(
+        (call) =>
+          call[0] === "deployment-api" && call[2].state === "in_progress",
+      ),
+  );
+  assert.ok(
+    result.calls.findIndex((call) => call[0] === "ssh") <
+      result.calls.findIndex(
+        (call) => call[0] === "deployment-api" && call[2].state === "success",
+      ),
+  );
+  const deploy = job(publisher(), "deploy");
+  assert.match(
+    deploy,
+    /environment:\n      name: production\n      deployment: false/,
+  );
+  assert.match(
+    deploy,
+    /REVISION: \$\{\{ needs\.validate\.outputs\.revision \}\}/,
+  );
+  assert.match(deploy, /VERSION: \$\{\{ needs\.validate\.outputs\.tag \}\}/);
+  assert.match(deploy, /deployments: write/);
+});
+
+test("deployment provenance records SSH failure without claiming success", () => {
+  const result = runWorkflowStep("deploy", "deploy", "ssh-failed");
+  assert.equal(result.status, 23, result.stderr);
+  assert.deepEqual(
+    result.calls
+      .filter(
+        (call) => call[0] === "deployment-api" && call[1].endsWith("/statuses"),
+      )
+      .map((call) => call[2].state),
+    ["in_progress", "failure"],
+  );
+  assert.equal(result.keyRemoved, true);
+});
+
+test("deployment provenance API errors or wrong returned SHA fail before SSH and status errors fail the job", () => {
+  for (const scenario of [
+    "deployment-api-failed",
+    "deployment-wrong-sha",
+    "deployment-status-failed",
+  ]) {
+    const result = runWorkflowStep("deploy", "deploy", scenario);
+    assert.notEqual(result.status, 0, scenario);
+    assert.equal(
+      result.calls.some((call) => call[0] === "ssh"),
+      scenario === "deployment-status-failed",
+      scenario,
+    );
+    assert.equal(result.keyRemoved, true);
+  }
+});
 
 test("publication refuses conflicting version or SHA tags and registry errors before either write", () => {
   for (const scenario of [
@@ -705,7 +809,10 @@ test("all checks use the validated SHA and block publishing and deployment", () 
   assert.match(job(source, "checks"), /needs: validate/);
   assert.match(job(source, "browser"), /needs: validate/);
   assert.match(job(source, "publish"), /needs: \[validate, checks, browser\]/);
-  assert.match(job(source, "deploy"), /needs: \[checks, browser, publish\]/);
+  assert.match(
+    job(source, "deploy"),
+    /needs: \[validate, checks, browser, publish\]/,
+  );
   assert.doesNotMatch(
     source,
     /continue-on-error:|if:\s*\$\{\{\s*always\(\)\s*\}\}/,
@@ -724,8 +831,12 @@ test("package writes and production secrets are isolated to their respective job
     job(source, "publish"),
     /password: \$\{\{ secrets\.GITHUB_TOKEN \}\}/,
   );
-  assert.equal((source.match(/environment:\s*production/g) ?? []).length, 1);
-  assert.match(job(source, "deploy"), /environment: production/);
+  assert.equal((source.match(/^    environment:/gm) ?? []).length, 1);
+  assert.match(
+    job(source, "deploy"),
+    /environment:\n      name: production\n      deployment: false/,
+  );
+  assert.equal((source.match(/deployments:\s*write/g) ?? []).length, 1);
   for (const name of ["validate", "checks", "browser", "publish"])
     assert.doesNotMatch(
       job(source, name),

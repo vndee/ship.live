@@ -89,6 +89,25 @@ revision, and schema range, copied with Skopeo under both `vX.Y.Z` and
 `sha-<40-character-commit>` immutable tags, and rechecked by digest before it
 can be handed to deployment.
 
+The deployment job retains the `production` environment gate and secrets, but
+uses `deployment: false` to suppress GitHub's automatic record for the consumer's
+current-main SHA. After the anonymous image check, it creates an explicit
+deployment whose `ref` is the validated release SHA and whose payload contains
+the exact image digest and release tag. Automatic merging is disabled, and the
+workflow's completed release gates supply validation instead of API commit-status
+contexts. The job verifies the returned record before SSH, records `in_progress`,
+and records `success` only after the host command exits successfully; unsuccessful
+attempts record `failure`. Only this job receives `deployments: write`.
+See GitHub's [environment tracking controls](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments#using-environments-without-deployments),
+[deployment creation API](https://docs.github.com/en/rest/deployments/deployments#create-a-deployment),
+and [deployment status API](https://docs.github.com/en/rest/deployments/statuses#create-a-deployment-status).
+
+If the final status API call fails or the runner is forcibly terminated, the
+record can remain `in_progress` even when the host changed. Treat the attempt as
+unresolved: compare the host's recorded digest and health with the deployment
+payload before correcting status or retrying. An SSH failure may also occur
+after a host commit; `failure` describes the attempt, not proof of host rollback.
+
 Repository writers remain trusted. GitHub lets a writer replace a workflow and
 request broader `GITHUB_TOKEN` permissions; the reviewed signal's read-only
 declaration is not an enforced ceiling for another writer-authored workflow.
@@ -98,7 +117,12 @@ workflow. Before enabling automation, restrict repository write and release
 authority to trusted maintainers, protect `main` with required reviews and CI,
 restrict the `production` environment to protected branches, and audit changes
 to workflows and release policy. Keep production secrets exclusively in that
-environment. Preventing a malicious writer from publishing packages would
+environment. Before enabling this path, confirm that `production` has no custom
+deployment protection-rule app: those apps require automatic deployment objects
+and are incompatible with `deployment: false`. Required reviewers, wait timers,
+and branch restrictions still apply. If a custom protection app is required,
+keep this path disabled pending a compatible design rather than removing the
+control to make the workflow run. Preventing a malicious writer from publishing packages would
 require an external registry authority or an additional human authorization
 boundary beyond this automatic repository workflow.
 

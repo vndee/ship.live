@@ -146,6 +146,24 @@ review and CI on `main`, audit workflow/policy changes, and configure the
 Keep deploy secrets exclusively in that environment. Check these controls
 before setting `PRODUCTION_DEPLOY_ENABLED` to `true`.
 
+Confirm that the environment has no custom deployment protection-rule app.
+The job uses `environment: {name: production, deployment: false}`: reviewers,
+wait timers, branch access restrictions, secrets, and variables still apply,
+but custom protection apps are incompatible and make the job fail. If such an
+app is required, leave deployment disabled until a compatible tracking design
+is reviewed; do not remove the protection as a workaround.
+
+The job suppresses GitHub's automatic deployment record because a `workflow_run`
+consumer's SHA identifies current main, which can differ from the release. It
+uses the Deployments API to record the validated release SHA, tag, and exact
+digest, verifies the returned record, and marks it `in_progress` before SSH.
+It marks that same record `success` only after the digest-only host command
+succeeds, otherwise `failure`. If final status reporting fails, or the runner is
+hard-killed, reconcile a possibly stale `in_progress` record with the host's
+`current` digest and health before retrying or updating status. A failed SSH
+attempt does not prove the host remained unchanged. See the [release tracking
+details](releasing.md#publish-a-stable-release).
+
 There are two linked Actions runs. The reviewed release-tag `Release` run has
 only `contents: read` and uploads a bounded tag record. Its default-branch
 `workflow_run` consumer, `Release publish`, downloads that exact run's artifact,
