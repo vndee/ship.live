@@ -1,5 +1,5 @@
-// Run with npm run test:browser. Mounts the status strips with fixed data and
-// checks their width and hover details.
+// Run with npm run test:browser. Mounts a probe's latency chart and the 90-day
+// uptime strip with fixed data, and checks the check rail and hover details.
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -20,14 +20,14 @@ before(async () => {
         import { createRoot } from "react-dom/client";
         import "./src/styles.css";
         import "./src/components/service-health.css";
-        import { ProbeCheckStrip } from "./src/components/ProbeCheckStrip.tsx";
+        import { LatencyChart } from "./src/components/LatencyChart.tsx";
         import { UptimeStrip } from "./src/components/UptimeStrip.tsx";
         const now = Date.parse("2026-09-10T12:00:00Z");
         // Newest first, like a snapshot; the third newest check failed.
         const history = Array.from({ length: 10 }, (_, index) => ({
           checkedAt: new Date(now - index * 60000).toISOString(),
           ok: index !== 2,
-          latencyMs: 100 + index,
+          latencyMs: index === 2 ? 900 : 100 + index,
           statusCode: index === 2 ? 503 : 200,
           reason: index === 2 ? "Service unavailable." : "Probe passed.",
           status: index === 2 ? "degraded" : "healthy",
@@ -44,7 +44,7 @@ before(async () => {
           React.createElement(
             "main",
             { style: { width: "800px", padding: "120px 20px 20px" } },
-            React.createElement(ProbeCheckStrip, { name: "Health", history }),
+            React.createElement(LatencyChart, { name: "Health", history, now }),
             React.createElement(UptimeStrip, { days }),
           ),
         );
@@ -89,44 +89,62 @@ async function open(t) {
   await page.goto("http://ship.test/");
   await page.addStyleTag({ content: styles });
   await page.addScriptTag({ content: script });
-  await page.waitForSelector(".health-history");
+  await page.waitForSelector(".latency-rail");
   return page;
 }
 
-test("a probe's strip spans its width with 40 slots, newest on the right", async (t) => {
+test("recent checks show each result on a rail under their points", async (t) => {
   const page = await open(t);
-  const slots = page.locator(".health-history > span");
-  assert.equal(await slots.count(), 40);
+  const rails = page.locator(".latency-rail");
+  assert.equal(await rails.count(), 10);
+  assert.equal(await page.locator(".latency-rail.is-failed").count(), 1);
+  assert.equal(await page.locator(".latency-point.is-failed").count(), 1);
+  // Oldest first: the third newest check is the eighth segment.
   assert.equal(
-    await page.locator(".health-history > .health-none").count(),
-    30,
+    await rails.nth(7).evaluate((rail) => rail.classList.contains("is-failed")),
+    true,
   );
-  const strip = await page.locator(".health-history").boundingBox();
-  const first = await slots.first().boundingBox();
-  const last = await slots.last().boundingBox();
-  assert.ok(Math.abs(first.x - strip.x) < 1);
-  assert.ok(Math.abs(last.x + last.width - (strip.x + strip.width)) < 1);
+  const segments = await rails.evaluateAll((items) =>
+    items.map((rail) => {
+      const box = rail.getBoundingClientRect();
+      return { left: box.left, right: box.right };
+    }),
+  );
+  const centers = await page.locator(".latency-point").evaluateAll((items) =>
+    items.map((point) => {
+      const box = point.getBoundingClientRect();
+      return box.left + box.width / 2;
+    }),
+  );
+  centers.forEach((center, index) =>
+    assert.ok(
+      center > segments[index].left && center < segments[index].right,
+      `point ${index} sits over its segment`,
+    ),
+  );
 });
 
-test("hovering a block shows its details, and leaving hides them", async (t) => {
+test("hovering a check shows its result and failure reason", async (t) => {
   const page = await open(t);
-  const tip = page.locator(".block-tooltip");
-  await page.locator(".health-history > span").last().hover();
+  await page.locator(".latency-rail.is-failed").hover();
+  const tip = page.locator(".latency-tooltip");
   await tip.waitFor();
-  assert.match(await tip.innerText(), /Passed · HTTP 200 · 100 ms/);
-  await page.locator(".health-history > span").nth(37).hover();
   assert.match(
     await tip.innerText(),
-    /Failed · HTTP 503 · 102 ms\s+Service unavailable\./,
+    /900 ms\s+Failed · HTTP 503\s+Service unavailable\./,
   );
-  await page.locator(".health-history > span").first().hover();
-  assert.match(await tip.innerText(), /No check yet/);
+  assert.equal(await page.locator(".latency-rail.is-active").count(), 1);
+});
+
+test("hovering a day in the 90-day strip shows its uptime, and leaving hides it", async (t) => {
+  const page = await open(t);
+  const tip = page.locator(".block-tooltip");
   await page.locator(".uptime-bar").last().hover();
+  await tip.waitFor();
   assert.match(
     await tip.innerText(),
     /Thu, Sep 10, 2026\s+99\.9305% uptime\s+1,439 of 1,440 checks passed/,
   );
-  // The tooltip stays inside the window.
   const box = await tip.boundingBox();
   assert.ok(box.x >= 8 && box.x + box.width <= page.viewportSize().width - 8);
   await page.mouse.move(5, 5);
