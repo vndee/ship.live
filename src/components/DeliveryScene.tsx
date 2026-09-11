@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { HealthSnapshot } from "../../shared/health";
 import type { EngineeringWallSnapshot } from "../../shared/wall";
 import { deliveryMetrics, formatDuration } from "../lib/delivery-metrics";
+import { Picker } from "./Picker";
 import { SceneHeader } from "./SceneHeader";
 
 const perWeek = (value: number | null) =>
@@ -96,19 +97,15 @@ export function DeliveryScene({
         description="How often the team ships and how quickly it recovers, over the last 30 days."
       >
         {metrics.environments.length > 1 && (
-          <label className="delivery-environment">
-            Environment
-            <select
-              value={environment ?? ""}
-              onChange={(event) => setChosen(event.target.value)}
-            >
-              {metrics.environments.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Picker
+            label="Environment"
+            value={environment ?? metrics.environments[0]}
+            options={metrics.environments.map((item) => ({
+              value: item,
+              label: item,
+            }))}
+            onChange={setChosen}
+          />
         )}
       </SceneHeader>
       <div className="delivery-body">
