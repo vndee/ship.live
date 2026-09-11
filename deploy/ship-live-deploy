@@ -7,8 +7,7 @@ umask 077
 APP_DIR=/opt/apps/ship-live
 STATE_DIR=/var/lib/ship-live-deploy
 IMAGE_RE='^ghcr\.io/vndee/ship\.live@sha256:[0-9a-f]{64}$'
-VERSION_RE='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
-LABEL_FORMAT='{{index .Config.Labels "org.opencontainers.image.source"}}|{{index .Config.Labels "org.opencontainers.image.version"}}|{{index .Config.Labels "org.opencontainers.image.revision"}}|{{index .Config.Labels "io.ship-live.schema-version"}}|{{index .Config.Labels "io.ship-live.max-schema-version"}}|END'
+LABEL_FORMAT='{{json .Config.Labels}}'
 
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 if [ "$#" -ne 1 ] || [[ ! $1 =~ $IMAGE_RE ]]; then fail 'Invalid deployment reference.'; fi
@@ -48,7 +47,10 @@ def read(name):
         return None
     with open(path, encoding="ascii") as f:
         text = f.read(8193)
-    if len(text) > 8192:
+    return validate_record(text)
+
+def validate_record(text):
+    if len(text.encode("ascii")) > 8192:
         raise ValueError("oversized state")
     lines = text.splitlines()
     if len(lines) != len(keys) or any(not line.startswith(key + "=") for key, line in zip(keys, lines)):
@@ -60,6 +62,11 @@ def read(name):
     if int(values[4]) < int(values[3]):
         raise ValueError("invalid schema range")
     return text
+
+def prospective_record():
+    if len(args) != len(keys):
+        raise ValueError("invalid state arity")
+    return validate_record("".join(key + "=" + value + "\n" for key, value in zip(keys, args)))
 
 def sync_directory():
     fd = os.open(directory, os.O_RDONLY)
@@ -97,7 +104,10 @@ try:
             if name == "current" and text:
                 values = [line.split("=", 1)[1] for line in text.splitlines()]
                 print("|".join(values))
+    elif mode == "validate":
+        prospective_record()
     elif mode == "commit":
+        prospective = prospective_record()
         old = read("current")
         old_previous = read("previous")
         # Each record is atomic. Write previous first so an interruption never
@@ -105,7 +115,7 @@ try:
         try:
             if old:
                 atomic("previous", old)
-            atomic("current", "".join(key + "=" + value + "\n" for key, value in zip(keys, args)))
+            atomic("current", prospective)
         except OSError:
             # A directory fsync can fail after rename has become visible. Restore
             # the snapshots before the shell rolls back the running container.
@@ -129,35 +139,68 @@ schema_covers() {
   python3 -I -c 'import sys; sys.exit(0 if int(sys.argv[1]) >= int(sys.argv[2]) else 1)' "$1" "$2"
 }
 
-validate_metadata() {
-  local value=$1 rest
-  # Sentinel preserves trailing label newlines across command substitution.
-  [[ $value == *'|END' ]] || return 1
-  value=${value%|END}
-  [[ $value != *$'\n'* ]] || return 1
-  IFS='|' read -r label_source label_version label_revision label_schema label_max rest <<< "$value"
-  [[ $value == "$label_source|$label_version|$label_revision|$label_schema|$label_max" ]] || return 1
-  [ "$label_source" = 'https://github.com/vndee/ship.live' ] || return 1
-  [[ $label_version =~ $VERSION_RE ]] || return 1
-  [[ $label_revision =~ ^[0-9a-f]{40}$ ]] || return 1
-  [[ $label_schema =~ ^[1-9][0-9]*$ && $label_max =~ ^[1-9][0-9]*$ ]] || return 1
-  schema_covers "$label_max" "$label_schema"
+inspect_metadata() {
+  # Raw Docker bytes never enter shell variables. JSON escapes preserve embedded
+  # NUL/newline characters until strict validation; only canonical ASCII leaves
+  # this parser and reaches command substitution.
+  docker image inspect --format "$LABEL_FORMAT" "$1" >"$scratch/labels.json" 2>/dev/null || return 1
+  python3 -I - "$scratch/labels.json" <<'PY'
+import json
+import re
+import sys
+
+try:
+    with open(sys.argv[1], "rb") as f:
+        raw = f.read(131073)
+    if len(raw) > 131072:
+        raise ValueError("oversized labels")
+    labels = json.loads(raw)
+    keys = ["org.opencontainers.image.source", "org.opencontainers.image.version", "org.opencontainers.image.revision", "io.ship-live.schema-version", "io.ship-live.max-schema-version"]
+    values = [labels[key] for key in keys]
+    patterns = [r"https://github\.com/vndee/ship\.live", r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", r"[0-9a-f]{40}", r"[1-9][0-9]*", r"[1-9][0-9]*"]
+    if any(not isinstance(value, str) or not re.fullmatch(pattern, value) for pattern, value in zip(patterns, values)):
+        raise ValueError("invalid labels")
+    if int(values[4]) < int(values[3]):
+        raise ValueError("invalid schema range")
+    print("|".join(values[1:]))
+except (OSError, ValueError, KeyError, TypeError):
+    sys.exit(1)
+PY
 }
 
 compose() { APP_IMAGE="$1" docker-compose --env-file .env.production -f compose.external.yml "${@:2}"; }
 
+within_health_deadline() {
+  local remaining=$(($1 - SECONDS))
+  shift
+  # Reserve one second for SIGKILL escalation inside the same deadline. Both ps
+  # and inspect have at most ten seconds total, including the kill grace.
+  [ "$remaining" -ge 2 ] || return 1
+  [ "$remaining" -le 10 ] || remaining=10
+  timeout --signal=TERM --kill-after=1 "$((remaining - 1))" "$@"
+}
+
+public_healthy() {
+  # Keep both body and status as raw bytes. Never let shell substitution discard
+  # NUL/newlines; --fail alone also does not enforce HTTP 200.
+  curl --fail --silent --show-error --connect-timeout 5 --max-time 10 \
+    --output "$scratch/health-body" --write-out '%{http_code}' \
+    https://ship.duy.dev/api/health >"$scratch/health-code" 2>/dev/null || return 1
+  python3 -I -c 'import sys
+with open(sys.argv[1], "rb") as body, open(sys.argv[2], "rb") as code:
+    sys.exit(0 if body.read(32) == b"{\"status\":\"ok\"}" and code.read(4) == b"200" else 1)' \
+    "$scratch/health-body" "$scratch/health-code"
+}
+
 healthy() {
-  local image=$1 container health status readiness restarts remaining wait_seconds body
+  local image=$1 container health status readiness restarts remaining wait_seconds
   local deadline=$((SECONDS + 120)) attempts=0
-  container=$(compose "$image" ps -q app 2>/dev/null) || return 1
+  container=$(APP_IMAGE="$image" within_health_deadline "$deadline" docker-compose --env-file .env.production -f compose.external.yml ps -q app 2>/dev/null) || return 1
   [[ $container =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || return 1
   # Attempt cap is a second bound if the wall clock is disrupted. Each inspect
   # receives only the remaining time budget, capped at ten seconds.
   while [ "$SECONDS" -lt "$deadline" ] && [ "$attempts" -lt 60 ]; do
-    remaining=$((deadline - SECONDS))
-    wait_seconds=$remaining
-    [ "$wait_seconds" -le 10 ] || wait_seconds=10
-    health=$(timeout "$wait_seconds" docker inspect --format '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}|{{.RestartCount}}' "$container" 2>/dev/null) || return 1
+    health=$(within_health_deadline "$deadline" docker inspect --format '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}|{{.RestartCount}}' "$container" 2>/dev/null) || return 1
     IFS='|' read -r status readiness restarts _ <<< "$health"
     [[ $health == "$status|$readiness|$restarts" && $restarts =~ ^[0-9]+$ ]] || return 1
     case "$status" in exited|dead|removing) return 1;; esac
@@ -165,9 +208,8 @@ healthy() {
     [[ $restarts =~ ^[012]$ ]] || return 1
     [ "$readiness" != unhealthy ] && [ "$readiness" != missing ] || return 1
     if [ "$status" = running ] && [ "$readiness" = healthy ]; then
-      body=$(curl --fail --silent --show-error --connect-timeout 5 --max-time 10 https://ship.duy.dev/api/health 2>/dev/null) || return 1
-      [ "$body" = '{"status":"ok"}' ] || return 1
-      return 0
+      public_healthy
+      return $?
     fi
     attempts=$((attempts + 1))
     remaining=$((deadline - SECONDS))
@@ -182,19 +224,25 @@ healthy() {
 prior_record=$(state_io read "$STATE_DIR") || fail 'Recorded deployment state is invalid.'
 prior_image='' prior_version=''
 if [ -n "$prior_record" ]; then IFS='|' read -r prior_image prior_version _ <<< "$prior_record"; fi
-mutated=0 committed=0
+mutated=0 committed=0 scratch=''
+
+rollback_allowed() {
+  local previous_metadata previous_max
+  [ -n "$prior_image" ] || return 1
+  previous_metadata=$(inspect_metadata "$prior_image") || return 1
+  IFS='|' read -r _ _ _ previous_max <<< "$previous_metadata"
+  schema_covers "$previous_max" "$target_schema"
+}
 
 on_exit() {
-  local result=$? previous_metadata
+  local result=$?
   trap - EXIT HUP INT TERM
   if [ "$mutated" -eq 1 ] && [ "$committed" -eq 0 ]; then
     result=1
     printf '%s\n' 'Target deployment failed; bounded app logs follow.' >&2
     compose "$requested_image" logs --no-color --tail 100 app 2>&1 | tail -n 100 >&2 || true
     state_io failure "$STATE_DIR" "$requested_image" "$prior_image" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
-    if [ -n "$prior_image" ] &&
-       previous_metadata=$(docker image inspect --format "$LABEL_FORMAT" "$prior_image" 2>/dev/null) &&
-       validate_metadata "$previous_metadata" && schema_covers "$label_max" "$target_schema"; then
+    if rollback_allowed; then
       if compose "$prior_image" config --quiet >/dev/null 2>&1 &&
          compose "$prior_image" up -d --no-deps app >/dev/null 2>&1 && healthy "$prior_image"; then
         printf '%s\n' 'Previous deployment restored and healthy.' >&2
@@ -206,17 +254,22 @@ on_exit() {
       compose "$requested_image" stop app >/dev/null 2>&1 || printf '%s\n' 'Failed to stop app; operator intervention required.' >&2
     fi
   fi
+  if [ -n "$scratch" ]; then
+    rm -f -- "$scratch/labels.json" "$scratch/health-body" "$scratch/health-code" || true
+    rmdir -- "$scratch" || true
+  fi
   exit "$result"
 }
 trap on_exit EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+scratch=$(mktemp -d "$STATE_DIR/.runtime.XXXXXXXX") || fail 'Unable to create transaction scratch directory.'
 
 docker pull "$requested_image" >/dev/null 2>&1 || fail 'Image pull failed.'
-target_metadata=$(docker image inspect --format "$LABEL_FORMAT" "$requested_image" 2>/dev/null) || fail 'Image label inspection failed.'
-validate_metadata "$target_metadata" || fail 'Image labels are invalid.'
-target_version=$label_version target_revision=$label_revision target_schema=$label_schema target_max=$label_max
+target_metadata=$(inspect_metadata "$requested_image") || fail 'Image labels are invalid or unreadable.'
+IFS='|' read -r target_version target_revision target_schema target_max <<< "$target_metadata"
+state_io validate "$STATE_DIR" "$requested_image" "$target_version" "$target_revision" "$target_schema" "$target_max" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" || fail 'Prospective deployment state is invalid.'
 if [ -n "$prior_version" ]; then
   [ "$target_version" != "$prior_version" ] || fail 'Target version must be newer than production.'
   newest=$(printf '%s\n%s\n' "$prior_version" "$target_version" | sort -V | tail -n 1)

@@ -63,7 +63,13 @@ const out = value => process.stdout.write(String(value)+'\\n');
 if (name === 'id') out(o.nonroot ? '501' : '0');
 else if (name === 'flock') process.exit(o.contention ? 1 : 0);
 else if (name === 'sudo') process.exit(0);
-else if (name === 'timeout') { const r = spawnSync(a[1], a.slice(2), {stdio:'inherit',env:process.env}); process.exit(r.status ?? 1); }
+else if (name === 'timeout') {
+  const durationIndex = a.findIndex(arg => !arg.startsWith('--'));
+  const command = a[durationIndex + 1], commandArgs = a.slice(durationIndex + 2);
+  if (o.timeoutPs && command === 'docker-compose' && commandArgs.includes('ps')) process.exit(137);
+  if (o.timeoutInspect && command === 'docker' && commandArgs[0] === 'inspect') process.exit(137);
+  const r = spawnSync(command, commandArgs, {stdio:'inherit',env:process.env}); process.exit(r.status ?? 1);
+}
 else if (name === 'sleep') process.exit(0);
 else if (name === 'date') out('2026-09-11T00:00:00Z');
 else if (name === 'docker-compose') {
@@ -78,7 +84,12 @@ else if (name === 'docker-compose') {
   if (a[0] === 'image' && a[1] === 'inspect') {
     if (o.inspectFail || (a.at(-1) === o.old && o.priorInspectFail)) process.exit(1);
     const value = a.at(-1) === o.target ? o.metadata : o.priorMetadata;
-    out(value + (a[3].endsWith('|END') ? '|END' : ''));
+    if (a[3] === '{{json .Config.Labels}}') {
+      const keys = ['org.opencontainers.image.source','org.opencontainers.image.version','org.opencontainers.image.revision','io.ship-live.schema-version','io.ship-live.max-schema-version'];
+      const parts = value.split('|');
+      if (parts.length > keys.length) parts[4] = parts.slice(4).join('|');
+      out(JSON.stringify(Object.fromEntries(keys.map((key,i)=>[key,parts[i]]))));
+    } else out(value + (a[3].endsWith('|END') ? '|END' : ''));
   }
   if (a[0] === 'inspect') {
     const countPath = join(root, 'polls');
@@ -90,8 +101,13 @@ else if (name === 'docker-compose') {
   if (a[0] === 'image' && a[1] === 'ls') out([o.target, o.old, o.stale, 'elsewhere/image@sha256:'+ 'e'.repeat(64), '<none>@<none>'].join('\\n'));
   if (a[0] === 'image' && a[1] === 'rm') process.exit(o.pruneFail ? 1 : 0);
 } else if (name === 'curl') {
-  if ((active === o.target && o.curlFail) || (active === o.old && o.rollbackCurlFail)) { if (o.curlFailureBody) out(o.curlFailureBody); process.exit(22); }
-  out(active === o.target ? (o.publicBody ?? '{"status":"ok"}') : (o.rollbackBody ?? '{"status":"ok"}'));
+  const failed = (active === o.target && o.curlFail) || (active === o.old && o.rollbackCurlFail);
+  const body = failed ? (o.curlFailureBody ?? '') : active === o.target ? (o.publicBody ?? '{"status":"ok"}') : (o.rollbackBody ?? '{"status":"ok"}');
+  const outputIndex = a.indexOf('--output');
+  if (outputIndex >= 0) writeFileSync(a[outputIndex+1], Buffer.from(body));
+  else process.stdout.write(body);
+  if (a.includes('--write-out')) process.stdout.write(String(active === o.target ? (o.publicCode ?? 200) : (o.rollbackCode ?? 200)));
+  process.exit(failed ? 22 : 0);
 } else if (name === 'python3') {
   if (o.persistFail && a.includes('commit')) process.exit(1);
   let input;
@@ -145,6 +161,11 @@ else if (name === 'docker-compose') {
       script = script.replace(
         'sleep "$wait_seconds"',
         'SECONDS=$((SECONDS + 120)); sleep "$wait_seconds"',
+      );
+    if (options.advanceAfterPs)
+      script = script.replace(
+        "[[ $container =~",
+        `SECONDS=$((SECONDS + ${options.advanceAfterPs === true ? 120 : options.advanceAfterPs})); [[ $container =~`,
       );
     const dest = join(root, name);
     writeFileSync(dest, script, { mode: 0o755 });
@@ -501,7 +522,7 @@ test("bounds health polling and fails early for missing health or malformed Dock
     const deadlines = f
       .commands()
       .filter((x) => x.name === "timeout")
-      .map((x) => Number(x.args[0]));
+      .map((x) => Number(x.args.find((arg) => !arg.startsWith("--"))));
     assert.ok(deadlines.every((n) => n > 0 && n <= 120));
   }
 });
@@ -559,4 +580,117 @@ test("restores both state records if directory fsync fails after current rename"
     [target, old],
   );
   assert.ok(!readdirSync(f.data).some((name) => name.startsWith(".tmp")));
+});
+
+test("round 1: public health requires byte-exact body and HTTP 200 for target and rollback", (t) => {
+  for (const options of [
+    { publicBody: '{"status":"ok"}\n' },
+    { publicBody: '{"status":"o\0k"}' },
+    { publicCode: 201 },
+    { publicCode: 204 },
+  ]) {
+    const f = fixture(t, options);
+    failed(f.run());
+    assert.deepEqual(
+      upCommands(f).map((x) => x.image),
+      [target, old],
+    );
+    assert.equal(f.read("current"), state());
+  }
+  for (const options of [
+    { rollbackBody: '{"status":"ok"}\n' },
+    { rollbackBody: '{"status":"o\0k"}' },
+    { rollbackCode: 201 },
+  ]) {
+    const f = fixture(t, { curlFail: true, ...options });
+    const r = f.run();
+    failed(r);
+    assert.match(r.stderr, /Rollback failed/);
+    assert.equal(f.read("current"), state());
+  }
+});
+
+test("round 1: embedded NUL labels fail before mutation and forbid rollback", (t) => {
+  for (const value of [
+    metadata.replace("v1.2.0", "v1.\0" + "2.0"),
+    metadata.replace("|2|3", "|2|\0" + "3"),
+  ]) {
+    const f = fixture(t, { metadata: value });
+    failed(f.run());
+    notMutated(f);
+    assert.equal(f.read("current"), state());
+  }
+  const f = fixture(t, {
+    curlFail: true,
+    priorMetadata: priorMetadata.replace("|1|2", "|1|\0" + "2"),
+  });
+  failed(f.run());
+  assert.equal(upCommands(f).length, 1);
+  assert.ok(
+    f
+      .commands()
+      .some((c) => c.name === "docker-compose" && c.args.includes("stop")),
+  );
+});
+
+test("round 1: ps and inspect share a deadline including forced-kill grace", (t) => {
+  const f = fixture(t);
+  assert.equal(f.run().status, 0);
+  const timeouts = f.commands().filter((c) => c.name === "timeout");
+  assert.ok(
+    timeouts.some(
+      (c) => c.args.includes("docker-compose") && c.args.includes("ps"),
+    ),
+  );
+  assert.ok(
+    timeouts.some(
+      (c) => c.args.includes("docker") && c.args.includes("inspect"),
+    ),
+  );
+  for (const c of timeouts) {
+    assert.ok(c.args.includes("--signal=TERM"));
+    assert.ok(c.args.includes("--kill-after=1"));
+    const duration = Number(c.args.find((arg) => !arg.startsWith("--")));
+    assert.ok(duration > 0 && duration + 1 <= 120);
+  }
+  assert.ok(!readdirSync(f.data).some((name) => name.startsWith(".runtime.")));
+  const partial = fixture(t, { advanceAfterPs: 115 });
+  const partialResult = partial.run();
+  assert.equal(partialResult.status, 0, partialResult.stderr);
+  const remainingInspect = partial
+    .commands()
+    .find(
+      (c) =>
+        c.name === "timeout" &&
+        c.args.includes("docker") &&
+        c.args.includes("inspect"),
+    );
+  const remainingDuration = Number(
+    remainingInspect.args.find((arg) => !arg.startsWith("--")),
+  );
+  assert.ok(remainingDuration > 0 && remainingDuration + 1 <= 5);
+  const spent = fixture(t, { advanceAfterPs: true });
+  failed(spent.run());
+  assert.equal(
+    spent
+      .commands()
+      .filter((c) => c.name === "docker" && c.args[0] === "inspect").length,
+    0,
+  );
+  for (const options of [{ timeoutPs: true }, { timeoutInspect: true }]) {
+    const hung = fixture(t, options);
+    failed(hung.run());
+    assert.equal(hung.read("current"), state());
+  }
+});
+
+test("round 1: oversized prospective state is rejected before app recreation", (t) => {
+  const f = fixture(t, {
+    metadata: metadata.replace("v1.2.0", `v${"9".repeat(8000)}.2.0`),
+  });
+  failed(f.run());
+  notMutated(f);
+  assert.equal(f.read("current"), state());
+  assert.equal(f.read("previous"), null);
+  assert.ok(!readdirSync(f.data).some((name) => name.startsWith(".runtime.")));
 });
