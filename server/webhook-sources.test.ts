@@ -229,6 +229,41 @@ test("CI and deployment changes announce transitions once, ignoring stale and re
   });
 });
 
+test("CI recovers across reruns and later commits of one check on a branch", async (t) => {
+  await withListener(t, async ({ pool }) => {
+    const wall = new WallStore(pool);
+    const run = (
+      delivery: string,
+      id: string,
+      status: PipelineState["status"],
+      updatedAt: string,
+      branch = "main",
+    ) =>
+      wall.apply(99, 7, "acme/api", delivery, [
+        {
+          kind: "pipeline",
+          observedAt: updatedAt,
+          value: { ...pipeline(status, updatedAt), id, branch },
+        },
+      ]);
+    await run("r1", "check:1", "failing", "2026-09-10T08:00:00Z");
+    // A rerun gets a new ID; failing again is not a new failure.
+    await run("r2", "check:2", "running", "2026-09-10T08:05:00Z");
+    await run("r3", "check:2", "failing", "2026-09-10T08:10:00Z");
+    // Another branch is another pipeline.
+    await run("r4", "check:3", "passing", "2026-09-10T08:12:00Z", "feature");
+    // The next commit's run passes: CI has recovered.
+    await run("r5", "check:4", "queued", "2026-09-10T08:15:00Z");
+    await run("r6", "check:4", "passing", "2026-09-10T08:20:00Z");
+    // A late result from the first run announces nothing.
+    await run("r7", "check:1", "passing", "2026-09-10T08:01:00Z");
+    assert.deepEqual(await stored(pool), [
+      "pipeline.failed",
+      "pipeline.recovered",
+    ]);
+  });
+});
+
 test("concurrent first deliveries of a signal announce one transition", async (t) => {
   await withListener(t, async ({ pool }) => {
     const wall = new WallStore(pool);

@@ -43,7 +43,7 @@ Send what matters to the tools your team already watches, and bring outside aler
 
 - **Every event, any destination.** Merges, reviews, releases, CI failures and recoveries, deployments, Service Health incidents, inbound alerts, and a weekly digest, sent to Slack, Discord, Microsoft Teams, Google Chat, Lark / Feishu, or any HTTPS endpoint.
 - **Bodies you control.** A preset for each service and a template editor with a live preview, filters with wildcards and exclusions, cooldowns for flapping alerts, custom headers, signed requests, and success checks for services that report errors inside a 200 response.
-- **Reliable delivery.** Retries with backoff, a delivery log with each request and response, test sends, and redelivery. Deliveries follow each webhook owner's repository access.
+- **Reliable delivery.** Retries with backoff, a delivery log with each request and response, test sends, and redelivery. Deliveries follow each webhook owner's repository access, checked again before every attempt.
 - **Inbound alerts.** Give Grafana, Sentry, or any service a URL, map its JSON to a title and link, and pass it on.
 
 See the [webhook guide](docs/webhooks.md).

@@ -195,7 +195,10 @@ export async function routeEvents(
         if (
           hook.workspace_id !== row.workspace_id ||
           !eventMatches(hook.events, row.type) ||
-          !filtersMatch(hook.filters, event)
+          !filtersMatch(hook.filters, event) ||
+          // A webhook added after a digest's send time starts next week.
+          (row.type === "digest.weekly" &&
+            hook.created_at.getTime() > Date.parse(row.payload.occurredAt))
         )
           continue;
         const key = `${hook.creator_user_id}:${hook.workspace_id}`;
@@ -247,6 +250,8 @@ export interface ClaimedDelivery {
   attempts: number;
   webhook: WebhookRow;
   event: WebhookEvent;
+  /** The event's repository, when it has one. */
+  repositoryId: number | null;
 }
 
 /** Leases due deliveries of enabled webhooks; an expired lease is retried. */
@@ -277,7 +282,7 @@ export async function claimDeliveries(
      )
      SELECT c.id, c.lease, c.attempts, to_jsonb(h) AS webhook,
        jsonb_build_object('id', e.id, 'workspace_id', e.workspace_id,
-         'workspace_name', w.name, 'type', e.type, 'payload', e.payload) AS event
+         'workspace_name', w.name, 'type', e.type, 'payload', e.payload, 'repository_id', e.repository_id) AS event
      FROM claimed c
      JOIN ship_live_webhooks h ON h.id = c.webhook_id
      JOIN ship_live_webhook_events e ON e.id = c.event_id
@@ -290,7 +295,32 @@ export async function claimDeliveries(
     attempts: row.attempts,
     webhook: row.webhook,
     event: webhookEvent(row.event),
+    repositoryId:
+      row.event.repository_id === null || row.event.repository_id === undefined
+        ? null
+        : Number(row.event.repository_id),
   }));
+}
+
+/**
+ * Whether a delivery's owner may still receive its event: still a member,
+ * and still seeing and pinning its repository when it has one. Checked before
+ * every attempt, because retries can come hours after routing.
+ */
+export async function ownerMaySee(
+  access: AccessCheck,
+  claim: Pick<ClaimedDelivery, "webhook" | "repositoryId">,
+): Promise<boolean> {
+  const visible = await access(
+    claim.webhook.creator_user_id,
+    claim.webhook.workspace_id,
+  );
+  if (!visible) return false;
+  return (
+    claim.repositoryId === null ||
+    (visible.has(claim.repositoryId) &&
+      claim.webhook.repository_ids.map(Number).includes(claim.repositoryId))
+  );
 }
 
 export interface DeliveryOutcome {
