@@ -17,8 +17,8 @@ const labels = {
   "org.opencontainers.image.source": "https://github.com/vndee/ship.live",
   "org.opencontainers.image.revision": "b".repeat(40),
   "org.opencontainers.image.version": "v1.4.2",
-  "io.ship-live.schema-version": "18",
-  "io.ship-live.max-schema-version": "19",
+  "io.ship-live.schema-version": "20",
+  "io.ship-live.max-schema-version": "21",
   "io.ship-live.tested-predecessor": "none",
 };
 
@@ -111,8 +111,8 @@ test("a failed supplied-image label check never removes the caller image", () =>
     ["org.opencontainers.image.source", "https://example.com/wrong"],
     ["org.opencontainers.image.revision", "abc123"],
     ["org.opencontainers.image.version", "v01.2.3"],
-    ["io.ship-live.schema-version", "17"],
-    ["io.ship-live.max-schema-version", "18"],
+    ["io.ship-live.schema-version", "19"],
+    ["io.ship-live.max-schema-version", "20"],
   ]) {
     const result = runPrebuiltSmoke({ ...labels, [label]: value });
 

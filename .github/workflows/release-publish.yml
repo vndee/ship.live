@@ -251,8 +251,8 @@ jobs:
               (.config.Labels | .["org.opencontainers.image.source"] == "https://github.com/vndee/ship.live" and
                 .["org.opencontainers.image.version"] == $version and
                 .["org.opencontainers.image.revision"] == $revision and
-                (.["io.ship-live.schema-version"] | type == "string" and test("^[1-9][0-9]{0,8}$")) and
-                (.["io.ship-live.max-schema-version"] | type == "string" and test("^[1-9][0-9]{0,8}$")) and
+                (.["io.ship-live.schema-version"] | type == "string" and test("^[1-9][0-9]{0,8}\\z")) and
+                (.["io.ship-live.max-schema-version"] | type == "string" and test("^[1-9][0-9]{0,8}\\z")) and
                 ((.["io.ship-live.max-schema-version"] | tonumber) >= (.["io.ship-live.schema-version"] | tonumber)))' > /dev/null
           docker pull "$previous_image"
           echo "image=$previous_image" >> "$GITHUB_OUTPUT"
