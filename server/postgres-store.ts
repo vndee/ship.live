@@ -3,6 +3,7 @@ import { Pool, type PoolClient } from "pg";
 import type { ActivityEvent } from "../shared/types.js";
 import type { LegacyImportData, LegacyImportResult } from "./legacy-import.js";
 import { log } from "./logger.js";
+import { MIGRATION_FILES, assertSupportedSchema } from "./migrations.js";
 import {
   ACTIVITY_CHANNEL,
   PostgresNotifications,
@@ -76,29 +77,7 @@ export class PostgresEventStore implements EventStore {
 
   private async migrate(): Promise<void> {
     const migrations = await Promise.all(
-      [
-        "001_initial.sql",
-        "002_auth.sql",
-        "003_workspaces.sql",
-        "004_connection_fencing.sql",
-        "005_dashboard_shares.sql",
-        "006_service_health.sql",
-        "007_health_shares.sql",
-        "008_health_latency_daily.sql",
-        "009_engineering_wall.sql",
-        "010_health_service_order.sql",
-        "011_github_access.sql",
-        "012_repository_sync.sql",
-        "013_sync_runs.sql",
-        "014_rate_limits_retention.sql",
-        "015_webhooks.sql",
-        "016_uptime_maintenance.sql",
-        "017_share_link_reveal.sql",
-        "018_pulse_heading.sql",
-        "019_inbound_alerts.sql",
-        "020_personal_sources.sql",
-        "021_workspace_names.sql",
-      ].map((file) =>
+      MIGRATION_FILES.map((file) =>
         readFile(new URL(`./migrations/${file}`, import.meta.url), "utf8"),
       ),
     );
@@ -112,10 +91,7 @@ export class PostgresEventStore implements EventStore {
       const applied = await client.query<{ version: number }>(
         "SELECT version FROM ship_live_schema_migrations ORDER BY version",
       );
-      if (applied.rows.some((row) => row.version > migrations.length))
-        throw new Error(
-          "This database uses a newer ship.live schema. Upgrade the application before starting it.",
-        );
+      assertSupportedSchema(applied.rows.map(({ version }) => version));
       for (const [index, sql] of migrations.entries())
         if (!applied.rows.some((row) => row.version === index + 1)) {
           await client.query(sql);

@@ -42,6 +42,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run format:check
+      - run: npm run test:deploy-policy
       - run: npm run test:db
       - run: npm run build
 
@@ -74,4 +75,5 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      - run: npm ci
       - run: npm run test:docker
