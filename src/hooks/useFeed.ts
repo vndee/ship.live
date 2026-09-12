@@ -404,6 +404,9 @@ export function useFeed() {
     const current = generation.current;
     let retry: ReturnType<typeof setTimeout> | undefined;
     let pendingRefresh: ReturnType<typeof setTimeout> | undefined;
+    // A rename or a membership change by someone else reaches this stream as a
+    // refresh frame; reread the workspaces it names, at most every 10 seconds.
+    let metadataAt = 0;
     const scheduleRefresh = () => {
       clearTimeout(pendingRefresh);
       pendingRefresh = setTimeout(() => void refresh(), 100);
@@ -452,6 +455,10 @@ export function useFeed() {
               return;
             }
             if (name === "activity" || name === "refresh") scheduleRefresh();
+            if (name === "refresh" && Date.now() - metadataAt > 10_000) {
+              metadataAt = Date.now();
+              void refreshWorkspaces();
+            }
             if (name === "wall")
               window.dispatchEvent(new Event("ship-live-wall"));
           }
@@ -482,6 +489,7 @@ export function useFeed() {
     clearPrivate,
     loadSession,
     refresh,
+    refreshWorkspaces,
   ]);
 
   const mutate = useCallback(
@@ -756,11 +764,22 @@ export function useFeed() {
   }
   /** Gives a workspace its own name; an empty name restores the default. */
   async function renameWorkspace(id: string, name: string) {
-    await mutate(
+    const { workspace: saved } = await mutate<{ workspace: Workspace }>(
       `/api/workspaces/${encodeURIComponent(id)}/name`,
       { name },
       "PATCH",
     );
+    // Show the saved name even if the workspace list read that follows fails.
+    const replace = (item: Workspace) => (item.id === saved.id ? saved : item);
+    setWorkspaceList((current) => ({
+      ...current,
+      workspaces: current.workspaces.map(replace),
+    }));
+    authorizedWorkspaces.current = authorizedWorkspaces.current.map(replace);
+    if (currentWorkspace.current?.id === saved.id) {
+      currentWorkspace.current = saved;
+      setWorkspace(saved);
+    }
     await refreshWorkspaces();
   }
   /** Connects the ticked installations and leaves the unticked ones. */
