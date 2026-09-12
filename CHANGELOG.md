@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Rename workspaces. In **Account and GitHub connections**, the pencil beside a workspace gives it its own name: any member can rename a team, and you can rename your journal. The GitHub organization or account name stays beside a renamed workspace, in the header's tooltip, and an empty name restores the default. Webhooks and digests use the new name.
+- Upgrade note: migration 021 adds workspace names.
+
 - Make the personal dashboard a full workspace. Its Pulse has every scene (Overview, Review Radar, Release Pulse, Delivery, Service Health, and Leaderboard), combined across its sources, with only your pull requests while **Only my activity** is on. It also gets its own Service Health and Webhooks. Journal webhooks receive activity and CI or deployment changes from their sources, and inbound alerts show in its Live activity. Journal notes now appear under your GitHub login, so the leaderboard lists you once.
 
 - Connect as many GitHub accounts and organizations as you like. **Account and GitHub connections** lists every installation you can access with a checkbox, and **Save connections** connects the ticked ones and leaves the unticked ones. Leaving an organization removes it from your workspaces; its team keeps its activity, and you can connect it again.

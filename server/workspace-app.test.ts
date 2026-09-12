@@ -2717,3 +2717,63 @@ test("a journal is a full workspace: combined wall signals, its own Service Heal
     );
   });
 });
+
+test("members rename a team workspace and a journal's owner renames the journal, while GitHub's names stay", async (t) => {
+  await withApp(t, async ({ workspaces, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    await connect(workspaces, users[1], 2);
+    const rename = (id: string, name: string, user = users[0]) =>
+      request(`/api/workspaces/${id}/name`, user, {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      });
+    const listed = async (user = users[0]) =>
+      (await (await request("/api/workspaces", user)).json())
+        .workspaces as Array<{
+        id: string;
+        kind: string;
+        name: string;
+        defaultName?: string;
+        githubAccount?: string;
+      }>;
+    const renamed = await rename(workspace.id, "  Platform   crew ");
+    assert.equal(renamed.status, 200);
+    const { name, defaultName, githubAccount } = (await renamed.json())
+      .workspace;
+    assert.deepEqual(
+      { name, defaultName, githubAccount },
+      { name: "Platform crew", defaultName: "team", githubAccount: "team" },
+    );
+    // Every member sees it, in the list and the feed.
+    assert.equal(
+      (await listed(users[1])).find((item) => item.id === workspace.id)?.name,
+      "Platform crew",
+    );
+    assert.equal(
+      (
+        await (
+          await request(`/api/workspaces/${workspace.id}/feed`, users[1])
+        ).json()
+      ).organization,
+      "Platform crew",
+    );
+    // Reconnecting the installation keeps the name.
+    await connect(workspaces, users[0], 1);
+    const kept = (await listed()).find((item) => item.id === workspace.id);
+    assert.equal(kept?.name, "Platform crew");
+    assert.equal(kept?.githubAccount, "team");
+    // A journal is renamed only by its owner.
+    const journal = (await listed()).find((item) => item.kind === "personal")!;
+    assert.equal((await rename(journal.id, "Ship log")).status, 200);
+    assert.equal((await rename(journal.id, "Mine", users[1])).status, 404);
+    assert.equal((await rename(journal.id, "x".repeat(81))).status, 400);
+    assert.equal(
+      (await listed()).find((item) => item.id === journal.id)?.name,
+      "Ship log",
+    );
+    // An empty name restores the default.
+    const reset = (await (await rename(workspace.id, "")).json()).workspace;
+    assert.equal(reset.name, "team");
+    assert.equal(reset.defaultName, undefined);
+  });
+});

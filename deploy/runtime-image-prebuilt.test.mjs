@@ -11,14 +11,18 @@ import {
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
+import {
+  MAX_SUPPORTED_SCHEMA_VERSION,
+  SCHEMA_VERSION,
+} from "../server/migrations.ts";
 
 const image = `example/image@sha256:${"a".repeat(64)}`;
 const labels = {
   "org.opencontainers.image.source": "https://github.com/vndee/ship.live",
   "org.opencontainers.image.revision": "b".repeat(40),
   "org.opencontainers.image.version": "v1.4.2",
-  "io.ship-live.schema-version": "20",
-  "io.ship-live.max-schema-version": "21",
+  "io.ship-live.schema-version": String(SCHEMA_VERSION),
+  "io.ship-live.max-schema-version": String(MAX_SUPPORTED_SCHEMA_VERSION),
   "io.ship-live.tested-predecessor": "none",
 };
 
@@ -111,8 +115,11 @@ test("a failed supplied-image label check never removes the caller image", () =>
     ["org.opencontainers.image.source", "https://example.com/wrong"],
     ["org.opencontainers.image.revision", "abc123"],
     ["org.opencontainers.image.version", "v01.2.3"],
-    ["io.ship-live.schema-version", "19"],
-    ["io.ship-live.max-schema-version", "20"],
+    ["io.ship-live.schema-version", String(SCHEMA_VERSION - 1)],
+    [
+      "io.ship-live.max-schema-version",
+      String(MAX_SUPPORTED_SCHEMA_VERSION - 1),
+    ],
   ]) {
     const result = runPrebuiltSmoke({ ...labels, [label]: value });
 

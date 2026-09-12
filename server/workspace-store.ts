@@ -70,6 +70,7 @@ interface WorkspaceRow {
   pulse_subtitle?: string | null;
   source_installation_ids?: string[] | null;
   source_mine_only?: boolean;
+  display_name?: string | null;
 }
 interface NoteRow {
   id: string;
@@ -78,10 +79,30 @@ interface NoteRow {
   created_at: Date;
   name: string;
 }
+/**
+ * Optional display text: control characters become spaces and runs of spaces
+ * collapse. An empty result means "use the default".
+ */
+function optionalText(
+  value: unknown,
+  max: number,
+  label: string,
+): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") throw new AuthError(400, `Invalid ${label}.`);
+  const text = value
+    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if ([...text].length > max)
+    throw new AuthError(400, `Keep the ${label} to ${max} characters.`);
+  return text || null;
+}
 function workspace(row: WorkspaceRow, userId: string): Workspace {
   return {
     id: row.id,
-    name: row.name,
+    name: row.display_name || row.name,
+    ...(row.display_name ? { defaultName: row.name } : {}),
     kind: row.kind,
     owner: row.owner_user_id === userId,
     ...(row.pulse_title ? { pulseTitle: row.pulse_title } : {}),
@@ -251,25 +272,36 @@ export class WorkspaceStore {
       string,
       unknown
     >;
-    const field = (value: unknown, max: number, label: string) => {
-      if (value === undefined || value === null) return null;
-      if (typeof value !== "string")
-        throw new AuthError(400, `Invalid ${label}.`);
-      const text = value
-        .replace(/[\p{Cc}\p{Cf}]/gu, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-      if ([...text].length > max)
-        throw new AuthError(400, `Keep the ${label} to ${max} characters.`);
-      return text || null;
-    };
-    const title = field(data.title, 80, "title");
-    const subtitle = field(data.subtitle, 200, "subtitle");
+    const title = optionalText(data.title, 80, "title");
+    const subtitle = optionalText(data.subtitle, 200, "subtitle");
     const result = await this.pool.query<WorkspaceRow>(
       "UPDATE ship_live_workspaces SET pulse_title=$2,pulse_subtitle=$3 WHERE id=$1 RETURNING *",
       [workspaceId, title, subtitle],
     );
     return workspace(result.rows[0], userId);
+  }
+  /** A workspace's own name; an empty name restores the default. */
+  async rename(
+    userId: string,
+    workspaceId: string,
+    input: unknown,
+  ): Promise<Workspace> {
+    const current = await this.get(userId, workspaceId);
+    if (current.kind === "personal" && !current.owner)
+      throw new AuthError(404, "Workspace not found.");
+    const data = (input && typeof input === "object" ? input : {}) as Record<
+      string,
+      unknown
+    >;
+    const name = optionalText(data.name, 80, "name");
+    return this.transaction(async (client) => {
+      const result = await client.query<WorkspaceRow>(
+        "UPDATE ship_live_workspaces SET display_name=$2 WHERE id=$1 RETURNING *",
+        [workspaceId, name],
+      );
+      await this.notify(client, `workspace-${workspaceId}`);
+      return workspace(result.rows[0], userId);
+    });
   }
   private async personal(userId: string, id: string): Promise<Workspace> {
     const result = await this.get(userId, id);

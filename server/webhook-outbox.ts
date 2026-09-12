@@ -183,7 +183,7 @@ export async function routeEvents(
   try {
     await client.query("BEGIN");
     const { rows: events } = await client.query<EventRow>(
-      `SELECT e.id, e.workspace_id, w.name AS workspace_name, e.type, e.payload, e.repository_id
+      `SELECT e.id, e.workspace_id, coalesce(w.display_name, w.name) AS workspace_name, e.type, e.payload, e.repository_id
        FROM ship_live_webhook_events e
        JOIN ship_live_workspaces w ON w.id = e.workspace_id
        WHERE e.routed_at IS NULL
@@ -293,7 +293,7 @@ export async function claimDeliveries(
      )
      SELECT c.id, c.lease, c.attempts, to_jsonb(h) AS webhook,
        jsonb_build_object('id', e.id, 'workspace_id', e.workspace_id,
-         'workspace_name', w.name, 'type', e.type, 'payload', e.payload, 'repository_id', e.repository_id) AS event
+         'workspace_name', coalesce(w.display_name, w.name), 'type', e.type, 'payload', e.payload, 'repository_id', e.repository_id) AS event
      FROM claimed c
      JOIN ship_live_webhooks h ON h.id = c.webhook_id
      JOIN ship_live_webhook_events e ON e.id = c.event_id
