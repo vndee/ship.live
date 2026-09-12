@@ -405,8 +405,21 @@ export function useFeed() {
     let retry: ReturnType<typeof setTimeout> | undefined;
     let pendingRefresh: ReturnType<typeof setTimeout> | undefined;
     // A rename or a membership change by someone else reaches this stream as a
-    // refresh frame; reread the workspaces it names, at most every 10 seconds.
+    // refresh frame. Reread the workspaces it names at most every 10 seconds,
+    // holding the last frame of a busy window rather than dropping it.
     let metadataAt = 0;
+    let pendingMetadata: ReturnType<typeof setTimeout> | undefined;
+    const scheduleMetadata = () => {
+      if (pendingMetadata) return;
+      pendingMetadata = setTimeout(
+        () => {
+          pendingMetadata = undefined;
+          metadataAt = Date.now();
+          void refreshWorkspaces();
+        },
+        Math.max(0, 10_000 - (Date.now() - metadataAt)),
+      );
+    };
     const scheduleRefresh = () => {
       clearTimeout(pendingRefresh);
       pendingRefresh = setTimeout(() => void refresh(), 100);
@@ -455,10 +468,7 @@ export function useFeed() {
               return;
             }
             if (name === "activity" || name === "refresh") scheduleRefresh();
-            if (name === "refresh" && Date.now() - metadataAt > 10_000) {
-              metadataAt = Date.now();
-              void refreshWorkspaces();
-            }
+            if (name === "refresh") scheduleMetadata();
             if (name === "wall")
               window.dispatchEvent(new Event("ship-live-wall"));
           }
@@ -478,6 +488,7 @@ export function useFeed() {
       controller.abort();
       clearTimeout(retry);
       clearTimeout(pendingRefresh);
+      clearTimeout(pendingMetadata);
     };
   }, [
     demo,
