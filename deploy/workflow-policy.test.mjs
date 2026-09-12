@@ -723,6 +723,13 @@ test("ordinary pushes and pull requests run deployment policy with read-only cre
     /packages:\s*write|environment:|secrets\.|docker\/login-action/,
   );
   assert.match(job(ci, "checks"), /npm run test:deploy-policy/);
+  const runtimeImage = job(ci, "runtime-image");
+  assert.match(runtimeImage, /- run: npm ci/);
+  assert.ok(
+    runtimeImage.indexOf("npm ci") <
+      runtimeImage.indexOf("npm run test:docker"),
+    "Runtime image CI must install locked dependencies before the smoke test",
+  );
 });
 
 test("production publishing is exclusively a stable published release with serialized runs", () => {
