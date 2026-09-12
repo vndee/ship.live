@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  signal:
+    name: Signal published stable release
+    if: ${{ !github.event.release.draft && !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Write the release tag record
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          [[ ${#RELEASE_TAG} -le 127 ]] || exit 1
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 1
+          mkdir "$RUNNER_TEMP/release-signal"
+          printf '%s\n' "$RELEASE_TAG" > "$RUNNER_TEMP/release-signal/tag.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-signal
+          path: ${{ runner.temp }}/release-signal/tag.txt
+          if-no-files-found: error
+          retention-days: 1
