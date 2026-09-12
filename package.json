@@ -1,6 +1,6 @@
 {
   "name": "ship.live",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Private ship journals and live GitHub activity for individual builders and teams.",
