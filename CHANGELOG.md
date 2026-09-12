@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 — 2026-09-12
+
 - Rename workspaces. In **Account and GitHub connections**, the pencil beside a workspace gives it its own name: any member can rename a team, and you can rename your journal. The GitHub organization or account name stays beside a renamed workspace, in the header's tooltip, and an empty name restores the default. Webhooks and digests use the new name.
 - Upgrade note: migration 021 adds workspace names.
 
