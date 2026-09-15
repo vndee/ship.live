@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Keep historical Pulse periods stable until manual refresh, and retain the current dashboard while live data refreshes. Source and permission changes still invalidate cached data; failed reads hide unverified results.
+- Show page-wide activity coverage: earliest stored contribution, recorded source import time, repository import coverage, and warnings for selected dates before stored history or retention. Import times describe the start of successful imports; complete historical coverage is never implied.
+- Enrich the existing weekly webhook digest with shipped highlights, confirmed cross-author reviewers, current PRs needing help, and the closest unfinished weekly milestone. Preserve existing totals and custom templates, and add links to authorized workspaces with the matching Pulse period and tab.
+- Support workspace and Pulse tab links through browser navigation. Unavailable workspace links show an explicit state instead of another team's data.
+- Update the documentation for page-wide dates and selected-period recognition. No database migration is required.
+
 ## 0.2.2 — 2026-09-15
 
 - Make the Pulse period filter page-wide: Overview, Review radar, Release pulse, Delivery, Service health, Leaderboard, the activity sidebar, and contributor profiles share the selected UTC dates. Changing dates keeps the active tab; URLs and Back/Forward preserve the range.

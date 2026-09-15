@@ -449,3 +449,139 @@ test("retry rules: final 4xx, Retry-After, and giving up", () => {
   assert.equal(last.status, "dead");
   assert.match(last.error!, /Gave up after 6 attempts/);
 });
+
+test("unchanged saved chat templates gain digest details while customized templates and other events retain their body", async (t) => {
+  const { readFile } = await import("node:fs/promises");
+  const { sampleEvent } = await import("../shared/webhooks.js");
+  const legacy = JSON.parse(
+    await readFile(
+      new URL("./fixtures/legacy-chat-templates.json", import.meta.url),
+      "utf8",
+    ),
+  ) as Record<string, string>;
+  await withWebhook(t, {}, async ({ store, workspace, webhook }) => {
+    const target = (await store.targetById(workspace, webhook))!;
+    const event = {
+      ...sampleEvent("digest.weekly"),
+      data: { body: "Shipped search. Current PRs needing help: #2." },
+    };
+    for (const [preset, template] of Object.entries(legacy)) {
+      const body = prepareRequest({ ...target, template }, event, {
+        id: "digest",
+        attempt: 1,
+      }).body;
+      assert.ok(
+        body.includes("Shipped search"),
+        `${preset} default was not upgraded`,
+      );
+      const customized = template + "\n";
+      const customBody = prepareRequest(
+        { ...target, template: customized },
+        event,
+        { id: "digest", attempt: 1 },
+      ).body;
+      const { renderTemplate } = await import("../shared/webhook-template.js");
+      assert.equal(
+        customBody,
+        renderTemplate(customized, event, "json"),
+        `${preset} customized template was changed`,
+      );
+      const other = { ...event, type: "activity.merge" };
+      assert.equal(
+        prepareRequest({ ...target, template }, other, {
+          id: "merge",
+          attempt: 1,
+        }).body,
+        renderTemplate(template, other, "json"),
+        `${preset} non-digest changed`,
+      );
+    }
+  });
+});
+
+test("access revoked while enrichment runs prevents outbound delivery and persisted payload", async (t) => {
+  await withWebhook(t, {}, async ({ pool, store }) => {
+    await recordInstallationEvent(
+      pool,
+      99,
+      activityOutboxEvent(merge("race"))!,
+    );
+    await routeEvents(pool, async () => new Set([7]));
+    const [claim] = await claimDeliveries(pool, 1);
+    let permitted = true;
+    let sent = 0;
+    const outcome = await performDelivery(
+      store,
+      claim,
+      async () => {
+        sent++;
+        return reply(200)();
+      },
+      Date.now(),
+      async () => {
+        permitted = false;
+        return claim.event;
+      },
+      async () => permitted,
+    );
+    assert.equal(sent, 0);
+    assert.equal(outcome.status, "failed");
+    assert.equal(outcome.requestBody, "");
+  });
+});
+
+test("a digest does not send if its repository access or pinned scope changes during enrichment", async (t) => {
+  const { enrichDigest } = await import("./webhook-worker.js");
+  for (const change of [
+    "repository_access",
+    "pinned_repository",
+    "source_installation",
+  ] as const) {
+    await withWebhook(
+      t,
+      { events: ["digest.weekly"] },
+      async ({ pool, store, workspace, webhook }) => {
+        await recordWorkspaceEvent(pool, workspace, {
+          type: "digest.weekly",
+          dedupeKey: "digest:scope-race",
+          occurredAt: new Date().toISOString(),
+          summary: "Digest",
+          data: { weekStart: "2026-08-31", weekEnd: "2026-09-06" },
+        });
+        let visible = new Set([7]);
+        const access = async () => visible;
+        await routeEvents(pool, access);
+        const [claim] = await claimDeliveries(pool, 1);
+        let sent = 0;
+        const outcome = await performDelivery(
+          store,
+          claim,
+          async () => {
+            sent++;
+            return reply(200)();
+          },
+          Date.now(),
+          async (item) => {
+            const prepared = await enrichDigest(pool, access, item);
+            if (change === "repository_access") visible = new Set();
+            else if (change === "pinned_repository")
+              await pool.query(
+                "UPDATE ship_live_webhooks SET repository_ids='{}' WHERE id=$1",
+                [webhook],
+              );
+            else
+              await pool.query(
+                "UPDATE ship_live_workspaces SET installation_id=100 WHERE id=$1",
+                [workspace],
+              );
+            return prepared;
+          },
+          (item) => ownerMaySee(access, item),
+        );
+        assert.equal(sent, 0, change);
+        assert.equal(outcome.status, "failed", change);
+        assert.equal(outcome.requestBody, "", change);
+      },
+    );
+  }
+});

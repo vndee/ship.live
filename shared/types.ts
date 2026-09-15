@@ -35,5 +35,7 @@ export interface FeedResponse {
   organization: string;
   source: "github" | "demo" | "workspace";
   updatedAt: string;
+  /** Opaque authorized scope identity; activity updates do not change it. */
+  accessScope?: string;
   notice?: string;
 }

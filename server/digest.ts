@@ -1,7 +1,14 @@
 import type { Pool } from "pg";
-import type { ActivityEvent } from "../shared/types.js";
 import type { WebhookEvent } from "../shared/webhooks.js";
-import { getLeaderboard, getMetrics } from "../src/lib/activity.js";
+import {
+  getAchievements,
+  getLeaderboard,
+  getMetrics,
+} from "../src/lib/activity.js";
+import { getReviewRadar } from "../src/lib/engineering-wall.js";
+import { resolvePulseRange } from "../shared/pulse.js";
+import { PulseStore } from "./pulse-store.js";
+import { combineWallSnapshots, WallStore } from "./wall-store.js";
 import { recordWorkspaceEvent } from "./webhook-outbox.js";
 
 const DAY = 86_400_000;
@@ -70,21 +77,29 @@ export async function scheduleDigests(
  * (by the leaderboard's XP rules), and busiest repositories from only the
  * repositories that webhook may see, plus each service's uptime that week.
  */
-export async function withDigest(
+export interface PreparedDigest {
+  event: WebhookEvent;
+  /** Recheck the exact scope used to build this payload before sending it. */
+  authorize: () => Promise<boolean>;
+}
+
+export async function prepareDigest(
   pool: Pool,
   event: WebhookEvent,
   repositoryIds: number[],
-): Promise<WebhookEvent> {
+  { appUrl, now = Date.now() }: { appUrl?: string; now?: number } = {},
+): Promise<PreparedDigest> {
   const start = Date.parse(`${String(event.data.weekStart)}T00:00:00Z`);
-  if (!Number.isFinite(start)) return event;
+  if (!Number.isFinite(start)) return { event, authorize: async () => false };
   const end = start + 7 * DAY;
   // A team reads its installation. A journal reads each of its sources, and only
   // its owner's activity when it keeps only theirs.
-  const { rows: workspaces } = await pool.query<{
-    installations: string[];
-    author: string | null;
-  }>(
-    `SELECT ARRAY(
+  const readScope = () =>
+    pool.query<{
+      installations: string[];
+      author: string | null;
+    }>(
+      `SELECT ARRAY(
        SELECT c.installation_id FROM ship_live_workspaces c
        WHERE c.installation_id IS NOT NULL AND (
          (w.kind = 'team' AND c.id = w.id)
@@ -97,30 +112,194 @@ export async function withDigest(
      FROM ship_live_workspaces w
      LEFT JOIN ship_live_github_connections g ON g.user_id = w.owner_user_id
      WHERE w.id = $1`,
-    [event.workspace.id],
+      [event.workspace.id],
+    );
+  const { rows: workspaces } = await readScope();
+  const scopeKey = (
+    value: { installations: string[]; author: string | null } | undefined,
+  ) =>
+    value
+      ? JSON.stringify([
+          [...value.installations].sort(),
+          value.author?.toLowerCase() ?? null,
+        ])
+      : null;
+  const initialScope = scopeKey(workspaces[0]);
+  const installations = (workspaces[0]?.installations ?? []).map(Number);
+  const author = workspaces[0]?.author?.toLowerCase() ?? undefined;
+  const scope = {
+    sources: installations.map((installationId) => ({
+      installationId,
+      repositoryIds,
+    })),
+    author,
+  };
+  const range = resolvePulseRange(
+    { period: "custom", from: day(start), to: day(end - DAY) },
+    Math.max(now, end),
   );
-  const scopes = (workspaces[0]?.installations ?? []).map(
-    (id) => `installation-${id}`,
+  const activity = await new PulseStore(pool).events(scope, range, now);
+  // No date-limited status claim: these are the latest stored PR states at delivery.
+  // The range overload keeps all relevant open PRs without the live wall's row cap.
+  const wall = combineWallSnapshots(
+    await Promise.all(
+      installations.map((id) =>
+        new WallStore(pool).snapshot(id, repositoryIds, {
+          start: range.start,
+          end: new Date(now + 1).toISOString(),
+        }),
+      ),
+    ),
   );
-  const activity =
-    scopes.length && repositoryIds.length
-      ? (
-          await pool.query<{ event: ActivityEvent }>(
-            `SELECT event FROM ship_live_events
-             WHERE organization = ANY($1::text[]) AND occurred_at >= $2 AND occurred_at < $3
-               AND (event->>'repositoryId')::bigint = ANY($4::bigint[])
-               AND ($5::text IS NULL OR lower(event->'actor'->>'login') = lower($5))
-             ORDER BY occurred_at LIMIT 20000`,
-            [
-              scopes,
-              new Date(start),
-              new Date(end),
-              repositoryIds,
-              workspaces[0]?.author ?? null,
-            ],
+  const shipped = activity
+    .filter((item) => item.type === "merge" || item.type === "release")
+    .slice(0, 5)
+    .map(({ id, type, title, repo, number, url, occurredAt }) => ({
+      id,
+      type,
+      title,
+      repository: repo,
+      number,
+      url,
+      occurredAt,
+    }));
+  const reviewers = new Map<
+    string,
+    { login: string; reviews: number; pulls: Set<string> }
+  >();
+  for (const item of activity) {
+    if (item.type !== "review" || item.number === undefined) continue;
+    const pull = wall.repositories
+      .find((repo) => repo.repositoryId === item.repositoryId)
+      ?.pullRequests.find((pull) => pull.number === item.number);
+    const login = item.actor.login.trim().toLowerCase();
+    // Review volume alone cannot show who helped another author.
+    if (!pull?.author || pull.author.trim().toLowerCase() === login) continue;
+    const entry = reviewers.get(login) ?? {
+      login: item.actor.login,
+      reviews: 0,
+      pulls: new Set<string>(),
+    };
+    entry.reviews++;
+    entry.pulls.add(`${item.repositoryId}:${item.number}`);
+    reviewers.set(login, entry);
+  }
+  const helpfulReviewers = [...reviewers.values()]
+    .sort(
+      (a, b) => b.pulls.size - a.pulls.size || a.login.localeCompare(b.login),
+    )
+    .slice(0, 5)
+    .map(({ login, reviews, pulls }) => ({
+      login,
+      reviews,
+      pullRequests: pulls.size,
+    }));
+  const needsHelp = {
+    basis: "current",
+    checkedAt: new Date(now).toISOString(),
+    note: "Latest stored PR status at delivery; not a historical snapshot of the digest week.",
+    items: wall.repositories
+      .flatMap((repository) =>
+        repository.pullRequests.flatMap((pull) => {
+          if (
+            author !== undefined &&
+            pull.author.toLowerCase() !== author.toLowerCase()
           )
-        ).rows.map((row) => row.event)
-      : [];
+            return [];
+          return getReviewRadar(
+            {
+              ...wall,
+              repositories: [{ ...repository, pullRequests: [pull] }],
+            },
+            now,
+          );
+        }),
+      )
+      .filter((item) => item.state === "waiting" || item.state === "failing")
+      .sort(
+        (a, b) =>
+          Number(b.state === "failing") - Number(a.state === "failing") ||
+          b.ageMs - a.ageMs ||
+          a.repository.localeCompare(b.repository) ||
+          a.number - b.number,
+      )
+      .slice(0, 5)
+      .map(({ repository, number, title, url, state }) => ({
+        repository,
+        number,
+        title,
+        url,
+        state,
+      })),
+  };
+  const next = getAchievements(activity, end - 1)
+    .filter((item) => !item.unlocked)
+    .sort((a, b) => b.progress / b.target - a.progress / a.target)[0];
+  const nextMilestone = next
+    ? { ...next, remaining: next.target - next.progress, basis: "digest_week" }
+    : null;
+  const link = (scene: string, weekly = true) => {
+    if (!appUrl) return undefined;
+    const url = new URL("/", appUrl);
+    url.searchParams.set("workspace", event.workspace.id);
+    url.searchParams.set("scene", scene);
+    if (weekly) {
+      url.searchParams.set("period", "custom");
+      url.searchParams.set("from", day(start));
+      url.searchParams.set("to", day(end - DAY));
+    }
+    return url.href;
+  };
+  const links = {
+    pulse: link("pulse"),
+    review: link("review"),
+    reviewers: link("leaderboard"),
+    milestones: link("pulse"),
+    currentReview: link("review", false),
+  };
+  const coverage = {
+    basis: "stored_activity",
+    note: "Based on stored GitHub activity in this webhook's authorized repositories; missing history may lower totals. PR status uses latest stored signals.",
+  };
+  const compact = (value: string, length = 80) => {
+    const text = value.replace(/\s+/g, " ").trim();
+    return text.length > length ? text.slice(0, length - 1) + "…" : text;
+  };
+  // Keep context and section links before bounded excerpts so chat limits never
+  // turn a partial list into a claim of complete history or hide its date scope.
+  const lines = [
+    `Week of ${day(start)}–${day(end - DAY)} (UTC)`,
+    coverage.note,
+    nextMilestone
+      ? `Next weekly milestone: ${nextMilestone.title} (${nextMilestone.progress}/${nextMilestone.target}; ${nextMilestone.remaining} to go at week end).${links.milestones ? ` ${links.milestones}` : ""}`
+      : "All weekly milestones reached in stored activity.",
+    helpfulReviewers.length
+      ? `Thanks for reviewing teammates' PRs: ${helpfulReviewers.map((item) => `${compact(item.login, 39)} (${item.pullRequests} PR${item.pullRequests === 1 ? "" : "s"})`).join(", ")}`
+      : "No cross-author reviews could be confirmed from stored PR data.",
+    links.reviewers ? `Reviewers this week: ${links.reviewers}` : "",
+    links.review ? `Reviews this week: ${links.review}` : "",
+    links.currentReview ? `Recent review activity: ${links.currentReview}` : "",
+    needsHelp.items.length
+      ? "Current PRs needing help (highlights):"
+      : "No current PRs needing help found in stored signals.",
+  ].filter(Boolean);
+  const append = (line: string) => {
+    if (lines.join("\n").length + line.length + 1 <= 2700) lines.push(line);
+  };
+  for (const item of needsHelp.items.slice(0, 3))
+    append(
+      `${compact(item.repository)} #${item.number} — ${item.state === "failing" ? "checks failing" : "review or follow-up needed"}: ${item.url}`,
+    );
+  append(
+    shipped.length
+      ? "Shipped highlights:"
+      : "No merges or releases found in stored activity for this week.",
+  );
+  for (const item of shipped.slice(0, 3))
+    append(
+      `${compact(item.repository)}: ${compact(item.title)}${item.url ? ` — ${item.url}` : ""}`,
+    );
+  const body = lines.join("\n");
   // A moment inside the digest week, so the weekly rules count that week.
   const during = end - 1;
   const metrics = getMetrics(activity, during);
@@ -160,10 +339,18 @@ export async function withDigest(
   );
   const plural = (count: number, word: string) =>
     `${count} ${word}${count === 1 ? "" : "s"}`;
-  return {
+  const result: WebhookEvent = {
     ...event,
+    ...(links.pulse ? { url: links.pulse } : {}),
     summary: `${event.workspace.name}'s week: ${plural(metrics.merges, "merge")}, ${plural(metrics.reviews, "review")}, ${plural(metrics.releases, "release")} from ${metrics.contributors} ${metrics.contributors === 1 ? "person" : "people"}`,
     data: {
+      body,
+      shipped,
+      helpfulReviewers,
+      needsHelp,
+      nextMilestone,
+      links,
+      coverage,
       weekStart: day(start),
       weekEnd: day(end - DAY),
       totals: {
@@ -191,4 +378,17 @@ export async function withDigest(
       })),
     },
   };
+  return {
+    event: result,
+    authorize: async () =>
+      initialScope !== null &&
+      initialScope === scopeKey((await readScope()).rows[0]),
+  };
+}
+
+/** Read-only payload convenience; senders must retain prepareDigest's scope guard. */
+export async function withDigest(
+  ...args: Parameters<typeof prepareDigest>
+): Promise<WebhookEvent> {
+  return (await prepareDigest(...args)).event;
 }

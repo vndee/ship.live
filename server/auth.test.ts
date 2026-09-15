@@ -638,3 +638,60 @@ test("two concurrent OAuth callbacks consume one flow and create one app session
     );
   });
 });
+
+test("OAuth preserves a dashboard return destination and rejects external or malformed redirects", async (t) => {
+  await withAuth(t, async ({ request, provider }) => {
+    const scoped =
+      "/?workspace=team-a&scene=review&period=custom&from=2026-09-07&to=2026-09-13";
+    for (const [requested, expected] of [
+      [scoped, scoped],
+      ["https://evil.invalid/", "/"],
+      ["//evil.invalid/", "/"],
+      ["/\\evil.invalid/", "/"],
+      ["/feed?workspace=team-a", "/"],
+      ["/?workspace=team-a#secret", "/"],
+      ["/?workspace=team-a\n", "/"],
+      ["/?workspace=team-a&scene=admin&token=secret", "/?workspace=team-a"],
+    ]) {
+      const jar = new CookieJar();
+      const started = await request(
+        "/api/auth/google/start?returnTo=" + encodeURIComponent(requested),
+        jar,
+      );
+      const auth = new URL(started.headers.get("location")!);
+      const callback = new URL(auth.searchParams.get("redirect_to")!);
+      assert.equal(callback.searchParams.get("returnTo") || "/", expected);
+      const code = randomUUID();
+      provider.codes.set(code, {
+        challenge: auth.searchParams.get("code_challenge")!,
+        userId: uid,
+      });
+      callback.searchParams.set("code", code);
+      const completed = await request(callback.pathname + callback.search, jar);
+      assert.equal(completed.status, 302, await completed.text());
+      assert.equal(completed.headers.get("location"), origin + expected);
+    }
+    const jar = new CookieJar();
+    const started = await request(
+      "/api/auth/github/start?returnTo=" + encodeURIComponent(scoped),
+      jar,
+    );
+    const auth = new URL(started.headers.get("location")!);
+    const callback = new URL(auth.searchParams.get("redirect_to")!);
+    const code = randomUUID();
+    provider.codes.set(code, {
+      challenge: auth.searchParams.get("code_challenge")!,
+      userId: uid,
+    });
+    callback.searchParams.set("code", code);
+    callback.searchParams.set("returnTo", "https://evil.invalid/");
+    // A return destination cannot replace the browser-bound flow proof.
+    assert.equal(
+      (await request(callback.pathname + callback.search)).status,
+      400,
+    );
+    const completed = await request(callback.pathname + callback.search, jar);
+    assert.equal(completed.status, 302);
+    assert.equal(completed.headers.get("location"), origin + "/");
+  });
+});

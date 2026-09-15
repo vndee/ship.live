@@ -1,3 +1,4 @@
+import { ALL_SCENES, type WallScene } from "./engineering-wall";
 import { isTag } from "./journal";
 import type { ActivityEvent } from "../../shared/types";
 
@@ -9,6 +10,9 @@ type Kind = ActivityEvent["type"];
 /** Everything a URL can say about the private app. */
 export interface Route {
   page: Page;
+  /** An explicit workspace must match the authenticated workspace list. */
+  workspace?: string;
+  scene?: WallScene;
   pulsePeriod?: "today" | "7d" | "30d" | "month" | "custom";
   from?: string;
   to?: string;
@@ -72,6 +76,12 @@ export function parseRoute(pathname: string, search: string): Route {
     "pulse";
   const params = new URLSearchParams(search);
   const route: Route = { page };
+  // Keep even empty or malformed values explicit: authorization fails closed.
+  if (params.has("workspace")) route.workspace = params.get("workspace")!;
+  if (page === "pulse") {
+    const scene = oneOf(ALL_SCENES, params.get("scene"));
+    if (scene) route.scene = scene;
+  }
   if (page === "feed") {
     const repo = params.get("repo")?.trim();
     if (repo && repo.length <= 200) route.repo = repo;
@@ -107,6 +117,8 @@ export function parseRoute(pathname: string, search: string): Route {
 
 export function routeHref(route: Route): string {
   const params = new URLSearchParams();
+  if (route.workspace !== undefined) params.set("workspace", route.workspace);
+  if (route.page === "pulse" && route.scene) params.set("scene", route.scene);
   if (route.page === "feed") {
     if (route.repo) params.set("repo", route.repo);
     if (route.kind) params.set("type", route.kind);

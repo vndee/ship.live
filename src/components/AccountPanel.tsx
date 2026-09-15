@@ -1,3 +1,4 @@
+import { dashboardReturnTo } from "../../shared/dashboard-return";
 import { useEffect, useState } from "react";
 import {
   ArrowUpRight,
@@ -112,6 +113,11 @@ export function AccountPanel({
   feed: FeedController;
   onClose: () => void;
 }) {
+  const returnTo = dashboardReturnTo(
+    window.location.pathname + window.location.search,
+  );
+  const authSuffix =
+    returnTo === "/" ? "" : `?returnTo=${encodeURIComponent(returnTo)}`;
   const [choices, setChoices] = useState<InstallationChoice[]>([]);
   const [installUrl, setInstallUrl] = useState("");
   const [busy, setBusy] = useState("");
@@ -262,7 +268,7 @@ export function AccountPanel({
               className={`button full-width ${!feed.session.providers.google ? "disabled-link" : ""}`}
               href={
                 feed.session.providers.google
-                  ? "/api/auth/google/start"
+                  ? "/api/auth/google/start" + authSuffix
                   : undefined
               }
               aria-disabled={!feed.session.providers.google}
@@ -284,7 +290,7 @@ export function AccountPanel({
               className={`button full-width ${!feed.session.providers.github ? "disabled-link" : ""}`}
               href={
                 feed.session.providers.github
-                  ? "/api/auth/github/start"
+                  ? "/api/auth/github/start" + authSuffix
                   : undefined
               }
               aria-disabled={!feed.session.providers.github}

@@ -1,3 +1,4 @@
+import { dashboardReturnTo } from "../shared/dashboard-return.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import {
@@ -265,6 +266,8 @@ export class AuthService {
       );
       const callback = new URL("/api/auth/callback", config.appUrl);
       callback.searchParams.set("flow", flow);
+      const returnTo = dashboardReturnTo(request.query.returnTo);
+      if (returnTo !== "/") callback.searchParams.set("returnTo", returnTo);
       const context = this.context(request, response);
       const { data, error } = await context.client.auth.signInWithOAuth({
         provider,
@@ -360,7 +363,10 @@ export class AuthService {
       }
       context.flush();
       this.setCookie(response, this.sessionCookie, cookie, SESSION_LIFETIME);
-      response.redirect(302, config.appUrl + "/");
+      response.redirect(
+        302,
+        config.appUrl + dashboardReturnTo(request.query.returnTo),
+      );
     });
     this.router.post("/api/logout", async (request, response) => {
       this.requireConfigured();

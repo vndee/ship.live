@@ -15,12 +15,14 @@ before(async () => {
     import {usePulseLocation, setPulseLocation} from './src/hooks/usePulse';
     import {PulsePageFilter} from './src/components/PulsePageFilter';
     function Harness() {
-      const [source,setSource] = useState({workspaceId:'alpha',demo:false,events:[],enabled:true});
+      const [source,setSource] = useState({workspaceId:'alpha',revision:'initial',demo:false,events:[],enabled:true});
       window.changeScope = update => setSource(s => ({...s,...update}));
       const {selection} = usePulseLocation();
-      const now = Date.parse('2026-09-15T12:00:00Z');
+      const [now,setNow] = useState(Date.parse('2026-09-15T12:00:00Z'));
+      window.changeNow = setNow;
       const result = usePulseDashboard(source,selection,now);
-      return <><PulsePageFilter selection={selection} range={result.range} now={now} onChange={setPulseLocation}/>
+      return <><PulsePageFilter selection={selection} range={result.range} now={now} onChange={setPulseLocation} onRefresh={result.retry} refreshing={result.refreshing}/>
+      {result.refreshing && <span data-refreshing>Refreshing</span>}
       {result.error ? <p role="alert">{result.error}</p> : result.loading ? <p role="status">Loading</p> : <output>{result.data.overview.totals.count}</output>}</>;
     }
     createRoot(document.getElementById('root')).render(<Harness/>);`,
@@ -39,7 +41,7 @@ before(async () => {
   browser = await chromium.launch({ headless: true });
 });
 after(async () => browser?.close());
-async function open(t, path = "/") {
+async function open(t, path = "/", clock = false) {
   const page = await browser.newPage();
   page.setDefaultTimeout(5000);
   const errors = [];
@@ -73,6 +75,8 @@ async function open(t, path = "/") {
         ),
       );
   });
+  if (clock)
+    await page.clock.install({ time: new Date("2026-09-15T12:00:00Z") });
   await page.addScriptTag({ content: script });
   return page;
 }
@@ -128,7 +132,7 @@ test("page-wide snapshot clears on period and workspace changes and rejects stal
   assert.equal(await page.locator("output").textContent(), "17");
   await page.evaluate(() => window.changeScope({ revision: "refresh" }));
   await request(page, 4);
-  assert.equal(await page.locator("output").count(), 0);
+  assert.equal(await page.locator("output").textContent(), "17");
   await page.evaluate(() => window.respond(4, 0, 403));
   await page.getByRole("alert").waitFor();
   assert.equal(await page.locator("output").count(), 0);
@@ -156,4 +160,74 @@ test("invalid page-wide dates show an error without requesting a default range",
   await page.getByRole("alert").waitFor();
   assert.equal(await page.evaluate(() => window.requests.length), 0);
   assert.equal(await page.locator("output").count(), 0);
+});
+
+test("historical ranges ignore live revisions, wall events and polling but allow manual refresh", async (t) => {
+  const page = await open(
+    t,
+    "/?period=custom&from=2026-08-01&to=2026-08-31",
+    true,
+  );
+  await page.clock.runFor(200);
+  await request(page, 0);
+  await page.evaluate(() => window.respond(0, 31));
+  await count(page, 31);
+  await page.evaluate(() => {
+    window.changeScope({ revision: "new-live-event" });
+    window.dispatchEvent(new Event("ship-live-wall"));
+  });
+  await page.clock.runFor(60_500);
+  assert.equal(await page.evaluate(() => window.requests.length), 1);
+  assert.equal(await page.locator("output").textContent(), "31");
+  await page.getByRole("button", { name: "Refresh dashboard" }).click();
+  await page.clock.runFor(200);
+  await request(page, 1);
+  assert.equal(await page.locator("output").textContent(), "31");
+  assert.equal(await page.locator("[data-refreshing]").count(), 1);
+  await page.evaluate(() => window.respond(1, 32));
+  await count(page, 32);
+  assert.equal(await page.locator("[data-refreshing]").count(), 0);
+  // Permission/source transitions still invalidate historical results immediately.
+  await page.evaluate(() => window.changeScope({ scopeKey: "access-changed" }));
+  await page.clock.runFor(200);
+  await request(page, 2);
+  assert.equal(await page.locator("output").count(), 0);
+  await page.evaluate(() => window.respond(2, 0, 403));
+  await page.getByRole("alert").waitFor();
+});
+test("today refreshes without blanking the dashboard and clears unverifiable data on failure", async (t) => {
+  const page = await open(t, "/?period=today", true);
+  await page.clock.runFor(200);
+  await request(page, 0);
+  await page.evaluate(() => window.respond(0, 10));
+  await count(page, 10);
+  await page.clock.runFor(30_200);
+  await request(page, 1);
+  assert.equal(await page.locator("output").textContent(), "10");
+  await page.evaluate(() => window.respond(1, 11));
+  await count(page, 11);
+  await page.evaluate(() => window.dispatchEvent(new Event("ship-live-wall")));
+  await page.clock.runFor(200);
+  await request(page, 2);
+  assert.equal(await page.locator("output").textContent(), "11");
+  await page.evaluate(() => window.respond(2, 0, 503));
+  await page.getByRole("alert").waitFor();
+  assert.equal(await page.locator("output").count(), 0);
+});
+test("a custom range stops live refresh after its last UTC day", async (t) => {
+  const page = await open(
+    t,
+    "/?period=custom&from=2026-09-14&to=2026-09-15",
+    true,
+  );
+  await page.clock.runFor(200);
+  await request(page, 0);
+  await page.evaluate(() => window.respond(0, 5));
+  await count(page, 5);
+  await page.evaluate(() =>
+    window.changeNow(Date.parse("2026-09-16T00:01:00Z")),
+  );
+  await page.clock.runFor(60_500);
+  assert.equal(await page.evaluate(() => window.requests.length), 1);
+  assert.equal(await page.locator("output").textContent(), "5");
 });

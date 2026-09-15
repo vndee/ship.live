@@ -53,6 +53,11 @@ test("SQL aggregates full authorized history and stable keyset pages", async (t)
       range,
       now,
     );
+    expected.coverage.sourceSync = {
+      lastSyncedAt: null,
+      syncedRepositories: 0,
+      totalRepositories: 1,
+    };
     assert.deepEqual(result, expected);
     assert.equal(result.totals.count, 2106);
     const scope = {
@@ -150,13 +155,15 @@ test("SQL aggregates full authorized history and stable keyset pages", async (t)
       { period: "custom", from: "2026-08-01", to: "2026-09-15" },
       now,
     );
+    const weeklyExpected = aggregatePulse(
+      events.filter((e) => e.repositoryId === 101),
+      weeklyRange,
+      now,
+    );
+    weeklyExpected.coverage.sourceSync = expected.coverage.sourceSync;
     assert.deepEqual(
       await pulse.overview(70, [101], weeklyRange, now),
-      aggregatePulse(
-        events.filter((e) => e.repositoryId === 101),
-        weeklyRange,
-        now,
-      ),
+      weeklyExpected,
     );
     const emptyRange = resolvePulseRange(
       { period: "custom", from: "2026-08-01", to: "2026-08-01" },
@@ -256,6 +263,70 @@ test("SQL aggregates full authorized history and stable keyset pages", async (t)
     assert.ok(
       later.events.every((event) => Date.parse(event.occurredAt) <= now),
     );
+  } finally {
+    await store.close();
+  }
+});
+
+test("coverage counts only selected repository imports and keeps personal history scoped", async (t) => {
+  const url = await createTestDatabase(t);
+  if (!url) return;
+  const store = await PostgresEventStore.open(url);
+  try {
+    const now = Date.parse("2026-09-15T12:00:00Z");
+    const pulse = new PulseStore(store.pool);
+    const range = resolvePulseRange({ period: "today" }, now);
+    await store.pool.query(`INSERT INTO ship_live_repository_sync VALUES
+      (70,101,'2026-09-14T09:00:00Z'), (70,999,'2026-09-15T11:00:00Z'),
+      (71,101,'2026-09-15T10:00:00Z')`);
+    await store.merge(
+      "installation-70",
+      [
+        {
+          id: "alice",
+          type: "merge",
+          actor: { login: "alice" },
+          repo: "team/a",
+          repositoryId: 101,
+          title: "Alice",
+          occurredAt: "2026-09-01T10:00:00Z",
+        },
+        {
+          id: "bob",
+          type: "merge",
+          actor: { login: "bob" },
+          repo: "team/a",
+          repositoryId: 101,
+          title: "Bob",
+          occurredAt: "2026-08-01T10:00:00Z",
+        },
+      ],
+      { restricted: true },
+    );
+    const result = await pulse.overview(undefined, [], range, now, {
+      sources: [{ installationId: 70, repositoryIds: [101, 102] }],
+      author: "alice",
+    });
+    assert.equal(result.totals.count, 0);
+    assert.equal(result.coverage.earliestStoredAt, "2026-09-01T10:00:00.000Z");
+    assert.deepEqual(result.coverage.sourceSync, {
+      lastSyncedAt: "2026-09-14T09:00:00.000Z",
+      syncedRepositories: 1,
+      totalRepositories: 2,
+    });
+    const empty = await pulse.overview(70, [102], range, now);
+    assert.equal(empty.coverage.earliestStoredAt, null);
+    assert.deepEqual(empty.coverage.sourceSync, {
+      lastSyncedAt: null,
+      syncedRepositories: 0,
+      totalRepositories: 1,
+    });
+    const unconnected = await pulse.overview(undefined, [], range, now);
+    assert.deepEqual(unconnected.coverage.sourceSync, {
+      lastSyncedAt: null,
+      syncedRepositories: 0,
+      totalRepositories: 0,
+    });
   } finally {
     await store.close();
   }

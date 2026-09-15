@@ -22,10 +22,10 @@ A private shipping journal for individual builders and a live **Pulse** for engi
 
 The team's live view of what is shipping, beside a feed of every visible contribution.
 
-- **Overview.** Choose Today, Last 7 days, Last 30 days, This month, or custom UTC dates (up to 366 days). Contributions, the activity chart, and repository totals use the same period; open a chart bucket or repository to browse its activity with pagination. Date filters stay in the URL and work on read-only shared dashboards. The live strip and weekly team milestone retain their own labeled windows.
+- **Overview.** Choose Today, Last 7 days, Last 30 days, This month, or custom UTC dates (up to 366 days). The date filter applies to every Pulse tab, the activity sidebar, and contributor profiles. Open a chart bucket or repository to browse its activity with pagination. Date filters stay in the URL and work on read-only shared dashboards. Past periods load once and can be refreshed manually; periods including today refresh without blanking the dashboard.
 - **Review Radar and Release Pulse.** Open pull requests ranked by what needs attention — failing CI, ready to merge, checks running, awaiting review — and the latest GitHub deployment for each environment.
-- **Delivery.** Deployments per week, change failure rate, time to restore, and time to merge for one environment over 30 days, each compared with the 30 days before, with eight weeks of deployments by week. The figures describe the team, never a person.
-- **Leaderboard and profiles.** Weekly XP with animated rank changes. Open anyone’s profile for their rank, 30-day totals, a 12-week activity heatmap, daily XP, and recent activity.
+- **Delivery.** Deployment frequency, change failure rate, time to restore, and time to merge for one environment in the selected period, each compared with the preceding interval of the same duration. The figures describe the team, never a person.
+- **Leaderboard and profiles.** XP and rank for the selected period, with animated rank changes. Open anyone’s profile for their rank, contribution totals, daily activity, and recent activity in that same period. Weekly milestones keep their separately labeled Monday–Sunday window.
 - **Your own heading.** Rename the Pulse title and add a subtitle for your team; it shows on the wall display and on shared links too.
 - **Arranged your way.** Tabs stay where you put them. Turn on **Auto-slide** for a wall display, and hide or reorder tabs for each workspace. Failures raise an attention banner you can dismiss, and recoveries produce a brief team moment.
 - **Live celebrations.** New contributions highlight in the feed and announce earned XP; merges and releases launch confetti, with a bigger burst for milestones. Try a fictional event with **Try live activity** in the demo.
@@ -44,6 +44,7 @@ Checks for the public HTTP APIs your team depends on, run from the server even w
 
 Send what matters to the tools your team already watches, and bring outside alerts in.
 
+- **Weekly team recap.** The existing weekly digest highlights shipped work, confirmed reviews of teammates’ PRs, current PRs needing help, and the closest unfinished milestone at week end. Dashboard links open the matching workspace, dates, and tab; direct PR links make follow-up easy. Totals reflect stored, authorized activity.
 - **Every event, any destination.** Merges, reviews, releases, CI failures and recoveries, deployments, Service Health incidents, inbound alerts, and a weekly digest, sent to Slack, Discord, Microsoft Teams, Google Chat, Lark / Feishu, or any HTTPS endpoint.
 - **Bodies you control.** A preset for each service and a template editor with a live preview, filters with wildcards and exclusions, cooldowns for flapping alerts, custom headers, signed requests, and success checks for services that report errors inside a 200 response.
 - **Reliable delivery.** Retries with backoff, a delivery log with each request and response, test sends, and redelivery. Deliveries follow each webhook owner's repository access, checked again before every attempt.

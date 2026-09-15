@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import {
   PulseStore,
   pulseQuery,
+  pulseScopeFingerprint,
   samePulseReadScope,
   type PulseScope,
 } from "./pulse-store.js";
@@ -1281,6 +1282,9 @@ export function createWorkspaceApp({
       events,
       organization: current.workspace.name,
       source: "workspace",
+      accessScope: pulseScopeFingerprint(
+        pulseScope(current, principal.user.id),
+      ),
       updatedAt: new Date().toISOString(),
       // Only actionable notices; the coverage explanation lives in the UI.
       notice: current.notice || initial.notice,

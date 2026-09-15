@@ -128,6 +128,7 @@ export const WEBHOOK_PRESETS: Record<WebhookPresetId, WebhookPreset> = {
         "text": "{{#if url}}*<{{url}}|{{slack summary}}>*{{else}}*{{slack summary}}*{{/if}}"
       }
     },
+    {{#if (eq type "digest.weekly")}}{ "type": "section", "text": { "type": "plain_text", "text": "{{truncate data.body 2800}}" } },{{/if}}
     {
       "type": "context",
       "elements": [
@@ -146,6 +147,7 @@ export const WEBHOOK_PRESETS: Record<WebhookPresetId, WebhookPreset> = {
     {
       "title": "{{truncate summary 256}}",{{#if url}}
       "url": "{{url}}",{{/if}}
+      {{#if (eq type "digest.weekly")}}"description": "{{truncate data.body 4000}}",{{/if}}
       "color": ${DISCORD_COLOR},
       "timestamp": "{{occurredAt}}",
       "footer": { "text": "{{workspace.name}} · ship.live" }
@@ -168,6 +170,7 @@ export const WEBHOOK_PRESETS: Record<WebhookPresetId, WebhookPreset> = {
         "version": "1.4",
         "body": [
           { "type": "TextBlock", "text": "{{summary}}", "weight": "Bolder", "wrap": true },
+          {{#if (eq type "digest.weekly")}}{ "type": "TextBlock", "text": "{{truncate data.body 4000}}", "wrap": true },{{/if}}
           {
             "type": "TextBlock",
             "text": "{{workspace.name}} · {{date occurredAt}}",
@@ -187,7 +190,7 @@ export const WEBHOOK_PRESETS: Record<WebhookPresetId, WebhookPreset> = {
     name: "Google Chat",
     hint: "In the space's Apps & integrations, add a webhook and paste its URL.",
     template:
-      '{ "text": "{{#if url}}<{{url}}|{{summary}}>{{else}}{{summary}}{{/if}}\\n{{workspace.name}} · {{date occurredAt}}" }',
+      '{ "text": "{{#if url}}<{{url}}|{{summary}}>{{else}}{{summary}}{{/if}}\\n{{workspace.name}} · {{date occurredAt}}{{#if (eq type "digest.weekly")}}\\n{{truncate data.body 4000}}{{/if}}" }',
   },
   lark: {
     id: "lark",
@@ -206,7 +209,7 @@ export const WEBHOOK_PRESETS: Record<WebhookPresetId, WebhookPreset> = {
       "title": { "tag": "plain_text", "content": "{{truncate summary 100}}" }
     },
     "elements": [
-      {{#if data.body}}{ "tag": "div", "text": { "tag": "lark_md", "content": "{{truncate data.body 1000}}" } },
+      {{#if data.body}}{ "tag": "div", "text": { "tag": "lark_md", "content": "{{#if (eq type "digest.weekly")}}{{truncate data.body 4000}}{{else}}{{truncate data.body 1000}}{{/if}}" } },
       {{/if}}{
         "tag": "note",
         "elements": [
@@ -382,6 +385,7 @@ export function sampleEvent(
       summary:
         "Acme Team's week: 34 merges, 41 reviews, 3 releases from 6 people",
       data: {
+        body: "Shipped: acme/platform released v2.8.0.\nThanks for reviewing teammates’ PRs: alexchen, minhnguyen.\nCurrent PRs needing help: acme/platform #428 (checks failing).\nNext weekly milestone: Ready for the world (3/5).\nBased on stored activity; missing history may lower totals.",
         weekStart: new Date(now - 7 * 86_400_000).toISOString().slice(0, 10),
         weekEnd: occurredAt.slice(0, 10),
         totals: {

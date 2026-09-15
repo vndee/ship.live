@@ -296,3 +296,88 @@
 .engineering-wall .pulse-range-state {
   padding: 24px;
 }
+
+.pulse-coverage {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-inset);
+  overflow-wrap: anywhere;
+}
+.pulse-coverage-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--text);
+}
+.pulse-coverage-heading strong {
+  font-weight: 500;
+  font-size: 12px;
+}
+.pulse-coverage-status {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+.pulse-coverage p {
+  margin: 6px 0 0;
+}
+.pulse-coverage-warning {
+  color: var(--text);
+}
+.pulse-coverage dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 10px 0 6px;
+}
+.pulse-coverage dd {
+  margin: 1px 0 0;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.pulse-coverage dd span {
+  color: var(--muted);
+}
+.pulse-coverage details {
+  margin-top: 8px;
+}
+.pulse-coverage summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.pulse-coverage summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.pulse-filter-controls {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pulse-filter-controls .pulse-range-picker {
+  flex: 1;
+  min-width: 0;
+}
+.pulse-refresh {
+  flex-shrink: 0;
+  margin-top: 20px;
+}
+.pulse-page-filter > .pulse-history-note {
+  margin-top: 4px;
+}
+@media (max-width: 420px) {
+  .pulse-filter-controls {
+    flex-wrap: wrap;
+    gap: 0 12px;
+  }
+  .pulse-filter-controls .pulse-range-picker {
+    flex-basis: 100%;
+  }
+  .pulse-refresh {
+    margin: 0 0 8px;
+  }
+}

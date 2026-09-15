@@ -5,6 +5,7 @@ export interface PrivateFeedState {
   revision: number;
   events: ActivityEvent[];
   updatedAt: string;
+  accessScope?: string;
   loading: boolean;
   hasSnapshot: boolean;
   streaming: boolean;
@@ -23,6 +24,7 @@ export type PrivateFeedAction =
       generation: number;
       events: ActivityEvent[];
       updatedAt: string;
+      accessScope?: string;
       notice?: string;
     }
   | { type: "loading"; generation: number; value: boolean }
@@ -64,6 +66,9 @@ export function privateFeedReducer(
       return {
         ...state,
         events: action.events,
+        accessScope: action.accessScope,
+        revision:
+          state.revision + Number(state.accessScope !== action.accessScope),
         updatedAt: action.updatedAt,
         notice: action.notice || "",
         loading: false,

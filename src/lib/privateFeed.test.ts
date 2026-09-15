@@ -126,3 +126,38 @@ test("a failed private feed revalidation clears cached content and rejects its o
     );
   }
 });
+
+test("a changed authorized scope invalidates historical dashboards even with an empty feed", () => {
+  const loaded = privateFeedReducer(emptyPrivateFeed, {
+    type: "snapshot",
+    generation: 0,
+    events: [],
+    updatedAt: "2026-09-15T00:00:00Z",
+    accessScope: "two-repositories",
+  });
+  const refreshed = privateFeedReducer(loaded, {
+    type: "snapshot",
+    generation: 0,
+    events: [event],
+    updatedAt: "2026-09-15T00:01:00Z",
+    accessScope: "two-repositories",
+  });
+  assert.equal(refreshed.revision, loaded.revision);
+  const narrowed = privateFeedReducer(refreshed, {
+    type: "snapshot",
+    generation: 0,
+    events: [],
+    updatedAt: "2026-09-15T00:02:00Z",
+    accessScope: "one-repository",
+  });
+  assert.equal(narrowed.revision, loaded.revision + 1);
+  assert.deepEqual(narrowed.events, []);
+  // Losing the server's scope marker also invalidates the previous cache.
+  const unknown = privateFeedReducer(narrowed, {
+    type: "snapshot",
+    generation: 0,
+    events: [],
+    updatedAt: "2026-09-15T00:03:00Z",
+  });
+  assert.equal(unknown.revision, narrowed.revision + 1);
+});

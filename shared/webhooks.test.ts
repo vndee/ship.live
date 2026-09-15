@@ -126,3 +126,37 @@ test("the Lark preset signs in the body when asked, colors the header, and check
   assert.equal(card("health.down").elements.at(-1).tag, "note");
   assert.equal(card("inbound").elements[0].text.tag, "lark_md");
 });
+
+test("chat digest presets show the weekly body and keep the selected-week dashboard link", () => {
+  const event = {
+    ...sampleEvent("digest.weekly"),
+    url: "https://ship.example/?workspace=team&period=custom&from=2026-08-31&to=2026-09-06&scene=pulse",
+    data: {
+      body: 'Shipped: search "v2"\nThanks: Alice & Bob\nCurrent PRs needing help: acme/api #2',
+    },
+  };
+  for (const id of [
+    "slack",
+    "discord",
+    "teams",
+    "google-chat",
+    "lark",
+  ] as const) {
+    const rendered = JSON.parse(
+      renderTemplate(WEBHOOK_PRESETS[id].template, event, "json"),
+    );
+    const text = JSON.stringify(rendered);
+    assert.ok(
+      text.includes("Shipped: search"),
+      `${id} omits shipped highlights`,
+    );
+    assert.ok(
+      text.includes("Current PRs needing help"),
+      `${id} omits action items`,
+    );
+    assert.ok(
+      text.includes("from=2026-08-31"),
+      `${id} drops the digest week link`,
+    );
+  }
+});

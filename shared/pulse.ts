@@ -22,7 +22,16 @@ export interface PulseOverview {
   totals: PulseCounts;
   buckets: (PulseCounts & { from: string; to: string })[];
   repositories: (PulseCounts & { repo: string })[];
-  coverage: { earliestStoredAt: string | null; retentionDays: number | null };
+  coverage: {
+    earliestStoredAt: string | null;
+    retentionDays: number | null;
+    /** Successful repository imports; timestamp is the import's start, not completion. */
+    sourceSync?: {
+      lastSyncedAt: string | null;
+      syncedRepositories: number;
+      totalRepositories: number;
+    };
+  };
   generatedAt: string;
 }
 export interface PulseActivityPage {

@@ -138,10 +138,10 @@ test("a profile opens over the page, and Back closes it", async (t) => {
     .first()
     .click();
   await page.waitForSelector("dialog.modal[open]");
-  assert.match(location(page), /^\/\?person=[a-z]+$/);
+  assert.match(location(page), /^\/\?scene=leaderboard&person=[a-z]+$/);
   await page.goBack();
   await page.waitForFunction(() => !document.querySelector("dialog.modal"));
-  assert.equal(location(page), "/");
+  assert.equal(location(page), "/?scene=leaderboard");
 });
 
 test("a shared profile link opens directly and closes without a history entry", async (t) => {
@@ -243,7 +243,7 @@ test("one page-wide period stays selected across all six tabs and scopes the act
     await scenes.locator('[aria-current="page"]').textContent(),
     "Delivery",
   );
-  assert.equal(location(page), "/?period=today");
+  assert.equal(location(page), "/?scene=delivery&period=today");
   assert.doesNotMatch(
     await page.locator(".wall-scene").textContent(),
     /last 30 days|30 days before/,
@@ -253,7 +253,7 @@ test("one page-wide period stays selected across all six tabs and scopes the act
   await page.getByRole("option", { name: "Custom dates" }).click();
   await page.getByLabel("From date").fill(old);
   await page.getByLabel("To date").fill(old);
-  assert.equal(location(page), "/?period=today");
+  assert.equal(location(page), "/?scene=delivery&period=today");
   await page.getByRole("button", { name: "Apply dates" }).click();
   assert.equal(
     await scenes.locator('[aria-current="page"]').textContent(),
@@ -268,7 +268,10 @@ test("one page-wide period stays selected across all six tabs and scopes the act
     "Leaderboard",
   ]) {
     await scenes.getByRole("button", { name: tab, exact: true }).click();
-    assert.equal(location(page), `/?period=custom&from=${old}&to=${old}`);
+    const query = new URL(page.url()).searchParams;
+    assert.equal(query.get("period"), "custom");
+    assert.equal(query.get("from"), old);
+    assert.equal(query.get("to"), old);
     await page.getByRole("button", { name: "Period: Custom dates" }).waitFor();
     assert.equal(await scenes.getByRole("button").count(), 6);
     assert.equal(
@@ -306,6 +309,8 @@ test("one page-wide period stays selected across all six tabs and scopes the act
   assert.equal(location(page), `/feed?from=${old}&to=${old}`);
   await page.goBack();
   await page.getByRole("button", { name: "Period: Custom dates" }).waitFor();
+  // Each of the six scene selections now has its own history entry.
+  for (let i = 0; i < 6; i++) await page.goBack();
   await page.goBack();
   await page.getByRole("button", { name: "Period: Today" }).waitFor();
 });

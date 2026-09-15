@@ -8,6 +8,7 @@ import {
   usePulseOverview,
   type PulseSource,
 } from "../hooks/usePulse";
+import { PulseCoverage } from "./PulseCoverage";
 import { PulseRangePicker } from "./PulseRangePicker";
 import "../pulse-range.css";
 export function PulseOverview({
@@ -182,16 +183,7 @@ export function PulseOverview({
               </button>
             )}
           </section>
-          <p className="pulse-coverage">
-            {source.demo
-              ? "Fictional demo data."
-              : "Totals reflect stored activity visible to you. GitHub imports cover limited history; push history starts with webhooks."}{" "}
-            {data.coverage.earliestStoredAt &&
-              `Earliest stored contribution: ${data.coverage.earliestStoredAt.slice(0, 10)}. `}
-            {data.coverage.retentionDays !== null &&
-              `Retention: ${data.coverage.retentionDays} days. `}
-            Historical completeness is not guaranteed.
-          </p>
+          {!suppliedResult && <PulseCoverage data={data} demo={source.demo} />}
         </>
       )}
       {!suppliedResult && (

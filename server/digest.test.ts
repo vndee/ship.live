@@ -283,3 +283,263 @@ test("a journal's digest counts its sources and only its owner's activity by def
     assert.deepEqual(await logins(), []);
   });
 });
+
+test("digest highlights authorized team shipping, cross-author reviews, and current help separately from the week", async (t) => {
+  await withWorkspace(t, async ({ pool, workspace }) => {
+    await pool.query(
+      "INSERT INTO ship_live_organizations(organization) VALUES ('installation-99')",
+    );
+    const fixtures = [
+      {
+        id: "merge",
+        type: "merge",
+        login: "alice",
+        number: 1,
+        title: "Ship search",
+        repositoryId: 7,
+      },
+      {
+        id: "review",
+        type: "review",
+        login: "bob",
+        number: 1,
+        title: "Review search",
+        repositoryId: 7,
+      },
+      {
+        id: "self",
+        type: "review",
+        login: "alice",
+        number: 1,
+        title: "Self review",
+        repositoryId: 7,
+      },
+      {
+        id: "release",
+        type: "release",
+        login: "alice",
+        title: "v1.2",
+        repositoryId: 7,
+      },
+      {
+        id: "note",
+        type: "note",
+        login: "alice",
+        title: "Private journal",
+        repositoryId: 7,
+      },
+      {
+        id: "bot",
+        type: "merge",
+        login: "renovate[bot]",
+        title: "Bot work",
+        repositoryId: 7,
+      },
+      {
+        id: "secret",
+        type: "merge",
+        login: "secret",
+        title: "Secret feature",
+        repositoryId: 8,
+      },
+    ];
+    for (const item of fixtures) {
+      const at = "2026-09-03T10:00:00Z";
+      await pool.query(
+        "INSERT INTO ship_live_events(organization,event_id,event,occurred_at) VALUES('installation-99',$1,$2,$3)",
+        [
+          item.id,
+          {
+            ...item,
+            actor: { login: item.login },
+            repo: item.repositoryId === 7 ? "acme/api" : "acme/private",
+            occurredAt: at,
+            url: `https://github.com/acme/api/pull/${item.number ?? 1}`,
+            body: "Never include raw body",
+          },
+          at,
+        ],
+      );
+    }
+    for (const [number, state, draft, repositoryId] of [
+      [1, "merged", false, 7],
+      [2, "open", false, 7],
+      [3, "closed", false, 7],
+      [4, "open", true, 7],
+      [5, "open", false, 8],
+    ] as const) {
+      await pool.query(
+        `INSERT INTO ship_live_wall_signals(installation_id,repository_id,repository,kind,signal_key,observed_at,value) VALUES(99,$1,$2,'pull_request',$3,'2026-09-08T10:00:00Z',$4)`,
+        [
+          repositoryId,
+          repositoryId === 7 ? "acme/api" : "acme/private",
+          String(number),
+          {
+            number,
+            state,
+            draft,
+            title: `PR ${number}`,
+            author: "alice",
+            url: `https://github.com/acme/api/pull/${number}`,
+            headSha: `sha-${number}`,
+            createdAt: "2026-09-01T00:00:00Z",
+            updatedAt: "2026-09-08T10:00:00Z",
+          },
+        ],
+      );
+    }
+    const event = webhookEvent({
+      id: randomUUID(),
+      workspace_id: workspace,
+      workspace_name: "Acme",
+      type: "digest.weekly",
+      payload: {
+        occurredAt: "2026-09-07T09:00:00Z",
+        summary: "Digest",
+        data: { weekStart: "2026-08-31", weekEnd: "2026-09-06" },
+      },
+    });
+    const digest = await withDigest(pool, event, [7], {
+      appUrl: "https://ship.example",
+      now: Date.parse("2026-09-09T00:00:00Z"),
+    });
+    assert.deepEqual(
+      (digest.data.shipped as { title: string }[])
+        .map((item) => item.title)
+        .sort(),
+      ["Ship search", "v1.2"],
+    );
+    assert.deepEqual(digest.data.helpfulReviewers, [
+      { login: "bob", pullRequests: 1, reviews: 1 },
+    ]);
+    const attention = digest.data.needsHelp as {
+      basis: string;
+      items: { number: number; state: string }[];
+    };
+    assert.equal(attention.basis, "current");
+    assert.deepEqual(
+      attention.items.map(({ number, state }) => ({ number, state })),
+      [{ number: 2, state: "waiting" }],
+    );
+    const milestone = digest.data.nextMilestone as {
+      id: string;
+      progress: number;
+      target: number;
+      remaining: number;
+    };
+    assert.deepEqual(
+      {
+        id: milestone.id,
+        progress: milestone.progress,
+        target: milestone.target,
+        remaining: milestone.remaining,
+      },
+      { id: "team-release", progress: 1, target: 5, remaining: 4 },
+    );
+    const url = new URL(digest.url!);
+    assert.equal(url.origin, "https://ship.example");
+    assert.equal(url.searchParams.get("workspace"), workspace);
+    assert.equal(url.searchParams.get("scene"), "pulse");
+    assert.equal(url.searchParams.get("period"), "custom");
+    assert.equal(url.searchParams.get("from"), "2026-08-31");
+    assert.equal(url.searchParams.get("to"), "2026-09-06");
+    assert.match(String(digest.data.body), /Ship search/);
+    assert.match(String(digest.data.body), /Current/);
+    assert.ok(
+      String(digest.data.body).includes("https://github.com/acme/api/pull/2"),
+    );
+    assert.equal(
+      new URL(
+        (digest.data.links as { reviewers: string }).reviewers,
+      ).searchParams.get("scene"),
+      "leaderboard",
+    );
+    assert.match(String(digest.data.body), /stored/i);
+    for (const secret of [
+      "Private journal",
+      "Bot work",
+      "Secret feature",
+      "acme/private",
+      "Never include raw body",
+    ])
+      assert.ok(!JSON.stringify(digest).includes(secret), secret);
+    await pool.query(
+      "UPDATE ship_live_events SET event=jsonb_set(event,'{title}',to_jsonb($1::text)) WHERE event_id='merge'",
+      ["Long <title> ".repeat(400)],
+    );
+    const long = await withDigest(pool, event, [7], {
+      appUrl: "https://ship.example",
+      now: Date.parse("2026-09-09T00:00:00Z"),
+    });
+    assert.ok(
+      String(long.data.body).length <= 2800,
+      "digest narrative must leave room for caveats and action links",
+    );
+    const { renderTemplate } = await import("../shared/webhook-template.js");
+    const slack = JSON.parse(
+      renderTemplate(WEBHOOK_PRESETS.slack.template, long, "json"),
+    );
+    const detail = slack.blocks[1].text.text;
+    assert.ok(detail.length <= 3000);
+    assert.ok(detail.includes("missing history"));
+    assert.ok(detail.includes("Recent review activity:"));
+    const empty = await withDigest(pool, event, [], {
+      appUrl: "https://ship.example",
+    });
+    assert.deepEqual(empty.data.shipped, []);
+    assert.deepEqual(empty.data.helpfulReviewers, []);
+    assert.deepEqual((empty.data.needsHelp as { items: unknown[] }).items, []);
+  });
+});
+
+test("digest totals cover every stored weekly event without the old 20,000-row cutoff", async (t) => {
+  await withWorkspace(t, async ({ pool, workspace }) => {
+    await pool.query(
+      "INSERT INTO ship_live_organizations(organization) VALUES ('installation-99')",
+    );
+    await pool.query(`INSERT INTO ship_live_events(organization,event_id,event,occurred_at)
+      SELECT 'installation-99','merge-' || n,jsonb_build_object('id','merge-' || n,'type','merge','actor',jsonb_build_object('login','alice'),'repo','acme/api','repositoryId',7,'title','Ship ' || n,'occurredAt','2026-09-01T10:00:00Z'),'2026-09-01T10:00:00Z'::timestamptz FROM generate_series(1,20001) AS n`);
+    const event = webhookEvent({
+      id: randomUUID(),
+      workspace_id: workspace,
+      workspace_name: "Acme",
+      type: "digest.weekly",
+      payload: {
+        occurredAt: "2026-09-07T09:00:00Z",
+        summary: "Digest",
+        data: { weekStart: "2026-08-31", weekEnd: "2026-09-06" },
+      },
+    });
+    const digest = await withDigest(pool, event, [7]);
+    assert.equal((digest.data.totals as { merges: number }).merges, 20001);
+    assert.equal((digest.data.shipped as unknown[]).length, 5);
+    assert.equal(
+      (digest.data.repositories as { merges: number }[])[0].merges,
+      20001,
+    );
+  });
+});
+
+test("a prepared digest is no longer authorized when its source scope changes", async (t) => {
+  await withWorkspace(t, async ({ pool, workspace }) => {
+    const event = webhookEvent({
+      id: randomUUID(),
+      workspace_id: workspace,
+      workspace_name: "Acme",
+      type: "digest.weekly",
+      payload: {
+        occurredAt: "2026-09-07T09:00:00Z",
+        summary: "Digest",
+        data: { weekStart: "2026-08-31", weekEnd: "2026-09-06" },
+      },
+    });
+    const { prepareDigest } = await import("./digest.js");
+    const prepared = await prepareDigest(pool, event, [7]);
+    assert.equal(await prepared.authorize(), true);
+    await pool.query(
+      "UPDATE ship_live_workspaces SET installation_id=100 WHERE id=$1",
+      [workspace],
+    );
+    assert.equal(await prepared.authorize(), false);
+  });
+});

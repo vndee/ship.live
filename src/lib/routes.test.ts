@@ -151,3 +151,26 @@ test("calendar range fields are retained for validation but never leak to other 
     "/team",
   );
 });
+
+test("digest links retain workspace, calendar range and scene through overlays", () => {
+  const route = parseRoute(
+    "/",
+    "?workspace=team-a&period=custom&from=2026-09-07&to=2026-09-13&scene=review&person=alice",
+  );
+  assert.equal(route.workspace, "team-a");
+  assert.equal(route.scene, "review");
+  assert.equal(
+    routeHref({ ...route, person: undefined }),
+    "/?workspace=team-a&scene=review&period=custom&from=2026-09-07&to=2026-09-13",
+  );
+});
+
+test("only dashboard scenes are parsed; explicit workspace parameters never become implicit fallbacks", () => {
+  assert.equal(parseRoute("/", "?scene=admin").scene, undefined);
+  assert.equal(parseRoute("/team", "?scene=review").scene, undefined);
+  assert.equal(parseRoute("/", "?workspace=").workspace, "");
+  assert.equal(
+    parseRoute("/", "?workspace=unknown%2Fworkspace").workspace,
+    "unknown/workspace",
+  );
+});
