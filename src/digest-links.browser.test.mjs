@@ -12,10 +12,20 @@ before(async () => {
       contents: `
     import React from 'react'; import {createRoot} from 'react-dom/client';
     import App from './src/App';
+    import {useFeed} from './src/hooks/useFeed';
     import {navigate} from './src/hooks/useRoute';
     import {aggregatePulse,resolvePulseRange} from './shared/pulse';
     window.navigate = navigate; window.aggregatePulse=aggregatePulse; window.resolvePulseRange=resolvePulseRange;
-    createRoot(document.getElementById('root')).render(<App/>);
+    const suspended = new Promise(() => {});
+    function SuspenseProbe() {
+      const feed = useFeed();
+      if (new URLSearchParams(location.search).get('workspace') === 'team-b') {
+        window.suspendedRenders = (window.suspendedRenders || 0) + 1;
+        throw suspended;
+      }
+      return <output>{feed.workspace?.id || 'demo'}</output>;
+    }
+    createRoot(document.getElementById('root')).render(window.suspenseProbe ? <React.Suspense fallback={<p>Suspended</p>}><SuspenseProbe/></React.Suspense> : <App/>);
   `,
       resolveDir: fileURLToPath(new URL("../", import.meta.url)),
       loader: "tsx",
@@ -34,7 +44,13 @@ before(async () => {
 after(async () => browser?.close());
 const digest =
   "/?workspace=team-a&period=custom&from=2026-09-07&to=2026-09-13&scene=review";
-async function open(t, path = digest, signedIn = true, events = []) {
+async function open(
+  t,
+  path = digest,
+  signedIn = true,
+  events = [],
+  options = {},
+) {
   const context = await browser.newContext({ reducedMotion: "reduce" });
   const page = await context.newPage();
   page.setDefaultTimeout(5000);
@@ -55,13 +71,15 @@ async function open(t, path = digest, signedIn = true, events = []) {
       JSON.stringify({ hidden: ["review"] }),
     );
     window.requests = [];
+    window.workspaceReplies = [];
     window.workspaces = [
       { id: "personal-a", name: "Journal", kind: "personal", owner: true },
       { id: "team-a", name: "Digest Team", kind: "team", owner: false },
       { id: "team-b", name: "Second Team", kind: "team", owner: false },
     ];
-    const json = (data) =>
+    const json = (data, status = 200) =>
       new Response(JSON.stringify(data), {
+        status,
         headers: { "content-type": "application/json" },
       });
     window.fetch = async (path) => {
@@ -69,18 +87,36 @@ async function open(t, path = digest, signedIn = true, events = []) {
       if (path === "/api/session")
         return json({
           user: window.signedIn
-            ? { id: "user-a", name: "Alice", email: "alice@example.invalid" }
+            ? {
+                id: window.userId || "user-a",
+                name: "Alice",
+                email: "alice@example.invalid",
+              }
             : null,
           providers: { github: true, google: true },
           configured: true,
           csrfToken: "test",
         });
-      if (path === "/api/workspaces")
-        return json({
-          workspaces: window.workspaces,
-          githubConnected: true,
-          githubAppConfigured: true,
-        });
+      if (path === "/api/workspaces") {
+        const status = window.workspaceStatus || 200;
+        const response = json(
+          status === 200
+            ? {
+                workspaces: window.workspaces,
+                githubConnected: true,
+                githubAppConfigured: true,
+              }
+            : { error: "Workspace service temporarily unavailable" },
+          status,
+        );
+        if (window.holdWorkspaces)
+          return new Promise((resolve) =>
+            window.workspaceReplies.push(() => resolve(response)),
+          );
+        return response;
+      }
+      if (path.includes("/pulse/activity?"))
+        return json({ events: [], nextCursor: null });
       if (path.endsWith("/feed"))
         return json({
           events: [],
@@ -114,11 +150,12 @@ async function open(t, path = digest, signedIn = true, events = []) {
     };
   });
   await page.evaluate(
-    ({ signedIn, events }) => {
+    ({ signedIn, events, options }) => {
       window.signedIn = signedIn;
       window.dashboardEvents = events;
+      Object.assign(window, options);
     },
-    { signedIn, events },
+    { signedIn, events, options },
   );
   await page.addScriptTag({ content: bundle });
   return page;
@@ -409,4 +446,176 @@ test("hiding a linked tab after auto-slide keeps the currently visible scene", a
   );
   await selected(page, "Release pulse");
   assert.equal(new URL(page.url()).searchParams.get("scene"), "release");
+});
+
+test("a failed initial workspace lookup offers retry without claiming membership is missing", async (t) => {
+  const page = await open(t, digest, true, [], { workspaceStatus: 503 });
+  await page
+    .getByRole("heading", { name: "Could not load workspace" })
+    .waitFor();
+  assert.equal(
+    await page.getByRole("heading", { name: "Workspace unavailable" }).count(),
+    0,
+  );
+  assert.equal(
+    await page.evaluate(() =>
+      window.requests.some((p) => p.startsWith("/api/workspaces/")),
+    ),
+    false,
+  );
+  await page.evaluate(() => {
+    window.workspaceStatus = 200;
+  });
+  await page.getByRole("button", { name: "Retry workspace access" }).click();
+  await selected(page, "Review radar");
+  assert.equal(new URL(page.url()).searchParams.get("workspace"), "team-a");
+  assert.equal(new URL(page.url()).searchParams.get("from"), "2026-09-07");
+});
+
+for (const status of [403, 503, 500]) {
+  test(`a workspace lookup ${status} recovers fresh dashboard data after retry`, async (t) => {
+    const page = await open(t, digest.replace("scene=review", "scene=pulse"));
+    await page.waitForFunction(
+      () => document.querySelector("[data-pulse-total]")?.textContent === "0",
+    );
+    const before = await page.evaluate(
+      () =>
+        window.requests.filter((path) => path.includes("/pulse/dashboard?"))
+          .length,
+    );
+    await page.evaluate((status) => {
+      window.workspaceStatus = status;
+      window.dispatchEvent(new Event("focus"));
+    }, status);
+    await page
+      .getByRole("heading", { name: "Could not load workspace" })
+      .waitFor();
+    assert.equal(
+      await page.getByRole("navigation", { name: "Wall scenes" }).count(),
+      0,
+    );
+    await page.evaluate(() => {
+      window.workspaceStatus = 200;
+      window.dashboardEvents = [
+        {
+          id: "fresh-merge",
+          type: "merge",
+          actor: { login: "alice" },
+          repo: "team/repo",
+          title: "Freshly authorized shipment",
+          occurredAt: "2026-09-09T12:00:00Z",
+          number: 1,
+        },
+      ];
+    });
+    await page.getByRole("button", { name: "Retry workspace access" }).click();
+    await page.waitForFunction(
+      (before) =>
+        window.requests.filter((path) => path.includes("/pulse/dashboard?"))
+          .length > before,
+      before,
+    );
+    await page.waitForFunction(
+      () => document.querySelector("[data-pulse-total]")?.textContent === "1",
+    );
+    assert.equal(
+      await page.evaluate(() =>
+        window.requests.some(
+          (path) => path.includes("/personal-a/") || path.includes("/team-b/"),
+        ),
+      ),
+      false,
+    );
+  });
+}
+
+test("an old account's successful lookup cannot replace the new account's retryable failure", async (t) => {
+  const page = await open(t);
+  await selected(page, "Review radar");
+  await page.evaluate(() => {
+    window.holdWorkspaces = true;
+    window.dispatchEvent(new Event("focus"));
+  });
+  await page.waitForFunction(() => window.workspaceReplies.length === 1);
+  await page.evaluate(() => {
+    window.userId = "user-b";
+    window.holdWorkspaces = false;
+    window.workspaceStatus = 503;
+    window.workspaces = [];
+    window.dispatchEvent(new Event("focus"));
+  });
+  await page
+    .getByRole("heading", { name: "Could not load workspace" })
+    .waitFor();
+  await page.evaluate(async () => {
+    window.workspaceReplies[0]();
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)),
+    );
+  });
+  assert.equal(
+    await page
+      .getByRole("heading", { name: "Could not load workspace" })
+      .count(),
+    1,
+  );
+  assert.equal(
+    await page.getByRole("navigation", { name: "Wall scenes" }).count(),
+    0,
+  );
+  await page.evaluate(() => {
+    window.workspaceStatus = 200;
+  });
+  await page.getByRole("button", { name: "Retry workspace access" }).click();
+  await page.getByRole("heading", { name: "Workspace unavailable" }).waitFor();
+});
+
+test("historical drill-down remains tied to its workspace when opened again", async (t) => {
+  const page = await open(t, digest.replace("scene=review", "scene=pulse"));
+  await page
+    .getByRole("button", { name: "View activity in this period" })
+    .click();
+  const location = new URL(page.url());
+  assert.equal(location.pathname, "/feed");
+  assert.equal(location.searchParams.get("workspace"), "team-a");
+  assert.equal(location.searchParams.get("from"), "2026-09-07");
+  assert.equal(location.searchParams.get("to"), "2026-09-13");
+  const fresh = await open(t, location.pathname + location.search);
+  await fresh.waitForFunction(() =>
+    window.requests.some((p) => p.includes("/team-a/pulse/activity?")),
+  );
+  assert.equal(
+    await fresh.evaluate(() =>
+      window.requests.some((p) => p.includes("/personal-a/")),
+    ),
+    false,
+  );
+});
+
+test("a discarded route render cannot steer an in-flight workspace refresh", async (t) => {
+  const page = await open(t, digest, true, [], { suspenseProbe: true });
+  await page.waitForFunction(
+    () => document.querySelector("output")?.textContent === "team-a",
+  );
+  await page.evaluate(() => {
+    window.holdWorkspaces = true;
+    window.dispatchEvent(new Event("focus"));
+  });
+  await page.waitForFunction(() => window.workspaceReplies.length === 1);
+  await page.evaluate(() =>
+    window.navigate({ page: "pulse", workspace: "team-b" }),
+  );
+  await page.waitForFunction(() => window.suspendedRenders > 0);
+  await page.evaluate(async () => {
+    window.workspaceReplies[0]();
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)),
+    );
+  });
+  // Cancel the suspended navigation, retaining the last committed workspace.
+  await page.evaluate(() => window.navigate({ page: "pulse" }));
+  await page.waitForFunction(
+    () => document.querySelector("output")?.textContent !== "demo",
+  );
+  assert.equal(await page.locator("output").textContent(), "team-a");
 });

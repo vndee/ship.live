@@ -4,8 +4,8 @@
 
 - Keep historical Pulse periods stable until manual refresh, and retain the current dashboard while live data refreshes. Source and permission changes still invalidate cached data; failed reads hide unverified results.
 - Show page-wide activity coverage: earliest stored contribution, recorded source import time, repository import coverage, and warnings for selected dates before stored history or retention. Import times describe the start of successful imports; complete historical coverage is never implied.
-- Enrich the existing weekly webhook digest with shipped highlights, confirmed cross-author reviewers, current PRs needing help, and the closest unfinished weekly milestone. Preserve existing totals and custom templates, and add links to authorized workspaces with the matching Pulse period and tab.
-- Support workspace and Pulse tab links through browser navigation. Unavailable workspace links show an explicit state instead of another team's data.
+- Enrich the existing weekly webhook digest with shipped highlights, confirmed cross-author reviewers, current PRs needing help, and the closest unfinished weekly milestone. Calculate full retained totals in PostgreSQL with bounded results in the worker, preserve custom templates, and add links to authorized workspaces with the matching Pulse period and tab.
+- Support workspace and Pulse tab links through browser navigation and activity drill-downs, and preserve validated contributor profiles through sign-in. A failed workspace-list read offers retry; a successfully verified list with no matching workspace shows an explicit unavailable state.
 - Update the documentation for page-wide dates and selected-period recognition. No database migration is required.
 
 ## 0.2.2 — 2026-09-15

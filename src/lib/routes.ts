@@ -1,3 +1,4 @@
+import { LOGIN } from "../../shared/github-login";
 import { ALL_SCENES, type WallScene } from "./engineering-wall";
 import { isTag } from "./journal";
 import type { ActivityEvent } from "../../shared/types";
@@ -58,8 +59,6 @@ const KINDS: readonly Kind[] = [
 const PERIODS: readonly Period[] = ["24h", "7d", "30d"];
 // owner/name as GitHub allows it, or a bare name for sources without an owner.
 const REPOSITORY = /^[\w.-]{1,100}(?:\/[\w.-]{1,100})?$/;
-// GitHub logins, including app accounts such as dependabot[bot].
-const LOGIN = /^[A-Za-z\d](?:[A-Za-z\d-]{0,38})(?:\[bot\])?$/;
 
 function oneOf<T extends string>(
   values: readonly T[],

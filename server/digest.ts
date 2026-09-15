@@ -1,14 +1,8 @@
 import type { Pool } from "pg";
 import type { WebhookEvent } from "../shared/webhooks.js";
-import {
-  getAchievements,
-  getLeaderboard,
-  getMetrics,
-} from "../src/lib/activity.js";
-import { getReviewRadar } from "../src/lib/engineering-wall.js";
+import { getAchievements } from "../src/lib/activity.js";
 import { resolvePulseRange } from "../shared/pulse.js";
-import { PulseStore } from "./pulse-store.js";
-import { combineWallSnapshots, WallStore } from "./wall-store.js";
+import { readDigestSummary } from "./digest-store.js";
 import { recordWorkspaceEvent } from "./webhook-outbox.js";
 
 const DAY = 86_400_000;
@@ -127,112 +121,41 @@ export async function prepareDigest(
   const initialScope = scopeKey(workspaces[0]);
   const installations = (workspaces[0]?.installations ?? []).map(Number);
   const author = workspaces[0]?.author?.toLowerCase() ?? undefined;
-  const scope = {
-    sources: installations.map((installationId) => ({
-      installationId,
-      repositoryIds,
-    })),
-    author,
-  };
   const range = resolvePulseRange(
     { period: "custom", from: day(start), to: day(end - DAY) },
     Math.max(now, end),
   );
-  const activity = await new PulseStore(pool).events(scope, range, now);
-  // No date-limited status claim: these are the latest stored PR states at delivery.
-  // The range overload keeps all relevant open PRs without the live wall's row cap.
-  const wall = combineWallSnapshots(
-    await Promise.all(
-      installations.map((id) =>
-        new WallStore(pool).snapshot(id, repositoryIds, {
-          start: range.start,
-          end: new Date(now + 1).toISOString(),
-        }),
-      ),
-    ),
-  );
-  const shipped = activity
-    .filter((item) => item.type === "merge" || item.type === "release")
-    .slice(0, 5)
-    .map(({ id, type, title, repo, number, url, occurredAt }) => ({
-      id,
-      type,
-      title,
-      repository: repo,
-      number,
-      url,
-      occurredAt,
-    }));
-  const reviewers = new Map<
-    string,
-    { login: string; reviews: number; pulls: Set<string> }
-  >();
-  for (const item of activity) {
-    if (item.type !== "review" || item.number === undefined) continue;
-    const pull = wall.repositories
-      .find((repo) => repo.repositoryId === item.repositoryId)
-      ?.pullRequests.find((pull) => pull.number === item.number);
-    const login = item.actor.login.trim().toLowerCase();
-    // Review volume alone cannot show who helped another author.
-    if (!pull?.author || pull.author.trim().toLowerCase() === login) continue;
-    const entry = reviewers.get(login) ?? {
-      login: item.actor.login,
-      reviews: 0,
-      pulls: new Set<string>(),
-    };
-    entry.reviews++;
-    entry.pulls.add(`${item.repositoryId}:${item.number}`);
-    reviewers.set(login, entry);
-  }
-  const helpfulReviewers = [...reviewers.values()]
-    .sort(
-      (a, b) => b.pulls.size - a.pulls.size || a.login.localeCompare(b.login),
-    )
-    .slice(0, 5)
-    .map(({ login, reviews, pulls }) => ({
-      login,
-      reviews,
-      pullRequests: pulls.size,
-    }));
+  const summary = await readDigestSummary(pool, {
+    installations,
+    repositoryIds,
+    author,
+    start: range.start,
+    end: range.end,
+    now,
+  });
+  const { shipped, helpfulReviewers, totals: metrics } = summary;
   const needsHelp = {
     basis: "current",
     checkedAt: new Date(now).toISOString(),
     note: "Latest stored PR status at delivery; not a historical snapshot of the digest week.",
-    items: wall.repositories
-      .flatMap((repository) =>
-        repository.pullRequests.flatMap((pull) => {
-          if (
-            author !== undefined &&
-            pull.author.toLowerCase() !== author.toLowerCase()
-          )
-            return [];
-          return getReviewRadar(
-            {
-              ...wall,
-              repositories: [{ ...repository, pullRequests: [pull] }],
-            },
-            now,
-          );
-        }),
-      )
-      .filter((item) => item.state === "waiting" || item.state === "failing")
-      .sort(
-        (a, b) =>
-          Number(b.state === "failing") - Number(a.state === "failing") ||
-          b.ageMs - a.ageMs ||
-          a.repository.localeCompare(b.repository) ||
-          a.number - b.number,
-      )
-      .slice(0, 5)
-      .map(({ repository, number, title, url, state }) => ({
-        repository,
-        number,
-        title,
-        url,
-        state,
-      })),
+    items: summary.needsHelp,
   };
-  const next = getAchievements(activity, end - 1)
+  // Reuse the dashboard's milestone definitions; progress comes from the full
+  // SQL counts, not synthetic events or a bounded highlights list.
+  const next = getAchievements([], end - 1)
+    .map((item) => {
+      const count =
+        item.kind === "merge"
+          ? metrics.merges
+          : item.kind === "review"
+            ? metrics.reviews
+            : metrics.releases;
+      return {
+        ...item,
+        progress: Math.min(count, item.target),
+        unlocked: count >= item.target,
+      };
+    })
     .filter((item) => !item.unlocked)
     .sort((a, b) => b.progress / b.target - a.progress / a.target)[0];
   const nextMilestone = next
@@ -300,23 +223,6 @@ export async function prepareDigest(
       `${compact(item.repository)}: ${compact(item.title)}${item.url ? ` — ${item.url}` : ""}`,
     );
   const body = lines.join("\n");
-  // A moment inside the digest week, so the weekly rules count that week.
-  const during = end - 1;
-  const metrics = getMetrics(activity, during);
-  const counts = new Map<
-    string,
-    { name: string; merges: number; reviews: number }
-  >();
-  for (const item of activity) {
-    if (item.type !== "merge" && item.type !== "review") continue;
-    const entry = counts.get(item.repo) ?? {
-      name: item.repo,
-      merges: 0,
-      reviews: 0,
-    };
-    entry[item.type === "merge" ? "merges" : "reviews"] += 1;
-    counts.set(item.repo, entry);
-  }
   const { rows: services } = await pool.query<{
     name: string;
     checks: number;
@@ -360,17 +266,8 @@ export async function prepareDigest(
         contributors: metrics.contributors,
         xp: metrics.xp,
       },
-      topContributors: getLeaderboard(activity, during)
-        .slice(0, 5)
-        .map(({ login, xp, merges, reviews }) => ({
-          login,
-          xp,
-          merges,
-          reviews,
-        })),
-      repositories: [...counts.values()]
-        .sort((a, b) => b.merges + b.reviews - (a.merges + a.reviews))
-        .slice(0, 5),
+      topContributors: summary.topContributors,
+      repositories: summary.repositories,
       services: services.map((service) => ({
         name: service.name,
         uptime: service.checks ? service.passed / service.checks : null,

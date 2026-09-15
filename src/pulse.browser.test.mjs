@@ -17,7 +17,7 @@ before(async () => {
     import {PulseHistoryFeed} from './src/components/PulseHistoryFeed';
     import {usePulseLocation, setPulseLocation} from './src/hooks/usePulse';
     function Harness() {
-      const [source, setSource] = useState({workspaceId:'alpha', demo:false, events:[], enabled:true});
+      const [source, setSource] = useState({workspaceId:'alpha', demo:false, events:[], enabled:true, ...window.initialSource});
       window.changeSource = (update) => setSource(s => ({...s,...update}));
       const loc = usePulseLocation();
       const now = Date.parse('2026-09-15T00:30:00Z');
@@ -43,7 +43,7 @@ before(async () => {
   });
 });
 after(async () => browser?.close());
-async function open(t, path = "/") {
+async function open(t, path = "/", initialSource = {}) {
   const context = await browser.newContext({
     timezoneId: "America/Los_Angeles",
   });
@@ -80,6 +80,9 @@ async function open(t, path = "/") {
         }),
       );
   });
+  await page.evaluate((source) => {
+    window.initialSource = source;
+  }, initialSource);
   await page.addScriptTag({ content: bundle });
   return page;
 }
@@ -186,10 +189,10 @@ test("superseded range and workspace responses never restore stale totals; acces
 });
 
 test("shared overview and history use share header, retain hash, and append cursor pages", async (t) => {
-  const page = await open(t, "/shared#secret-token");
-  await page.evaluate(() =>
-    window.changeSource({ workspaceId: undefined, shareToken: "secret-token" }),
-  );
+  const page = await open(t, "/shared#secret-token", {
+    workspaceId: undefined,
+    shareToken: "secret-token",
+  });
   const req = await request(page, 0);
   assert.match(req.url, /^\/api\/shared\/pulse\/overview/);
   assert.deepEqual(req.headers, { "x-dashboard-share": "secret-token" });

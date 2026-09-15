@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { resetRouteDetails, useRoute } from "./useRoute";
 import type { ActivityEvent, FeedResponse } from "../../shared/types";
 import type { SessionResponse } from "../../shared/auth";
@@ -85,7 +92,9 @@ function message(error: unknown) {
 export function useFeed() {
   const { workspace: linkedWorkspace } = useRoute();
   const linkedWorkspaceRef = useRef(linkedWorkspace);
-  linkedWorkspaceRef.current = linkedWorkspace;
+  useLayoutEffect(() => {
+    linkedWorkspaceRef.current = linkedWorkspace;
+  }, [linkedWorkspace]);
   const [state, dispatch] = useReducer(privateFeedReducer, {
     ...emptyPrivateFeed,
     events: createDemoEvents(),
@@ -95,6 +104,9 @@ export function useFeed() {
   const [sessionError, setSessionError] = useState("");
   const [workspaceList, setWorkspaceList] =
     useState<WorkspaceList>(noWorkspaces);
+  const [workspaceListVerified, setWorkspaceListVerified] = useState(false);
+  const [workspaceListLoading, setWorkspaceListLoading] = useState(false);
+  const [workspaceListError, setWorkspaceListError] = useState("");
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [paused, setPaused] = useState(false);
   const [accessBlocked, setAccessBlocked] = useState(false);
@@ -191,6 +203,9 @@ export function useFeed() {
       initialSelection.current = true;
       setWorkspace(null);
       setWorkspaceList(noWorkspaces);
+      setWorkspaceListVerified(false);
+      setWorkspaceListLoading(false);
+      setWorkspaceListError("");
       setSession((previous) => ({
         ...previous,
         user: null,
@@ -239,18 +254,26 @@ export function useFeed() {
     const user = currentUser.current;
     if (!user) return;
     const serial = ++workspaceRequest.current;
+    setWorkspaceListLoading(true);
     try {
       const data = await request<WorkspaceList>("/api/workspaces");
       if (currentUser.current !== user || serial !== workspaceRequest.current)
         return;
       setWorkspaceList(data);
+      setWorkspaceListVerified(true);
+      setWorkspaceListLoading(false);
+      setWorkspaceListError("");
       authorizedWorkspaces.current = data.workspaces;
       const active = currentWorkspace.current;
       const linkedId = linkedWorkspaceRef.current;
       if (linkedId !== undefined) {
         const next =
           data.workspaces.find((item) => item.id === linkedId) ?? null;
-        if (active?.id !== next?.id || initialSelection.current)
+        if (
+          active?.id !== next?.id ||
+          initialSelection.current ||
+          blocked.current
+        )
           applyWorkspace(next);
         else if (next) {
           currentWorkspace.current = next;
@@ -289,6 +312,8 @@ export function useFeed() {
     } catch (error) {
       if (currentUser.current !== user || serial !== workspaceRequest.current)
         return;
+      setWorkspaceListLoading(false);
+      setWorkspaceListError(message(error));
       if (!accessFailure(error)) setSessionError(message(error));
     }
   }, [accessFailure, applyWorkspace]);
@@ -888,9 +913,16 @@ export function useFeed() {
     operation: operationState.operation,
     retryOperation,
     workspace,
+    linkedWorkspaceError:
+      linkedWorkspace !== undefined && session.user ? workspaceListError : "",
+    workspaceListLoading,
+    retryWorkspaceAccess: loadSession,
     linkedWorkspacePending:
       linkedWorkspace !== undefined &&
       (sessionLoading ||
+        (Boolean(session.user) &&
+          !workspaceListVerified &&
+          !workspaceListError) ||
         (workspace?.id !== linkedWorkspace &&
           workspaceList.workspaces.some(
             (item) => item.id === linkedWorkspace,
@@ -898,6 +930,8 @@ export function useFeed() {
     linkedWorkspaceUnavailable:
       linkedWorkspace !== undefined &&
       !sessionLoading &&
+      workspaceListVerified &&
+      !workspaceListError &&
       (!session.user ||
         !workspaceList.workspaces.some((item) => item.id === linkedWorkspace)),
     organization: workspace?.name || "",

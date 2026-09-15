@@ -1,3 +1,5 @@
+import { LOGIN } from "./github-login.js";
+
 /** A login continuation is navigation only, limited to the root dashboard. */
 export function dashboardReturnTo(value: unknown): string {
   if (
@@ -41,6 +43,8 @@ export function dashboardReturnTo(value: unknown): string {
         if (input.has(key)) output.set(key, input.get(key)!.slice(0, 32));
     }
   }
+  const person = input.get("person");
+  if (person && LOGIN.test(person)) output.set("person", person);
   const query = output.toString();
   return query ? `/?${query}` : "/";
 }

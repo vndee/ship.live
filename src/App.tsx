@@ -79,6 +79,20 @@ export default function App() {
 
 function PrivateApp() {
   const feed = useFeed();
+  if (feed.linkedWorkspaceError)
+    return (
+      <main className="empty-state">
+        <h1>Could not load workspace</h1>
+        <p role="alert">{feed.linkedWorkspaceError}</p>
+        <button
+          className="button secondary"
+          disabled={feed.workspaceListLoading}
+          onClick={() => void feed.retryWorkspaceAccess()}
+        >
+          Retry workspace access
+        </button>
+      </main>
+    );
   if (feed.linkedWorkspacePending)
     return (
       <main>
@@ -765,7 +779,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                     }}
                     now={now}
                     onHistory={(from, to, repo) =>
-                      navigate({ page: "feed", from, to, repo })
+                      navigate({ ...route, page: "feed", from, to, repo })
                     }
                     onMilestones={() => navigate({ page: "milestones" })}
                   />

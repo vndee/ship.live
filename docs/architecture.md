@@ -23,7 +23,7 @@ flowchart LR
 
 ## Identity and session boundary
 
-`server/auth.ts` owns the Supabase PKCE start/callback, session inspection, logout, and mutation checks. A login transaction is random, browser-bound, expiring, and consumed atomically in PostgreSQL. Dashboard links preserve workspace, calendar dates, and scene through sign-in using an allowlisted root-dashboard `returnTo`, validated again on callback. This is navigation only; the selected workspace must still be in the authenticated member’s workspace list. Only Google and GitHub login providers are exposed. Exact `APP_URL` configuration controls redirects and mutation Origin checks.
+`server/auth.ts` owns the Supabase PKCE start/callback, session inspection, logout, and mutation checks. A login transaction is random, browser-bound, expiring, and consumed atomically in PostgreSQL. Dashboard links preserve workspace, calendar dates, scene, and validated contributor profiles through sign-in using an allowlisted root-dashboard `returnTo`, validated again on callback. This is navigation only; the selected workspace must still be in the authenticated member’s workspace list. Only Google and GitHub login providers are exposed. Exact `APP_URL` configuration controls redirects and mutation Origin checks.
 
 The callback verifies the Supabase user and stores a profile keyed by that user's UUID. Supabase manages identity linking, including its automatic matching-email behavior; ship.live does not add another email-based linking layer. GitHub data connection is separate from login, so a Google user can write private notes before connecting GitHub.
 
