@@ -57,6 +57,7 @@ export function setPulseLocation(
   }
   if (history) url.searchParams.set("view", "activity");
   if (repo) url.searchParams.set("repo", repo);
+  if (url.href === window.location.href) return;
   window.history.pushState(null, "", url.pathname + url.search + url.hash);
   window.dispatchEvent(new Event(NAVIGATED));
 }

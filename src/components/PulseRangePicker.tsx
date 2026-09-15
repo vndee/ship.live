@@ -53,6 +53,7 @@ export function PulseRangePicker({
           value={preset}
           options={periods}
           onChange={(value) => {
+            if (value === preset) return;
             setPreset(value);
             setError("");
             if (value === "custom") {

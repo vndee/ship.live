@@ -2,9 +2,12 @@
 
 ## Unreleased
 
+## 0.2.2 — 2026-09-15
+
 - Make the Pulse period filter page-wide: Overview, Review radar, Release pulse, Delivery, Service health, Leaderboard, the activity sidebar, and contributor profiles share the selected UTC dates. Changing dates keeps the active tab; URLs and Back/Forward preserve the range.
 - Read the complete authorized period across team and personal sources, including journal notes and private inbound alerts in activity. Deduplicate events and engineering signals across GitHub installations; shared dashboard links retain their existing access boundary.
 - Compare Delivery with an equal-length preceding interval and show Service health figures from retained daily check aggregates. Empty or missing history stays explicit; current-state badges are labeled separately. Historical views stay silent during live updates.
+- Avoid duplicate browser history entries when reselecting the same period.
 - Replace the native period menu with the themed dropdown, keyboard navigation, and responsive custom-date fields. No database migration is required.
 
 ## 0.2.1 — 2026-09-15

@@ -190,6 +190,10 @@ test("Overview calendar presets persist, custom dates apply explicitly, and dril
   await page.getByRole("button", { name: /^Period:/ }).click();
   await page.getByRole("option", { name: "Last 30 days" }).click();
   assert.equal(location(page), "/?period=30d");
+  const selectedHistoryLength = await historyLength(page);
+  await page.getByRole("button", { name: /^Period:/ }).click();
+  await page.getByRole("option", { name: "Last 30 days" }).click();
+  assert.equal(await historyLength(page), selectedHistoryLength);
   await page
     .getByRole("heading", { name: "Activity in this period", exact: true })
     .waitFor();
