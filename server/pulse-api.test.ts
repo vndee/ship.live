@@ -1,3 +1,4 @@
+import { WebhookStore } from "./webhook-store.js";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";
@@ -75,6 +76,7 @@ test("Pulse routes validate ranges, reauthorize aggregates and bind dashboard sh
       workspaces,
       auth,
       github: {} as GitHubApp,
+      webhooks: new WebhookStore(store.pool),
     }).listen(0, "127.0.0.1");
     await once(server, "listening");
     const address = server.address();
@@ -128,6 +130,26 @@ test("Pulse routes validate ranges, reauthorize aggregates and bind dashboard sh
     const activity = await get(`${shared}/activity`, link.token);
     assert.equal(activity.status, 200);
     assert.equal((await activity.json()).events.length, 1);
+    const dashboard = await get(`${base}/dashboard`);
+    assert.equal(dashboard.status, 200);
+    const dashboardData = await dashboard.json();
+    assert.equal(dashboardData.events.length, 1);
+    assert.equal(dashboardData.overview.totals.count, 1);
+    assert.deepEqual(dashboardData.range, dashboardData.overview.range);
+    assert.ok(
+      dashboardData.health,
+      "private dashboard includes authorized health",
+    );
+    const publicDashboard = await get(`${shared}/dashboard`, link.token);
+    assert.equal(publicDashboard.status, 200);
+    const publicData = await publicDashboard.json();
+    assert.equal(publicData.events.length, 1);
+    assert.equal(
+      publicData.health,
+      undefined,
+      "dashboard share cannot disclose health",
+    );
+    assert.equal((await get(`${shared}/dashboard`)).status, 410);
     const rotated = await shares.create(
       user.id,
       workspace,
@@ -191,6 +213,151 @@ test("Pulse routes validate ranges, reauthorize aggregates and bind dashboard sh
     } finally {
       active = true;
       PulseStore.prototype.activity = originalActivity;
+    }
+    // A personal dashboard combines sources and retains all notes in the period.
+    const second = {
+      ...installation,
+      id: 71,
+      accountId: 701,
+      account: "another",
+    };
+    const refreshedAccess = (await workspaces.connection(user.id))!;
+    await workspaces.replaceAccess(
+      user.id,
+      refreshedAccess.generation,
+      refreshedAccess.accessVersion,
+      [
+        {
+          ...installation,
+          repositories: [{ id: 101, name: "team/a", private: true }],
+        },
+        {
+          ...second,
+          repositories: [{ id: 202, name: "another/b", private: true }],
+        },
+      ],
+    );
+    await workspaces.connectInstallation(
+      user,
+      second,
+      1,
+      refreshedAccess.generation,
+    );
+    const personal = await workspaces.ensurePersonal(user);
+    await workspaces.setPersonalSources(user.id, personal.id, {
+      installationIds: [70, 71],
+      mineOnly: true,
+    });
+    const at = new Date().toISOString();
+    for (const [installationId, repositoryId, repo] of [
+      [70, 101, "team/a"],
+      [71, 202, "another/b"],
+    ] as const)
+      await store.merge(
+        `installation-${installationId}`,
+        ["builder", "someone"].map((login) => ({
+          id: `personal-${installationId}-${login}`,
+          type: "merge" as const,
+          actor: { login },
+          repositoryId,
+          repo,
+          title: "Work",
+          occurredAt: at,
+        })),
+        { restricted: true },
+      );
+    await store.pool.query(
+      `INSERT INTO ship_live_notes(id,workspace_id,user_id,title,body,created_at)
+      SELECT gen_random_uuid(),$1,$2,'Journal entry','private body',now() FROM generate_series(1,305)`,
+      [personal.id, user.id],
+    );
+    const personalBase = `/api/workspaces/${personal.id}/pulse`;
+    const personalResponse = await get(`${personalBase}/dashboard`);
+    assert.equal(personalResponse.status, 200);
+    const personalData = await personalResponse.json();
+    assert.equal(personalData.overview.totals.count, 2);
+    assert.equal(personalData.events.length, 307);
+    assert.ok(
+      personalData.events.every(
+        (event: { actor: { login: string } }) =>
+          event.actor.login === "builder",
+      ),
+    );
+    const personalIds: string[] = [];
+    let personalCursor: string | undefined;
+    do {
+      const page = await (
+        await get(
+          `${personalBase}/activity${personalCursor ? "?cursor=" + personalCursor : ""}`,
+        )
+      ).json();
+      personalIds.push(...page.events.map((event: { id: string }) => event.id));
+      personalCursor = page.nextCursor ?? undefined;
+    } while (personalCursor);
+    assert.equal(personalIds.length, 307);
+    assert.equal(new Set(personalIds).size, 307);
+    assert.equal(
+      (await (await get(`${personalBase}/activity?repo=team%2Fa`)).json())
+        .events.length,
+      1,
+    );
+    await store.pool.query(
+      `INSERT INTO ship_live_webhook_events(id,workspace_id,type,payload,dedupe_key)
+      SELECT gen_random_uuid(),$1,'inbound.monitor',jsonb_build_object('summary','Period alert','occurredAt',now()),'alert-'||n FROM generate_series(1,125) n`,
+      [personal.id],
+    );
+    await store.pool.query(
+      `INSERT INTO ship_live_webhook_events(id,workspace_id,type,payload,dedupe_key)
+      VALUES(gen_random_uuid(),$1,'inbound.monitor',jsonb_build_object('summary','Old alert','occurredAt',now()-interval '40 days'),'old-alert')`,
+      [personal.id],
+    );
+    const alertsData = await (await get(`${personalBase}/dashboard`)).json();
+    assert.equal(
+      alertsData.events.filter(
+        (event: { type: string }) => event.type === "alert",
+      ).length,
+      125,
+    );
+    assert.equal(alertsData.overview.totals.count, 2);
+    assert.equal(
+      (await (await get(`${base}/dashboard`)).json()).events.filter(
+        (event: { type: string }) => event.type === "alert",
+      ).length,
+      0,
+      "alerts stay workspace scoped",
+    );
+    assert.equal(
+      (await (await get(`${personalBase}/overview`)).json()).totals.count,
+      2,
+    );
+    const originalEvents = PulseStore.prototype.events;
+    try {
+      PulseStore.prototype.events = async function (...args) {
+        const result = await originalEvents.apply(this, args);
+        await workspaces.setPersonalSources(user.id, personal.id, {
+          installationIds: [70, 71],
+          mineOnly: false,
+        });
+        return result;
+      };
+      assert.equal(
+        (await get(`${personalBase}/dashboard`)).status,
+        403,
+        "author restriction change invalidates the entire snapshot",
+      );
+      PulseStore.prototype.events = async function (...args) {
+        const result = await originalEvents.apply(this, args);
+        active = false;
+        return result;
+      };
+      assert.equal(
+        (await get(`${base}/dashboard`)).status,
+        401,
+        "logout during dashboard reads fails closed",
+      );
+    } finally {
+      active = true;
+      PulseStore.prototype.events = originalEvents;
     }
     const original = PulseStore.prototype.overview;
     try {

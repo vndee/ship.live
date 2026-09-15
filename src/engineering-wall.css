@@ -796,3 +796,11 @@ button.scene-row:hover {
     overflow: visible;
   }
 }
+
+.delivery-weeks-bars[data-period] .delivery-week small {
+  display: flex;
+  justify-content: center;
+  overflow: visible;
+  visibility: visible;
+  font-size: 10px;
+}

@@ -1,3 +1,6 @@
+import { usePulseLocation, setPulseLocation } from "./hooks/usePulse";
+import { usePulseDashboard } from "./hooks/usePulseDashboard";
+import { PulsePageFilter } from "./components/PulsePageFilter";
 import { PulseOverview } from "./components/PulseOverview";
 import { PulseHistoryFeed } from "./components/PulseHistoryFeed";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -82,6 +85,7 @@ function PrivateApp() {
 function WorkspaceView({ feed }: { feed: FeedController }) {
   const route = useRoute();
   const page = route.page;
+  const pulseLocation = usePulseLocation();
   const personal = feed.workspace?.kind === "personal";
   const defaultPulseTitle = personal
     ? "Your week, in motion."
@@ -99,7 +103,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   );
   const engineering = useEngineeringWall(
     feed.demo ? undefined : feed.workspace?.id,
-    page === "pulse",
+    page !== "pulse" && Boolean(route.repository),
   );
   // Pulse's activity list keeps its own type filter; the Live feed's filters
   // live in the URL, so a filtered feed can be bookmarked and shared.
@@ -155,20 +159,9 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   }, [feed.session.user?.id, feed.workspace?.id]);
   const [detailId, setDetailId] = useState<string | null>(null);
   const profileLogin = route.person;
-  const detail = feed.events.find((event) => event.id === detailId) || null;
+
   const [actionError, setActionError] = useState("");
   const syncing = feed.syncRun?.status === "running";
-  const liveEffects = useActivityCelebration(feed.events, {
-    scope: feed.scopeKey,
-    ready: feed.demo || (feed.hasSnapshot && !feed.error),
-    enabled:
-      celebrations &&
-      page === "pulse" &&
-      !feed.paused &&
-      !replay &&
-      !syncing &&
-      !modal,
-  });
   const [toast, setToast] = useState("");
   const [limit, setLimit] = useState(30);
   const [now, setNow] = useState(Date.now());
@@ -184,6 +177,35 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
       feed.demo ||
       (Boolean(feed.session.user) && Boolean(feed.workspace) && !feed.error),
   };
+  const pulseDashboard = usePulseDashboard(
+    { ...pulseSource, enabled: pulseSource.enabled && page === "pulse" },
+    pulseLocation.selection,
+    now,
+    feed.demo ? demoSignals().snapshot : undefined,
+    feed.demo ? demoSignals().health : undefined,
+  );
+  const pulseEvents = pulseDashboard.data?.events ?? [];
+  const historicalPulse = Boolean(
+    pulseDashboard.range &&
+    pulseDashboard.range.to < new Date(now).toISOString().slice(0, 10),
+  );
+  const detail =
+    (page === "pulse" ? pulseEvents : feed.events).find(
+      (event) => event.id === detailId,
+    ) || null;
+  const liveEffects = useActivityCelebration(feed.events, {
+    scope: feed.scopeKey,
+    ready: feed.demo || (feed.hasSnapshot && !feed.error),
+    enabled:
+      celebrations &&
+      !historicalPulse &&
+      !pulseDashboard.error &&
+      page === "pulse" &&
+      !feed.paused &&
+      !replay &&
+      !syncing &&
+      !modal,
+  });
   const searchRef = useRef<HTMLInputElement>(null);
   const metrics = useMemo(
     () => getMetrics(feed.events, now),
@@ -204,8 +226,11 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     replay?.percent ?? 100,
   );
   const windowEvents = useMemo(
-    () => getWindowEvents(feed.events, range.start, range.end),
-    [feed.events, range.start, range.end],
+    () =>
+      page === "pulse"
+        ? pulseEvents
+        : getWindowEvents(feed.events, range.start, range.end),
+    [page, pulseDashboard.data, feed.events, range.start, range.end],
   );
   const allRepositories = useMemo(
     // Alerts name their inbound endpoint, not a repository.
@@ -436,7 +461,15 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   }
 
   const feedProps: ActivityFeedProps = {
-    feed,
+    feed:
+      page === "pulse"
+        ? {
+            ...feed,
+            loading: pulseDashboard.loading,
+            error: pulseDashboard.error,
+          }
+        : feed,
+    periodLabel: page === "pulse" ? "Activity in this period" : undefined,
     personal,
     canWriteNote,
     replaying: Boolean(replay),
@@ -462,7 +495,13 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
     moving,
     displayName,
     // The Live feed opens with Pulse's activity type still applied.
-    onViewAll: () => navigate({ page: "feed", kind: pulseKind || undefined }),
+    onViewAll: () =>
+      navigate({
+        page: "feed",
+        kind: pulseKind || undefined,
+        from: pulseDashboard.range?.from,
+        to: pulseDashboard.range?.to,
+      }),
     onShowMore: () => setLimit(limit + 30),
     onAddNote: () => setModal("note"),
     onConnect: openConnect,
@@ -680,58 +719,81 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
           </div>
         )}
         {page === "pulse" && (
-          <div className="dashboard-layout">
-            <EngineeringWall
-              overview={
-                personal ? undefined : (
+          <>
+            <PulsePageFilter
+              selection={pulseLocation.selection}
+              range={pulseDashboard.range}
+              now={now}
+              onChange={setPulseLocation}
+            />
+            <div className="dashboard-layout">
+              <EngineeringWall
+                overview={
                   <PulseOverview
                     source={pulseSource}
+                    result={{
+                      ...pulseDashboard,
+                      data: pulseDashboard.data?.overview ?? null,
+                    }}
                     now={now}
                     onHistory={(from, to, repo) =>
                       navigate({ page: "feed", from, to, repo })
                     }
                     onMilestones={() => navigate({ page: "milestones" })}
                   />
-                )
-              }
-              snapshot={feed.demo ? demoSignals().snapshot : engineering.data}
-              health={feed.demo ? demoSignals().health : engineering.health}
-              events={feed.events}
-              now={now}
-              demo={feed.demo}
-              personal={personal}
-              displayName={displayName}
-              preferencesKey={feed.demo ? "demo" : feed.workspace?.id}
-              moving={moving}
-              // Signed-out visitors and the wall display slide by default.
-              autoplayDefault={(!feed.session.user || wall) && moving}
-              loading={feed.loading || engineering.loading}
-              onToggleMotion={() => setMoving(!moving)}
-              onRules={() => setModal("rules")}
-              onMilestones={() => navigate({ page: "milestones" })}
-              onOpenHealth={
-                feed.demo ? undefined : () => navigate({ page: "health" })
-              }
-              onSelectPerson={openProfile}
-              onOpenTeam={() => navigate({ page: "team" })}
-              onSelectRepository={openRepository}
-              repositoryNote={feed.demo ? undefined : REPOSITORY_NOTE}
-              status={
-                feed.demo
-                  ? ""
-                  : feed.paused
-                    ? "Paused"
-                    : feed.streaming
-                      ? "Live"
-                      : feed.loading
-                        ? "Syncing"
-                        : "Polling"
-              }
-            />
-            <aside className="dashboard-sidebar">
-              <ActivityFeed {...feedProps} />
-            </aside>
-          </div>
+                }
+                range={pulseDashboard.range}
+                scopeError={pulseDashboard.error}
+                scopeLoading={pulseDashboard.loading}
+                onRetry={pulseDashboard.retry}
+                snapshot={
+                  pulseDashboard.data?.wall ?? {
+                    repositories: [],
+                    updatedAt: "",
+                  }
+                }
+                health={
+                  pulseDashboard.data?.health ?? { services: [], updatedAt: "" }
+                }
+                events={pulseEvents}
+                now={now}
+                demo={feed.demo}
+                personal={personal}
+                displayName={displayName}
+                preferencesKey={feed.demo ? "demo" : feed.workspace?.id}
+                moving={moving}
+                // Signed-out visitors and the wall display slide by default.
+                autoplayDefault={(!feed.session.user || wall) && moving}
+                loading={pulseDashboard.loading}
+                onToggleMotion={() => setMoving(!moving)}
+                onRules={() => setModal("rules")}
+                onMilestones={() => navigate({ page: "milestones" })}
+                onOpenHealth={
+                  feed.demo ? undefined : () => navigate({ page: "health" })
+                }
+                onSelectPerson={openProfile}
+                onOpenTeam={() => navigate({ page: "team" })}
+                onSelectRepository={openRepository}
+                repositoryNote={feed.demo ? undefined : REPOSITORY_NOTE}
+                status={
+                  historicalPulse
+                    ? "Historical period"
+                    : feed.demo
+                      ? ""
+                      : feed.paused
+                        ? "Paused"
+                        : feed.streaming
+                          ? "Live"
+                          : feed.loading
+                            ? "Syncing"
+                            : "Polling"
+                }
+              />
+              <aside className="dashboard-sidebar">
+                <ActivityFeed {...feedProps} />
+              </aside>
+            </div>
+          </>
         )}
         {historicalFeed && (
           <PulseHistoryFeed
@@ -978,7 +1040,10 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
           onClose={() => closeOverlay({ ...route, person: undefined })}
         >
           <ContributorProfile
-            events={feed.events}
+            range={
+              page === "pulse" ? (pulseDashboard.range ?? undefined) : undefined
+            }
+            events={page === "pulse" ? pulseEvents : feed.events}
             login={profileLogin}
             now={now}
             demo={feed.demo}

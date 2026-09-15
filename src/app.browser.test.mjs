@@ -220,3 +220,88 @@ test("Overview explains invalid custom links without silently showing default to
   await page.locator("[data-pulse-error]").waitFor();
   assert.equal(await page.locator("[data-pulse-total]").count(), 0);
 });
+
+test("one page-wide period stays selected across all six tabs and scopes the activity sidebar", async (t) => {
+  const page = await open(t, "/");
+  const scenes = page.getByRole("navigation", { name: "Wall scenes" });
+  assert.equal(
+    await page.locator(".engineering-wall .pulse-range-picker").count(),
+    0,
+  );
+  assert.equal(
+    await page.getByRole("region", { name: "Dashboard date range" }).count(),
+    1,
+  );
+  await scenes.getByRole("button", { name: "Delivery", exact: true }).click();
+  await page.getByRole("button", { name: /^Period:/ }).click();
+  await page.getByRole("option", { name: "Today", exact: true }).click();
+  assert.equal(
+    await scenes.locator('[aria-current="page"]').textContent(),
+    "Delivery",
+  );
+  assert.equal(location(page), "/?period=today");
+  assert.doesNotMatch(
+    await page.locator(".wall-scene").textContent(),
+    /last 30 days|30 days before/,
+  );
+  const old = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
+  await page.getByRole("button", { name: /^Period:/ }).click();
+  await page.getByRole("option", { name: "Custom dates" }).click();
+  await page.getByLabel("From date").fill(old);
+  await page.getByLabel("To date").fill(old);
+  assert.equal(location(page), "/?period=today");
+  await page.getByRole("button", { name: "Apply dates" }).click();
+  assert.equal(
+    await scenes.locator('[aria-current="page"]').textContent(),
+    "Delivery",
+  );
+  for (const tab of [
+    "Overview",
+    "Review radar",
+    "Release pulse",
+    "Delivery",
+    "Service health",
+    "Leaderboard",
+  ]) {
+    await scenes.getByRole("button", { name: tab, exact: true }).click();
+    assert.equal(location(page), `/?period=custom&from=${old}&to=${old}`);
+    await page.getByRole("button", { name: "Period: Custom dates" }).waitFor();
+    assert.equal(await scenes.getByRole("button").count(), 6);
+    assert.equal(
+      await page.locator(".wall-attention, .wall-moment").count(),
+      0,
+    );
+    const content = await page.locator(".wall-scene").textContent();
+    assert.doesNotMatch(
+      content,
+      /Last hour|Last 24 hours|This week|Weekly XP|Latency · 24h|Uptime · 24h/,
+    );
+    if (tab === "Overview")
+      assert.equal(await page.locator("[data-pulse-total]").textContent(), "0");
+    if (tab === "Review radar")
+      assert.equal(await page.locator(".wall-scene .scene-list li").count(), 0);
+    if (tab === "Release pulse")
+      assert.match(content, /No deployments in this period/);
+    if (tab === "Service health") {
+      assert.match(content, /recorded checks/i);
+      assert.equal(
+        await page
+          .locator(".health-card dd")
+          .filter({ hasText: /^—$/ })
+          .count(),
+        (await page.locator(".health-card").count()) * 2,
+      );
+    }
+    if (tab === "Leaderboard")
+      assert.equal(await page.locator(".leaderboard-list li").count(), 0);
+  }
+  assert.equal(await page.locator(".dashboard-sidebar .event-row").count(), 0);
+  await page
+    .getByRole("button", { name: "View all activity", exact: true })
+    .click();
+  assert.equal(location(page), `/feed?from=${old}&to=${old}`);
+  await page.goBack();
+  await page.getByRole("button", { name: "Period: Custom dates" }).waitFor();
+  await page.goBack();
+  await page.getByRole("button", { name: "Period: Today" }).waitFor();
+});

@@ -15,14 +15,25 @@ export function PulseOverview({
   now,
   onHistory,
   onMilestones,
+  result: suppliedResult,
 }: {
   source: PulseSource;
   now: number;
   onHistory: (from: string, to: string, repo?: string) => void;
   onMilestones?: () => void;
+  result?: ReturnType<typeof usePulseOverview>;
 }) {
   const { selection } = usePulseLocation();
-  const result = usePulseOverview(source, selection, now);
+  const ownResult = usePulseOverview(
+    {
+      ...source,
+      enabled: !suppliedResult && source.enabled,
+      demo: !suppliedResult && source.demo,
+    },
+    selection,
+    now,
+  );
+  const result = suppliedResult ?? ownResult;
   const [showAll, setShowAll] = useState(false);
   const pulse = useMemo(
     () => getDashboardPulse(source.events, now),
@@ -37,7 +48,9 @@ export function PulseOverview({
   };
   return (
     <section className="pulse-overview" aria-label="Overview by date">
-      <PulseRangePicker selection={selection} now={now} onChange={onChange} />
+      {!suppliedResult && (
+        <PulseRangePicker selection={selection} now={now} onChange={onChange} />
+      )}
       {result.error ? (
         <div className="pulse-range-state" role="alert" data-pulse-error>
           {result.error}
@@ -181,27 +194,29 @@ export function PulseOverview({
           </p>
         </>
       )}
-      <section className="pulse-weekly-goal">
-        <div>
-          <Flag size={14} />
-          <h2>This week’s team milestone</h2>
-          {onMilestones && (
-            <button
-              className="icon-button"
-              aria-label="View team milestones"
-              onClick={onMilestones}
-            >
-              <ArrowUpRight size={14} />
-            </button>
-          )}
-        </div>
-        <p>
-          {goal
-            ? `${goal.title} · ${goal.progress}/${goal.target}`
-            : "Every milestone reached this week."}
-        </p>
-        <small>Monday–Sunday · UTC · live</small>
-      </section>
+      {!suppliedResult && (
+        <section className="pulse-weekly-goal">
+          <div>
+            <Flag size={14} />
+            <h2>This week’s team milestone</h2>
+            {onMilestones && (
+              <button
+                className="icon-button"
+                aria-label="View team milestones"
+                onClick={onMilestones}
+              >
+                <ArrowUpRight size={14} />
+              </button>
+            )}
+          </div>
+          <p>
+            {goal
+              ? `${goal.title} · ${goal.progress}/${goal.target}`
+              : "Every milestone reached this week."}
+          </p>
+          <small>Monday–Sunday · UTC · live</small>
+        </section>
+      )}
     </section>
   );
 }

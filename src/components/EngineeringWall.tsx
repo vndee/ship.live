@@ -13,6 +13,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import type { PulseRange } from "../../shared/pulse";
 import type { ActivityEvent } from "../../shared/types.js";
 import type { EngineeringWallSnapshot } from "../../shared/wall.js";
 import type { HealthSnapshot, HealthStatus } from "../../shared/health.js";
@@ -36,6 +37,7 @@ import { LiveLeaderboard } from "./LiveLeaderboard";
 import { ServiceStatusStrip } from "./ServiceStatusStrip";
 import { RepositoryList } from "./RepositoryList";
 import { SceneHeader } from "./SceneHeader";
+import { deploymentTime } from "../lib/period";
 import { serviceStats } from "../lib/service-stats";
 import { formatUptime } from "../lib/uptime";
 import "../engineering-wall.css";
@@ -169,7 +171,15 @@ export function EngineeringWall({
   displayName = (login) => login,
   preferencesKey,
   overview,
+  range,
+  scopeError = "",
+  scopeLoading = false,
+  onRetry,
 }: {
+  range?: PulseRange | null;
+  scopeError?: string;
+  scopeLoading?: boolean;
+  onRetry?: () => void;
   overview?: ReactNode;
   snapshot: EngineeringWallSnapshot;
   health?: HealthSnapshot;
@@ -199,13 +209,28 @@ export function EngineeringWall({
   /** Scope for remembering tab order and visibility in this browser. */
   preferencesKey?: string;
 }) {
+  const scoped = range !== undefined;
+  const ready = !scopeError && !scopeLoading;
+  const historical = Boolean(
+    range && range.to < new Date(now).toISOString().slice(0, 10),
+  );
   const storageKey = preferencesKey
     ? `ship-live:wall-tabs:${preferencesKey}`
     : null;
   const [tabs, setTabs] = useState(() => readWallTabs(storageKey));
   const available = useMemo(
-    () => getAvailableScenes(snapshot, events, health),
-    [snapshot, events, health],
+    () =>
+      scoped
+        ? ([
+            "pulse",
+            "review",
+            "release",
+            "delivery",
+            ...(health ? ["health"] : []),
+            "leaderboard",
+          ] as WallScene[])
+        : getAvailableScenes(snapshot, events, health),
+    [scoped, snapshot, events, health],
   );
   const scenes = useMemo(
     () => visibleScenes(available, tabs),
@@ -230,16 +255,22 @@ export function EngineeringWall({
   const [recovery, setRecovery] = useState("");
   const [dismissed, setDismissed] = useState<string | null>(null);
   const attention = useMemo(
-    () => getAttention(snapshot, health),
-    [snapshot, health],
+    () => (scoped || !ready ? null : getAttention(snapshot, health)),
+    [snapshot, health, scoped, ready],
   );
   // A dismissed incident stays hidden until a different one appears.
   const attentionKey = attention
     ? `${attention.kind}:${attention.title}`
     : null;
   const shownAttention = attentionKey !== dismissed ? attention : null;
-  const radar = useMemo(() => getReviewRadar(snapshot, now), [snapshot, now]);
-  const releases = useMemo(() => getReleasePulse(snapshot), [snapshot]);
+  const radar = useMemo(
+    () => getReviewRadar(snapshot, now, range ?? undefined),
+    [snapshot, now, range],
+  );
+  const releases = useMemo(
+    () => getReleasePulse(snapshot, range ?? undefined, now),
+    [snapshot, range, now],
+  );
   const changed = useMemo(() => getWhatChanged(events, now), [events, now]);
   const rotating = autoplay && !shownAttention && scenes.length > 1;
   function saveTabs(next: WallTabs) {
@@ -280,6 +311,12 @@ export function EngineeringWall({
     };
   }, [choosing]);
   useEffect(() => {
+    if (scoped || !ready) {
+      previousAttention.current = null;
+      interruptedScene.current = null;
+      setRecovery("");
+      return;
+    }
     if (!previousAttention.current && attention && autoplay)
       interruptedScene.current = scene;
     if (previousAttention.current && !attention) {
@@ -302,7 +339,7 @@ export function EngineeringWall({
       return () => clearTimeout(timer);
     }
     previousAttention.current = attention;
-  }, [attention]);
+  }, [attention, scoped, ready]);
   useEffect(() => {
     // A viewer who chose a scene keeps it; only auto-slide jumps to the
     // scene that needs attention, and never to a hidden one.
@@ -340,11 +377,17 @@ export function EngineeringWall({
     const nav = navRef.current;
     const active = nav?.querySelector<HTMLElement>('[aria-current="page"]');
     if (!nav || !active) return;
-    const strip = nav.getBoundingClientRect();
-    const tab = active.getBoundingClientRect();
-    if (tab.left < strip.left) nav.scrollLeft -= strip.left - tab.left + 16;
-    else if (tab.right > strip.right)
-      nav.scrollLeft += tab.right - strip.right + 16;
+    const reveal = () => {
+      const strip = nav.getBoundingClientRect();
+      const tab = active.getBoundingClientRect();
+      if (tab.left < strip.left) nav.scrollLeft -= strip.left - tab.left + 16;
+      else if (tab.right > strip.right)
+        nav.scrollLeft += tab.right - strip.right + 16;
+    };
+    reveal();
+    const observer = new ResizeObserver(reveal);
+    observer.observe(nav);
+    return () => observer.disconnect();
   }, [scene, sceneKey]);
   return (
     <section
@@ -500,7 +543,7 @@ export function EngineeringWall({
           </button>
         </div>
       )}
-      {recovery && !attention && (
+      {!scoped && ready && recovery && !attention && (
         <div className="wall-moment" role="status">
           <Sparkles size={17} />
           <strong>{recovery}</strong>
@@ -508,25 +551,43 @@ export function EngineeringWall({
         </div>
       )}
       <div className="wall-scene" key={scene}>
-        {scene === "pulse" && (
+        {scopeError && (
+          <div className="pulse-range-state" role="alert" data-pulse-error>
+            {scopeError}
+            {onRetry && (
+              <button className="text-button" onClick={onRetry}>
+                Try again
+              </button>
+            )}
+          </div>
+        )}
+        {scopeLoading && !scopeError && (
+          <p className="pulse-range-state" role="status">
+            Loading dashboard for this period…
+          </p>
+        )}
+        {ready && scene === "pulse" && (
           <>
-            <div className="change-strip">
-              <div>
-                <span>Last hour</span>
-                <strong>{changed.hour.total}</strong>
-                <small>
-                  {changed.hour.merges} merges · {changed.hour.reviews} reviews
-                </small>
+            {!scoped && (
+              <div className="change-strip">
+                <div>
+                  <span>Last hour</span>
+                  <strong>{changed.hour.total}</strong>
+                  <small>
+                    {changed.hour.merges} merges · {changed.hour.reviews}{" "}
+                    reviews
+                  </small>
+                </div>
+                <div>
+                  <span>Last 24 hours</span>
+                  <strong>{changed.day.total}</strong>
+                  <small>
+                    {changed.day.contributors} contributors ·{" "}
+                    {changed.day.releases} releases
+                  </small>
+                </div>
               </div>
-              <div>
-                <span>Last 24 hours</span>
-                <strong>{changed.day.total}</strong>
-                <small>
-                  {changed.day.contributors} contributors ·{" "}
-                  {changed.day.releases} releases
-                </small>
-              </div>
-            </div>
+            )}
             {overview ?? (
               <>
                 <DashboardPulse
@@ -544,11 +605,15 @@ export function EngineeringWall({
             )}
           </>
         )}
-        {scene === "review" && (
+        {ready && scene === "review" && (
           <>
             <SceneHeader
               title="Review radar"
-              description="Open pull requests, most urgent first."
+              description={
+                scoped
+                  ? "Currently open pull requests with activity in this period. Checks and reviews use the same dates."
+                  : "Open pull requests, most urgent first."
+              }
             >
               {tally(
                 radar.map((item) => item.state),
@@ -600,11 +665,15 @@ export function EngineeringWall({
             )}
           </>
         )}
-        {scene === "release" && (
+        {ready && scene === "release" && (
           <>
             <SceneHeader
               title="Release pulse"
-              description="The latest GitHub deployment for each environment."
+              description={
+                scoped
+                  ? "Latest deployment in this period per environment. Badges show the stored current status."
+                  : "The latest GitHub deployment for each environment."
+              }
             >
               {tally(
                 releases.map((item) => item.status),
@@ -622,45 +691,68 @@ export function EngineeringWall({
                 </Chip>
               ))}
             </SceneHeader>
-            <ul className="scene-list">
-              {releases.map((item) => (
-                <li key={`${item.repository}:${item.id}`}>
-                  <SceneRow url={item.url}>
-                    <span className="scene-avatar" aria-hidden="true">
-                      <Rocket size={15} />
-                    </span>
-                    <span className="scene-row-body">
-                      <strong>{repositoryName(item.repository)}</strong>
-                      <small>
-                        {item.environment} · {item.headSha.slice(0, 7)} ·{" "}
-                        {shortAge(
-                          Math.max(0, now - Date.parse(item.updatedAt)),
-                        )}
-                      </small>
-                    </span>
-                    <span
-                      className={`state-pill tone-${deploymentTones[item.status]}`}
-                    >
-                      <i aria-hidden="true" />
-                      {capitalize(item.status)}
-                    </span>
-                  </SceneRow>
-                </li>
-              ))}
-            </ul>
+            {releases.length ? (
+              <ul className="scene-list">
+                {releases.map((item) => (
+                  <li key={`${item.repository}:${item.id}`}>
+                    <SceneRow url={item.url}>
+                      <span className="scene-avatar" aria-hidden="true">
+                        <Rocket size={15} />
+                      </span>
+                      <span className="scene-row-body">
+                        <strong>{repositoryName(item.repository)}</strong>
+                        <small>
+                          {item.environment} · {item.headSha.slice(0, 7)} ·{" "}
+                          {shortAge(
+                            Math.max(
+                              0,
+                              now -
+                                Date.parse(
+                                  scoped
+                                    ? deploymentTime(item)
+                                    : item.updatedAt,
+                                ),
+                            ),
+                          )}
+                        </small>
+                      </span>
+                      <span
+                        className={`state-pill tone-${deploymentTones[item.status]}`}
+                      >
+                        <i aria-hidden="true" />
+                        {capitalize(item.status)}
+                      </span>
+                    </SceneRow>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <SceneEmpty
+                icon={<Rocket size={22} />}
+                title="No deployments in this period"
+                text="Choose another date range to see stored deployments."
+              />
+            )}
           </>
         )}
-        {scene === "delivery" && (
-          <DeliveryScene snapshot={snapshot} health={health} now={now} />
+        {ready && scene === "delivery" && (
+          <DeliveryScene
+            snapshot={snapshot}
+            health={health}
+            now={now}
+            range={range ?? undefined}
+          />
         )}
-        {scene === "health" && health && (
+        {ready && scene === "health" && health && (
           <>
             <SceneHeader
               title="Service health"
               description={
-                personal
-                  ? "Availability from the probes you configured."
-                  : "Availability from the probes configured by the team."
+                scoped
+                  ? "Recorded checks in the selected period. Status badges show current health."
+                  : personal
+                    ? "Availability from the probes you configured."
+                    : "Availability from the probes configured by the team."
               }
             >
               {tally(
@@ -672,10 +764,24 @@ export function EngineeringWall({
                 </Chip>
               ))}
             </SceneHeader>
+            {scoped && (
+              <p className="pulse-health-coverage">
+                Availability is based on recorded checks; missing days are not
+                counted as uptime.{" "}
+                {health.coverage && (
+                  <>
+                    Daily history is retained for up to{" "}
+                    {health.coverage.retentionDays} days.
+                    {health.coverage.earliestStoredDate &&
+                      ` Earliest stored day: ${health.coverage.earliestStoredDate}.`}
+                  </>
+                )}
+              </p>
+            )}
             {health.services.length ? (
               <div className="health-scene-grid">
                 {health.services.map((service) => {
-                  const summary = serviceStats(service.probes);
+                  const summary = serviceStats(service.probes, scoped);
                   const state = healthStates[service.status];
                   return (
                     <article
@@ -687,12 +793,15 @@ export function EngineeringWall({
                         <strong>{service.name}</strong>
                         <span className="health-card-status">
                           {state.label}
+                          {scoped ? " now" : ""}
                         </span>
                       </header>
                       <ServiceStatusStrip probes={service.probes} />
                       <dl>
                         <div>
-                          <dt>Latency · 24h</dt>
+                          <dt>
+                            {scoped ? "Latency · period" : "Latency · 24h"}
+                          </dt>
                           <dd>
                             {summary.latencyMean === null
                               ? "—"
@@ -700,7 +809,7 @@ export function EngineeringWall({
                           </dd>
                         </div>
                         <div>
-                          <dt>Uptime · 24h</dt>
+                          <dt>{scoped ? "Uptime · period" : "Uptime · 24h"}</dt>
                           <dd>
                             {summary.uptime === null
                               ? "—"
@@ -736,12 +845,14 @@ export function EngineeringWall({
             )}
           </>
         )}
-        {scene === "leaderboard" && (
+        {ready && scene === "leaderboard" && (
           <LiveLeaderboard
+            key={range ? `${range.from}:${range.to}` : "live"}
+            range={range ?? undefined}
             events={events}
             now={now}
             demo={demo}
-            moving={moving}
+            moving={moving && !historical}
             loading={loading}
             onToggleMotion={onToggleMotion}
             onRules={onRules}

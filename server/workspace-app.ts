@@ -1,5 +1,12 @@
+import { HealthStore } from "./health-store.js";
+import type { PulseDashboard } from "../shared/pulse-dashboard.js";
 import { randomUUID } from "node:crypto";
-import { PulseStore, pulseQuery, samePulseScope } from "./pulse-store.js";
+import {
+  PulseStore,
+  pulseQuery,
+  samePulseReadScope,
+  type PulseScope,
+} from "./pulse-store.js";
 import express, {
   type ErrorRequestHandler,
   type Express,
@@ -42,7 +49,7 @@ import { healthRouter } from "./health-app.js";
 import type { SecretBox } from "./secret-box.js";
 import { dashboardShareRouter, healthShareRouter } from "./share-app.js";
 import { normalizeWallWebhook } from "./wall-normalize.js";
-import { WallStore } from "./wall-store.js";
+import { WallStore, combineWallSnapshots } from "./wall-store.js";
 import { activityOutboxEvent } from "./webhook-events.js";
 import { recordInstallationEvent } from "./webhook-outbox.js";
 import { inboundReceiver, webhookRouter } from "./webhook-app.js";
@@ -132,6 +139,7 @@ export function createWorkspaceApp({
   const app = express();
   const wall = new WallStore(store.pool);
   const pulse = new PulseStore(store.pool);
+  const pulseHealth = new HealthStore(store.pool);
   app.disable("x-powered-by");
   if (trustProxyHops > 0) app.set("trust proxy", trustProxyHops);
   app.use((request, response, next) => {
@@ -1128,7 +1136,19 @@ export function createWorkspaceApp({
     );
     response.sendStatus(204);
   });
-  for (const endpoint of ["overview", "activity"] as const) {
+  function pulseScope(current: Viewer, userId: string): PulseScope {
+    return {
+      sources: current.sources.map((source) => ({
+        installationId: source.installationId,
+        repositoryIds: source.repositories.map((repo) => repo.id),
+      })),
+      author: current.author,
+      ownerLogin: current.ownerLogin,
+      workspaceId: current.workspace.id,
+      noteUserId: current.workspace.kind === "personal" ? userId : undefined,
+    };
+  }
+  for (const endpoint of ["overview", "activity", "dashboard"] as const) {
     app.get(
       `/api/workspaces/:id/pulse/${endpoint}`,
       async (request, response) => {
@@ -1136,33 +1156,88 @@ export function createWorkspaceApp({
         const initial = await viewer(principal, request.params.id, true);
         const now = Date.now();
         const { range, repo, cursor } = pulseQuery(request.query, now);
-        const scope = {
-          installationId: initial.workspace.installationId,
-          repositoryIds: initial.repositories.map((item) => item.id),
-        };
-        const result =
-          endpoint === "overview"
-            ? await pulse.overview(
-                scope.installationId,
-                scope.repositoryIds,
-                range,
-                now,
-              )
-            : await pulse.activity(
-                scope.installationId,
-                scope.repositoryIds,
-                range,
-                repo,
-                cursor,
-                now,
+        const scope = pulseScope(initial, principal.user.id);
+        let result;
+        if (endpoint === "dashboard") {
+          const [overview, activity, notes, snapshots, health, alerts] =
+            await Promise.all([
+              pulse.overview(undefined, [], range, now, scope),
+              pulse.events(scope, range, now),
+              initial.workspace.kind === "personal"
+                ? pulse.notes(
+                    principal.user.id,
+                    initial.workspace.id,
+                    initial.ownerLogin,
+                    range,
+                    now,
+                  )
+                : Promise.resolve([]),
+              Promise.all(
+                scope.sources.map((source) =>
+                  wall.snapshot(
+                    source.installationId,
+                    source.repositoryIds,
+                    range,
+                  ),
+                ),
+              ),
+              pulseHealth.snapshot(initial.workspace.id, range),
+              webhooks
+                ? pulse.alerts(initial.workspace.id, range, now)
+                : Promise.resolve([]),
+            ]);
+          const repositories = combineWallSnapshots(snapshots).repositories.map(
+            (repository) => {
+              if (!scope.author) return repository;
+              const mine = repository.pullRequests.filter(
+                (pull) => pull.author.toLowerCase() === scope.author,
               );
+              const numbers = new Set(mine.map((pull) => pull.number));
+              const others = new Set(
+                repository.pullRequests
+                  .filter((pull) => !numbers.has(pull.number))
+                  .map((pull) => pull.headSha),
+              );
+              return {
+                ...repository,
+                pullRequests: mine,
+                reviews: repository.reviews.filter(
+                  (review) =>
+                    numbers.has(review.pullRequestNumber) ||
+                    review.reviewer.toLowerCase() === scope.author,
+                ),
+                pipelines: repository.pipelines.filter(
+                  (pipeline) => !others.has(pipeline.headSha),
+                ),
+              };
+            },
+          );
+          result = {
+            range,
+            overview,
+            events: [...activity, ...notes, ...alerts].sort(
+              (a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
+            ),
+            wall: { repositories, updatedAt: new Date(now).toISOString() },
+            health,
+          } satisfies PulseDashboard;
+        } else
+          result =
+            endpoint === "overview"
+              ? await pulse.overview(undefined, [], range, now, scope)
+              : await pulse.activity(
+                  undefined,
+                  [],
+                  range,
+                  repo,
+                  cursor,
+                  now,
+                  scope,
+                );
+        // Every source, owner identity and author restriction must still match;
+        // one revoked source invalidates the entire aggregate, never a partial view.
         const current = await viewer(principal, initial.workspace.id, true);
-        if (
-          !samePulseScope(scope, {
-            installationId: current.workspace.installationId,
-            repositoryIds: current.repositories.map((item) => item.id),
-          })
-        )
+        if (!samePulseReadScope(scope, pulseScope(current, principal.user.id)))
           throw accessDenied();
         response.json(result);
       },

@@ -1,3 +1,5 @@
+import type { PulseRange } from "../../shared/pulse";
+import { deploymentTime, inPeriod, pipelineInPeriod } from "./period";
 import type { ActivityEvent } from "../../shared/types.js";
 import type {
   EngineeringWallSnapshot,
@@ -162,19 +164,34 @@ function latestReviews(
 export function getReviewRadar(
   snapshot: EngineeringWallSnapshot,
   now = Date.now(),
+  range?: PulseRange,
 ): ReviewRadarItem[] {
   const result: ReviewRadarItem[] = [];
   for (const repository of snapshot.repositories)
     for (const pull of repository.pullRequests) {
       if (pull.state !== "open" || pull.draft) continue;
       const checks = latestPipelines(
-        repository.pipelines.filter((item) => item.headSha === pull.headSha),
+        repository.pipelines.filter(
+          (item) =>
+            item.headSha === pull.headSha &&
+            (!range || pipelineInPeriod(item, range, now)),
+        ),
       );
       const decisions = latestReviews(
         repository.reviews.filter(
-          (item) => item.pullRequestNumber === pull.number,
+          (item) =>
+            item.pullRequestNumber === pull.number &&
+            (!range || inPeriod(item.submittedAt, range, now)),
         ),
       );
+      if (
+        range &&
+        !inPeriod(pull.createdAt, range, now) &&
+        !inPeriod(pull.updatedAt, range, now) &&
+        !checks.length &&
+        !decisions.length
+      )
+        continue;
       const approved = decisions.some((item) => item.decision === "approved");
       const changesRequested = decisions.some(
         (item) => item.decision === "changes_requested",
@@ -210,33 +227,50 @@ export function getReviewRadar(
     .slice(0, 8);
 }
 
-export function getReleasePulse(snapshot: EngineeringWallSnapshot) {
+export function getReleasePulse(
+  snapshot: EngineeringWallSnapshot,
+  range?: PulseRange,
+  now = Date.now(),
+) {
   const latest = new Map<string, ReturnType<typeof deploymentWithRepository>>();
   for (const item of snapshot.repositories.flatMap((repository) =>
     repository.deployments.map((deployment) =>
-      deploymentWithRepository(repository, deployment),
+      deploymentWithRepository(repository, deployment, range, now),
     ),
   )) {
+    if (range && !inPeriod(deploymentTime(item), range, now)) continue;
     const key = `${item.repository}:${item.environment}`;
     const current = latest.get(key);
-    if (!current || Date.parse(current.updatedAt) <= Date.parse(item.updatedAt))
+    if (
+      !current ||
+      Date.parse(range ? deploymentTime(current) : current.updatedAt) <=
+        Date.parse(range ? deploymentTime(item) : item.updatedAt)
+    )
       latest.set(key, item);
   }
   return [...latest.values()]
-    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    .sort(
+      (a, b) =>
+        Date.parse(range ? deploymentTime(b) : b.updatedAt) -
+        Date.parse(range ? deploymentTime(a) : a.updatedAt),
+    )
     .slice(0, 6);
 }
 
 function deploymentWithRepository(
   repository: EngineeringWallSnapshot["repositories"][number],
   deployment: EngineeringWallSnapshot["repositories"][number]["deployments"][number],
+  range?: PulseRange,
+  now = Date.now(),
 ) {
   return {
     ...deployment,
     repository: repository.repository,
     checks: latestPipelines(
       repository.pipelines.filter(
-        (pipeline) => pipeline.headSha === deployment.headSha,
+        (pipeline) =>
+          pipeline.headSha === deployment.headSha &&
+          (!range || pipelineInPeriod(pipeline, range, now)),
       ),
     ),
   };
@@ -258,8 +292,19 @@ function windowSummary(events: ActivityEvent[], start: number, now: number) {
   };
 }
 
-export function getWhatChanged(events: ActivityEvent[], now = Date.now()) {
+export function getWhatChanged(
+  events: ActivityEvent[],
+  now = Date.now(),
+  range?: PulseRange,
+) {
+  if (range)
+    events = events.filter((event) => inPeriod(event.occurredAt, range, now));
   return {
+    period: windowSummary(
+      events,
+      range ? Date.parse(range.start) : now - 86_400_000,
+      now,
+    ),
     hour: windowSummary(events, now - 3_600_000, now),
     day: windowSummary(events, now - 86_400_000, now),
   };

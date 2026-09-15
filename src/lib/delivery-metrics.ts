@@ -1,3 +1,5 @@
+import { pulseBuckets, type PulseRange } from "../../shared/pulse";
+import { deploymentTime, inPeriod } from "./period";
 import {
   HEALTH_INCIDENT_LIMIT,
   type HealthSnapshot,
@@ -73,7 +75,11 @@ export function deliveryMetrics(
   health: HealthSnapshot | undefined,
   now: number,
   chosen?: string,
+  range?: PulseRange,
 ): DeliveryMetrics {
+  const periodStart = range ? Date.parse(range.start) : now - WINDOW;
+  const periodEnd = range ? Math.min(Date.parse(range.end), now) : now;
+  const duration = range ? Math.max(1, periodEnd - periodStart) : WINDOW;
   // GitHub marks earlier successful deployments inactive. One counts as a
   // success only when ship.live recorded when it succeeded; others are left out.
   const deployments = snapshot.repositories.flatMap((repository) =>
@@ -84,7 +90,11 @@ export function deliveryMetrics(
         ...deployment,
         status: succeededAt ? "successful" : deployment.status,
         repository: repository.repository,
-        time: Date.parse(succeededAt ?? deployment.updatedAt),
+        time: Date.parse(
+          range
+            ? deploymentTime(deployment)
+            : (succeededAt ?? deployment.updatedAt),
+        ),
       };
     }),
   );
@@ -129,7 +139,7 @@ export function deliveryMetrics(
     (service) => service.incidents ?? [],
   );
   // Each failure's restore time: until the next success in that repository.
-  const restores: { failed: number; ms: number }[] = [];
+  const restores: { failed: number; recovered: number; ms: number }[] = [];
   for (const failure of finished.filter((item) => item.status === "failing")) {
     const recovery = finished.find(
       (item) =>
@@ -138,12 +148,23 @@ export function deliveryMetrics(
         item.time > failure.time,
     );
     if (recovery)
-      restores.push({ failed: failure.time, ms: recovery.time - failure.time });
+      restores.push({
+        failed: failure.time,
+        recovered: recovery.time,
+        ms: recovery.time - failure.time,
+      });
   }
 
   function figures(end: number): DeliveryFigures {
-    const start = end - WINDOW;
-    const inside = (time: number) => time > start && time <= end;
+    const start = end - duration;
+    const inside = (time: number) =>
+      range
+        ? time >= start &&
+          time <= now &&
+          (end === now && now < Date.parse(range.end)
+            ? time <= end
+            : time < end)
+        : time > start && time <= end;
     const window = finished.filter((item) => inside(item.time));
     const successes = window.filter((item) => item.status === "successful");
     const failures = window.length - successes.length;
@@ -154,11 +175,15 @@ export function deliveryMetrics(
     );
     return {
       deploymentsPerWeek: environment
-        ? successes.length / (WINDOW / (7 * DAY))
+        ? successes.length / (duration / (7 * DAY))
         : null,
       changeFailureRate: window.length ? failures / window.length : null,
       timeToRestoreMs: median(
-        restores.filter((item) => inside(item.failed)).map((item) => item.ms),
+        restores
+          .filter(
+            (item) => inside(item.failed) && (!range || inside(item.recovered)),
+          )
+          .map((item) => item.ms),
       ),
       timeToMergeMs: median(
         mergedInside.map((pull) => pull.merged - pull.opened),
@@ -179,10 +204,21 @@ export function deliveryMetrics(
   }
 
   const thisWeek = mondayOf(now);
-  const weeks = Array.from({ length: WEEKS }, (_, index) => {
-    const start = thisWeek - (WEEKS - 1 - index) * 7 * DAY;
+  const buckets = range
+    ? pulseBuckets(range).map((bucket) => ({
+        start: Date.parse(bucket.from),
+        end: Date.parse(bucket.to) + DAY,
+      }))
+    : Array.from({ length: WEEKS }, (_, index) => {
+        const start = thisWeek - (WEEKS - 1 - index) * 7 * DAY;
+        return { start, end: start + 7 * DAY };
+      });
+  const weeks = buckets.map(({ start, end }) => {
     const inWeek = finished.filter(
-      (item) => item.time >= start && item.time < start + 7 * DAY,
+      (item) =>
+        item.time >= start &&
+        item.time < end &&
+        (!range || inPeriod(new Date(item.time).toISOString(), range, now)),
     );
     return {
       start: new Date(start).toISOString().slice(0, 10),
@@ -193,8 +229,8 @@ export function deliveryMetrics(
   return {
     environment,
     environments,
-    current: figures(now),
-    previous: figures(now - WINDOW),
+    current: figures(periodEnd),
+    previous: figures(range ? periodStart : now - WINDOW),
     weeks,
     incidentsCapped: (health?.services ?? []).some(
       (service) => (service.incidents?.length ?? 0) >= HEALTH_INCIDENT_LIMIT,

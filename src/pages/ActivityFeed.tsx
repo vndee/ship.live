@@ -20,6 +20,7 @@ export interface ActivityFeedProps {
   feed: FeedController;
   /** The Live feed page, rather than the list beside Pulse. */
   full?: boolean;
+  periodLabel?: string;
   personal: boolean;
   canWriteNote: boolean;
   replaying: boolean;
@@ -56,6 +57,7 @@ export interface ActivityFeedProps {
 export function ActivityFeed({
   feed,
   full = false,
+  periodLabel,
   personal,
   canWriteNote,
   replaying,
@@ -92,7 +94,7 @@ export function ActivityFeed({
     >
       <div className="section-heading">
         <h2>
-          {replaying ? "Activity replay" : "Live activity"}
+          {periodLabel || (replaying ? "Activity replay" : "Live activity")}
           <span className="section-count">{visible.length}</span>
         </h2>
         <div className="small-actions">

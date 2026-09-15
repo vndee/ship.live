@@ -73,18 +73,29 @@ test("shared historical views stay silent on SSE updates and resume only for new
         });
       if (url.startsWith("/api/shared/pulse/activity"))
         return json({ events: [], nextCursor: null });
-      if (url.startsWith("/api/shared/pulse/overview")) {
+      if (url.startsWith("/api/shared/pulse/dashboard")) {
         const params = new URL(url, location.origin).searchParams;
+        const range = {
+          from: params.get("from"),
+          to: params.get("to"),
+          start: params.get("from") + "T00:00:00.000Z",
+          end: new Date(Date.parse(params.get("to")) + 86400000).toISOString(),
+          granularity: "day",
+        };
         return json({
-          range: {
-            from: params.get("from"),
-            to: params.get("to"),
-            granularity: "day",
+          range,
+          events: window.sharedEvents.filter(
+            (event) =>
+              event.occurredAt >= range.start && event.occurredAt < range.end,
+          ),
+          wall: { repositories: [], updatedAt: new Date().toISOString() },
+          overview: {
+            range,
+            totals: { count: 0, merges: 0, reviews: 0, releases: 0 },
+            buckets: [],
+            repositories: [],
+            coverage: { earliestStoredAt: null, retentionDays: null },
           },
-          totals: { count: 0, merges: 0, reviews: 0, releases: 0 },
-          buckets: [],
-          repositories: [],
-          coverage: { earliestStoredAt: null, retentionDays: null },
         });
       }
       return json({});
@@ -112,10 +123,14 @@ test("shared historical views stay silent on SSE updates and resume only for new
     .getByRole("heading", { name: "Activity in selected period" })
     .waitFor();
   await page.evaluate(() => window.addLiveEvent("arrived-during-history"));
-  await page
-    .locator(".shared-event")
-    .filter({ hasText: "arrived-during-history" })
-    .waitFor();
+  await page.waitForFunction(() => window.sharedEvents.length === 1);
+  assert.equal(
+    await page
+      .locator(".shared-event")
+      .filter({ hasText: "arrived-during-history" })
+      .count(),
+    0,
+  );
   await page.evaluate(
     () =>
       new Promise((resolve) =>
@@ -128,6 +143,15 @@ test("shared historical views stay silent on SSE updates and resume only for new
   await page.getByRole("button", { name: "Back to Overview" }).click();
   await page.getByRole("button", { name: /^Period:/ }).waitFor();
   assert.equal(await page.locator(".activity-celebration").count(), 0);
+  // Returning to Overview keeps the historical page scope and stays silent.
+  await page.evaluate(() => window.addLiveEvent("still-historical"));
+  await page.waitForFunction(() => window.sharedEvents.length === 2);
+  assert.equal(await page.locator(".activity-celebration").count(), 0);
+  await page.getByRole("button", { name: /^Period:/ }).click();
+  await page.getByRole("option", { name: "Today", exact: true }).click();
+  await page
+    .getByRole("heading", { name: "Activity in this period", exact: true })
+    .waitFor();
   await page.evaluate(() => window.addLiveEvent("arrived-after-return"));
   await page
     .locator(".activity-celebration")

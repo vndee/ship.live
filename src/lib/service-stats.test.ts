@@ -46,3 +46,83 @@ test("a service without checks has no figures", () => {
     },
   );
 });
+
+test("period stats weight full rollups and keep unavailable variance unknown", () => {
+  const stats = serviceStats(
+    [
+      {
+        successRate24h: 100,
+        checks24h: 99,
+        periodStats: {
+          checks: 400,
+          successRate: 50,
+          latencyStats: { mean: 10, sd: null, checks: 400 },
+        },
+      },
+      {
+        successRate24h: 100,
+        checks24h: 99,
+        periodStats: {
+          checks: 100,
+          successRate: 100,
+          latencyStats: { mean: 50, sd: null, checks: 100 },
+        },
+      },
+    ],
+    true,
+  );
+  assert.deepEqual(stats, {
+    uptime: 60,
+    checks: 500,
+    latencyMean: 18,
+    latencySd: null,
+    latencyChecks: 500,
+  });
+});
+
+test("ranged service stats fail closed for missing and empty periods", () => {
+  assert.deepEqual(
+    serviceStats(
+      [
+        {
+          successRate24h: 100,
+          checks24h: 100,
+          latencyStats24h: { mean: 10, sd: 1, checks: 100 },
+        },
+        {
+          successRate24h: 100,
+          checks24h: 100,
+          periodStats: { checks: 0, successRate: null, latencyStats: null },
+        },
+      ],
+      true,
+    ),
+    {
+      uptime: null,
+      checks: 0,
+      latencyMean: null,
+      latencySd: null,
+      latencyChecks: 0,
+    },
+  );
+});
+
+test("unknown historical pass counts keep service uptime unknown without losing check totals", () => {
+  const stats = serviceStats(
+    [
+      {
+        successRate24h: 100,
+        checks24h: 1,
+        periodStats: { checks: 50, successRate: null, latencyStats: null },
+      },
+      {
+        successRate24h: 100,
+        checks24h: 1,
+        periodStats: { checks: 50, successRate: 100, latencyStats: null },
+      },
+    ],
+    true,
+  );
+  assert.equal(stats.checks, 100);
+  assert.equal(stats.uptime, null);
+});

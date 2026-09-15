@@ -1,3 +1,5 @@
+import { PulsePageFilter } from "./PulsePageFilter";
+import { usePulseDashboard } from "../hooks/usePulseDashboard";
 import { PulseOverview } from "./PulseOverview";
 import { PulseHistoryFeed } from "./PulseHistoryFeed";
 import { setPulseLocation, usePulseLocation } from "../hooks/usePulse";
@@ -31,6 +33,19 @@ export function SharedDashboard() {
   const feed = useSharedFeed(token);
   const pulseLocation = usePulseLocation();
   const [now, setNow] = useState(Date.now());
+  const source = {
+    shareToken: token,
+    demo: false,
+    events: feed.data?.events || noEvents,
+    revision: feed.data?.updatedAt,
+    enabled: Boolean(feed.data) && !feed.error,
+  };
+  const dashboard = usePulseDashboard(source, pulseLocation.selection, now);
+  const periodEvents = dashboard.data?.events ?? noEvents;
+  const historical = Boolean(
+    dashboard.range &&
+    dashboard.range.to < new Date(now).toISOString().slice(0, 10),
+  );
   const [moving, setMoving] = useState(
     () => !matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
@@ -40,7 +55,8 @@ export function SharedDashboard() {
   const liveEffects = useActivityCelebration(feed.data?.events || noEvents, {
     scope: token,
     ready: Boolean(feed.data) && !feed.error,
-    enabled: celebrations && !pulseLocation.history,
+    enabled:
+      celebrations && !pulseLocation.history && !historical && !dashboard.error,
   });
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 15000);
@@ -147,131 +163,158 @@ export function SharedDashboard() {
             )}
           </div>
         ) : (
-          <div className="dashboard-layout">
-            {pulseLocation.history ? (
-              <PulseHistoryFeed
-                source={{
-                  shareToken: token,
-                  demo: false,
-                  events: feed.data.events,
-                  revision: feed.data.updatedAt,
-                  enabled: !feed.error,
-                }}
-                from={pulseLocation.selection.from}
-                to={pulseLocation.selection.to}
-                repo={pulseLocation.repo}
-                now={now}
-                onBack={() => setPulseLocation(pulseLocation.selection)}
-              />
-            ) : (
-              <EngineeringWall
-                overview={
-                  <PulseOverview
-                    source={{
-                      shareToken: token,
-                      demo: false,
-                      events: feed.data.events,
-                      revision: feed.data.updatedAt,
-                      enabled: !feed.error,
-                    }}
-                    now={now}
-                    onHistory={(from, to, repo) =>
-                      setPulseLocation(
-                        { period: "custom", from, to },
-                        true,
-                        repo,
-                      )
-                    }
-                  />
-                }
-                key={token}
-                snapshot={feed.data.wall}
-                events={feed.data.events}
-                now={now}
-                demo={false}
-                moving={moving}
-                autoplayDefault={wall && moving}
-                preferencesKey="shared-dashboard"
-                loading={feed.loading}
-                onToggleMotion={() => setMoving((value) => !value)}
-                onRules={() => undefined}
-                onMilestones={() => undefined}
-                onSelectPerson={setProfileLogin}
-                status={feed.connected ? "Live" : "Reconnecting"}
-              />
-            )}
-            <aside className="dashboard-sidebar">
-              <section className="activity-feed">
-                <div className="section-heading">
-                  <h2>
-                    Live activity
-                    <span className="section-count">
-                      {feed.data.events.length}
-                    </span>
-                  </h2>
-                </div>
-                <div className="event-list">
-                  {feed.data.events.slice(0, 8).map((event) => (
-                    <article
-                      className={`event-row shared-event ${liveEffects.highlightedIds.has(event.id) ? `activity-new ${moving ? "with-activity-motion" : ""}` : ""}`}
-                      key={event.id}
-                    >
-                      <div className="event-topline">
-                        <GitMerge
-                          size={14}
-                          className={`event-icon ${event.type}`}
-                        />
-                        <span className="event-actor">{event.actor.login}</span>
-                        <time dateTime={event.occurredAt}>
-                          {new Date(event.occurredAt).toLocaleTimeString(
-                            undefined,
-                            { hour: "2-digit", minute: "2-digit" },
-                          )}
-                        </time>
-                      </div>
-                      <p className="event-title">{event.title}</p>
-                      <div className="event-metadata">
-                        <span>{event.repo}</span>
-                        <span>
-                          {liveEffects.highlightedIds.has(event.id) && (
-                            <span className="new-activity-badge">New</span>
-                          )}
-                          {EVENT_META[event.type].label}
-                        </span>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-                {!feed.data.events.length && (
-                  <div className="empty-state">
-                    <h3>Waiting for activity</h3>
+          <>
+            <PulsePageFilter
+              selection={pulseLocation.selection}
+              range={dashboard.range}
+              now={now}
+              onChange={setPulseLocation}
+            />
+            <div className="dashboard-layout">
+              {pulseLocation.history ? (
+                <PulseHistoryFeed
+                  source={{
+                    shareToken: token,
+                    demo: false,
+                    events: feed.data.events,
+                    revision: feed.data.updatedAt,
+                    enabled: !feed.error,
+                  }}
+                  from={pulseLocation.selection.from}
+                  to={pulseLocation.selection.to}
+                  repo={pulseLocation.repo}
+                  now={now}
+                  onBack={() => setPulseLocation(pulseLocation.selection)}
+                />
+              ) : (
+                <EngineeringWall
+                  overview={
+                    <PulseOverview
+                      source={source}
+                      result={{
+                        ...dashboard,
+                        data: dashboard.data?.overview ?? null,
+                      }}
+                      now={now}
+                      onHistory={(from, to, repo) =>
+                        setPulseLocation(
+                          { period: "custom", from, to },
+                          true,
+                          repo,
+                        )
+                      }
+                    />
+                  }
+                  key={token}
+                  range={dashboard.range}
+                  scopeError={dashboard.error}
+                  scopeLoading={dashboard.loading}
+                  onRetry={dashboard.retry}
+                  snapshot={
+                    dashboard.data?.wall ?? { repositories: [], updatedAt: "" }
+                  }
+                  events={periodEvents}
+                  now={now}
+                  demo={false}
+                  moving={moving}
+                  autoplayDefault={wall && moving}
+                  preferencesKey="shared-dashboard"
+                  loading={dashboard.loading}
+                  onToggleMotion={() => setMoving((value) => !value)}
+                  onRules={() => undefined}
+                  onMilestones={() => undefined}
+                  onSelectPerson={setProfileLogin}
+                  status={
+                    historical
+                      ? "Historical period"
+                      : feed.connected
+                        ? "Live"
+                        : "Reconnecting"
+                  }
+                />
+              )}
+              <aside className="dashboard-sidebar">
+                <section className="activity-feed">
+                  <div className="section-heading">
+                    <h2>
+                      Activity in this period
+                      <span className="section-count">
+                        {periodEvents.length}
+                      </span>
+                    </h2>
+                  </div>
+                  <div className="event-list">
+                    {periodEvents.slice(0, 8).map((event) => (
+                      <article
+                        className={`event-row shared-event ${liveEffects.highlightedIds.has(event.id) ? `activity-new ${moving ? "with-activity-motion" : ""}` : ""}`}
+                        key={event.id}
+                      >
+                        <div className="event-topline">
+                          <GitMerge
+                            size={14}
+                            className={`event-icon ${event.type}`}
+                          />
+                          <span className="event-actor">
+                            {event.actor.login}
+                          </span>
+                          <time dateTime={event.occurredAt}>
+                            {new Date(event.occurredAt).toLocaleTimeString(
+                              undefined,
+                              { hour: "2-digit", minute: "2-digit" },
+                            )}
+                          </time>
+                        </div>
+                        <p className="event-title">{event.title}</p>
+                        <div className="event-metadata">
+                          <span>{event.repo}</span>
+                          <span>
+                            {liveEffects.highlightedIds.has(event.id) && (
+                              <span className="new-activity-badge">New</span>
+                            )}
+                            {EVENT_META[event.type].label}
+                          </span>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                  {!periodEvents.length && (
+                    <div className="empty-state">
+                      <h3>
+                        {dashboard.loading
+                          ? "Loading activity…"
+                          : dashboard.error
+                            ? "Activity unavailable"
+                            : "No activity in this period"}
+                      </h3>
+                      <p>
+                        {dashboard.error ||
+                          "Only stored activity in the selected dates is shown."}
+                      </p>
+                    </div>
+                  )}
+                  <div className="shared-goal">
+                    <Eye size={17} />
+                    <h3>A live window into the team.</h3>
                     <p>
-                      New contributions from shared repositories will appear
-                      here.
+                      Pulse updates as the team ships. Access ends when the link
+                      is revoked or its lifetime ends.
                     </p>
                   </div>
-                )}
-                <div className="shared-goal">
-                  <Eye size={17} />
-                  <h3>A live window into the team.</h3>
-                  <p>
-                    Pulse updates as the team ships. Access ends when the link
-                    is revoked or its lifetime ends.
-                  </p>
-                </div>
-              </section>
-            </aside>
-          </div>
+                </section>
+              </aside>
+            </div>
+          </>
         )}
         <footer className="app-footer">
           <span>Shared team Pulse · Read only</span>
-          <span>Weekly recognition resets Monday, 00:00 UTC</span>
+          <span>All tabs follow the selected UTC dates</span>
         </footer>
       </main>
       {profileLogin && feed.data && (
         <Modal title={profileLogin} onClose={() => setProfileLogin(null)}>
           <ContributorProfile
-            events={feed.data.events}
+            range={dashboard.range ?? undefined}
+            events={periodEvents}
             login={profileLogin}
             now={now}
           />

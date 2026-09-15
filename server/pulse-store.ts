@@ -21,9 +21,14 @@ const whitespace = [
   .map((c) => `chr(${c})`)
   .join(" || ");
 const actor = `lower(btrim(event #>> '{actor,login}', ${whitespace}))`;
-const eligible = `organization = $1 AND event->>'repositoryId' = ANY($2::text[])
+const eligible = `EXISTS (SELECT 1 FROM jsonb_each($1::jsonb) AS source(organization, repositories) WHERE source.organization = ship_live_events.organization AND event->>'repositoryId' = ANY(ARRAY(SELECT jsonb_array_elements_text(source.repositories))))
+ AND ($2::text IS NULL OR lower(event #>> '{actor,login}') = $2)
  AND event->>'type' NOT IN ('note','alert') AND ${actor} <> ''
  AND ${actor} !~ '(\\[bot\\]|-bot)$' AND ${actor} NOT IN ('dependabot','renovate','github-actions')`;
+// GitHub can deliver the same normalized event through multiple installations.
+// Pick one deterministic row before aggregates and keyset boundaries are formed.
+const scopedEvents = `SELECT DISTINCT ON (event_id) event,occurred_at,event_id
+ FROM ship_live_events WHERE ${eligible} ORDER BY event_id,occurred_at DESC,organization`;
 const counts = `count(*)::int AS count, count(*) FILTER (WHERE event->>'type'='merge')::int AS merges, count(*) FILTER (WHERE event->>'type'='review')::int AS reviews, count(*) FILTER (WHERE event->>'type'='release')::int AS releases`;
 export function pulseQuery(query: Record<string, unknown>, now = Date.now()) {
   const read = (name: string) => {
@@ -62,6 +67,56 @@ export function samePulseScope(
     initial.repositoryIds.every((id) => current.repositoryIds.includes(id))
   );
 }
+export interface PulseScope {
+  sources: { installationId: number; repositoryIds: number[] }[];
+  author?: string;
+  ownerLogin?: string;
+  workspaceId?: string;
+  noteUserId?: string;
+}
+export function samePulseReadScope(initial: PulseScope, current: PulseScope) {
+  return scopeBinding(initial) === scopeBinding(current);
+}
+function scopeBinding(scope: PulseScope) {
+  return JSON.stringify([
+    scope.sources
+      .map((s) => [
+        s.installationId,
+        [...s.repositoryIds].sort((a, b) => a - b),
+      ])
+      .sort((a, b) => Number(a[0]) - Number(b[0])),
+    scope.author ?? null,
+    scope.ownerLogin ?? null,
+    scope.workspaceId ?? null,
+    scope.noteUserId ?? null,
+  ]);
+}
+function readScope(
+  installation: number | undefined,
+  repositoryIds: number[],
+  scope?: PulseScope,
+): PulseScope {
+  return (
+    scope ?? {
+      sources: installation
+        ? [{ installationId: installation, repositoryIds }]
+        : [],
+    }
+  );
+}
+function scopeParams(scope: PulseScope) {
+  return [
+    JSON.stringify(
+      Object.fromEntries(
+        scope.sources.map((s) => [
+          `installation-${s.installationId}`,
+          s.repositoryIds.map(String),
+        ]),
+      ),
+    ),
+    scope.author ?? null,
+  ];
+}
 interface Cursor {
   version: 1;
   binding: string;
@@ -72,19 +127,109 @@ interface Cursor {
 /** SQL aggregates the entire authorized range; only drill-down pages are bounded. */
 export class PulseStore {
   constructor(private readonly pool: Pool) {}
+  /** Full period read for every dashboard tab; never inherits the feed limit. */
+  async events(
+    scope: PulseScope,
+    range: PulseRange,
+    now = Date.now(),
+  ): Promise<ActivityEvent[]> {
+    if (!scope.sources.some((s) => s.repositoryIds.length)) return [];
+    const rows = await this.pool.query<{ event: ActivityEvent }>(
+      `WITH events AS (${scopedEvents}) SELECT event - 'body' AS event FROM events WHERE occurred_at >= $3::timestamptz AND occurred_at < $4::timestamptz AND occurred_at <= $5::timestamptz
+       ORDER BY occurred_at DESC,event_id DESC`,
+      [
+        ...scopeParams(scope),
+        range.start,
+        range.end,
+        new Date(now).toISOString(),
+      ],
+    );
+    return rows.rows.map((row) => row.event);
+  }
+  /** Caller must authorize ownership before this read and recheck afterward. */
+  async alerts(
+    workspaceId: string,
+    range: PulseRange,
+    now = Date.now(),
+  ): Promise<ActivityEvent[]> {
+    const rows = await this.pool.query<{
+      id: string;
+      type: string;
+      at: Date;
+      payload: {
+        summary?: string;
+        url?: string;
+        data?: { endpoint?: { name?: string }; body?: string };
+      };
+    }>(
+      `SELECT id,type,payload,coalesce((payload->>'occurredAt')::timestamptz,created_at) AS at FROM ship_live_webhook_events
+       WHERE workspace_id=$1 AND type LIKE 'inbound.%'
+       AND coalesce((payload->>'occurredAt')::timestamptz,created_at) >= $2::timestamptz
+       AND coalesce((payload->>'occurredAt')::timestamptz,created_at) < $3::timestamptz
+       AND coalesce((payload->>'occurredAt')::timestamptz,created_at) <= $4::timestamptz
+       ORDER BY at DESC,id`,
+      [workspaceId, range.start, range.end, new Date(now).toISOString()],
+    );
+    return rows.rows.map((row) => ({
+      id: "alert:" + row.id,
+      type: "alert",
+      actor: { login: row.payload.data?.endpoint?.name || "Inbound webhook" },
+      repo: row.type,
+      title: row.payload.summary ?? "",
+      occurredAt: row.at.toISOString(),
+      ...(row.payload.url ? { url: row.payload.url } : {}),
+      ...(row.payload.data?.body ? { body: row.payload.data.body } : {}),
+    }));
+  }
+  async notes(
+    userId: string,
+    workspaceId: string,
+    ownerLogin: string | undefined,
+    range: PulseRange,
+    now = Date.now(),
+  ): Promise<ActivityEvent[]> {
+    const rows = await this.pool.query<{
+      id: string;
+      name: string;
+      title: string;
+      body: string;
+      created_at: Date;
+    }>(
+      `SELECT n.*,u.name FROM ship_live_notes n JOIN ship_live_auth_users u ON u.id=n.user_id
+       WHERE n.workspace_id=$1 AND n.user_id=$2 AND n.created_at >= $3::timestamptz AND n.created_at < $4::timestamptz AND n.created_at <= $5::timestamptz
+       ORDER BY n.created_at DESC,n.id`,
+      [
+        workspaceId,
+        userId,
+        range.start,
+        range.end,
+        new Date(now).toISOString(),
+      ],
+    );
+    return rows.rows.map((row) => ({
+      id: "note-" + row.id,
+      type: "note",
+      actor: { login: ownerLogin ?? row.name },
+      repo: "journal/notes",
+      title: row.title,
+      body: row.body,
+      occurredAt: row.created_at.toISOString(),
+    }));
+  }
   async overview(
     installation: number | undefined,
     repositoryIds: number[],
     range: PulseRange,
     now = Date.now(),
+    selectedScope?: PulseScope,
   ): Promise<PulseOverview> {
     const result = aggregatePulse([], range, now);
     result.coverage.retentionDays =
       retentionFromEnv(process.env).eventDays || null;
-    if (!installation || !repositoryIds.length) return result;
+    const scope = readScope(installation, repositoryIds, selectedScope);
+    if (!scope.sources.some((s) => s.repositoryIds.length)) return result;
     const params = [
-      `installation-${installation}`,
-      repositoryIds.map(String),
+      ...scopeParams(scope),
       range.start,
       range.end,
       new Date(now).toISOString(),
@@ -98,7 +243,7 @@ export class PulseStore {
         is_repo: number;
       }
     >(
-      `WITH scoped AS (SELECT event, to_char(date_trunc('${range.granularity}', occurred_at AT TIME ZONE 'UTC'),'YYYY-MM-DD') AS bucket, event->>'repo' AS repo FROM ship_live_events WHERE ${eligible} AND occurred_at >= $3::timestamptz AND occurred_at < $4::timestamptz AND occurred_at <= $5::timestamptz)
+      `WITH events AS (${scopedEvents}), scoped AS (SELECT event, to_char(date_trunc('${range.granularity}', occurred_at AT TIME ZONE 'UTC'),'YYYY-MM-DD') AS bucket, event->>'repo' AS repo FROM events WHERE occurred_at >= $3::timestamptz AND occurred_at < $4::timestamptz AND occurred_at <= $5::timestamptz)
    SELECT bucket,repo,grouping(bucket) AS is_bucket,grouping(repo) AS is_repo,${counts} FROM scoped GROUP BY GROUPING SETS ((),(bucket),(repo))`,
       params,
     );
@@ -122,7 +267,7 @@ export class PulseStore {
       (a, b) => b.count - a.count || a.repo.localeCompare(b.repo),
     );
     const coverage = await this.pool.query<{ earliest: Date | null }>(
-      `SELECT min(occurred_at) AS earliest FROM ship_live_events WHERE ${eligible} AND occurred_at <= $3::timestamptz`,
+      `WITH events AS (${scopedEvents}) SELECT min(occurred_at) AS earliest FROM events WHERE occurred_at <= $3::timestamptz`,
       [params[0], params[1], params[4]],
     );
     result.coverage.earliestStoredAt =
@@ -136,12 +281,13 @@ export class PulseStore {
     repo?: string,
     cursor?: string,
     now = Date.now(),
+    selectedScope?: PulseScope,
   ): Promise<PulseActivityPage> {
+    const scope = readScope(installation, repositoryIds, selectedScope);
     const binding = createHash("sha256")
       .update(
         JSON.stringify([
-          installation ?? null,
-          [...repositoryIds].sort((a, b) => a - b),
+          scopeBinding(scope),
           range.start,
           range.end,
           repo ?? null,
@@ -183,7 +329,10 @@ export class PulseStore {
         );
       }
     }
-    if (!installation || !repositoryIds.length)
+    if (
+      !scope.sources.some((s) => s.repositoryIds.length) &&
+      !(scope.noteUserId && !repo)
+    )
       return { events: [], nextCursor: null };
     const cutoff = position?.cutoff ?? new Date(now).toISOString();
     const rows = await this.pool.query<{
@@ -191,20 +340,29 @@ export class PulseStore {
       at: string;
       event_id: string;
     }>(
-      `SELECT event - 'body' AS event, to_char(occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at,event_id FROM ship_live_events WHERE ${eligible}
-   AND occurred_at >= $3::timestamptz AND occurred_at < $4::timestamptz AND occurred_at <= $5::timestamptz
+      `WITH activity AS (
+     SELECT event,occurred_at,event_id FROM (${scopedEvents}) eligible_events
+     UNION ALL
+     SELECT jsonb_build_object('id','note-'||n.id,'type','note','actor',jsonb_build_object('login',coalesce($11::text,u.name)),'repo','journal/notes','title',n.title,'occurredAt',n.created_at),n.created_at,'note-'||n.id
+     FROM ship_live_notes n JOIN ship_live_auth_users u ON u.id=n.user_id
+     WHERE $6::text IS NULL AND n.user_id=$9::uuid AND n.workspace_id=$10::uuid
+   )
+   SELECT event - 'body' AS event, to_char(occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at,event_id FROM activity
+   WHERE occurred_at >= $3::timestamptz AND occurred_at < $4::timestamptz AND occurred_at <= $5::timestamptz
    AND ($6::text IS NULL OR event->>'repo'=$6)
    AND ($7::timestamptz IS NULL OR (occurred_at,event_id) < ($7::timestamptz,$8::text))
    ORDER BY occurred_at DESC,event_id DESC LIMIT 101`,
       [
-        `installation-${installation}`,
-        repositoryIds.map(String),
+        ...scopeParams(scope),
         range.start,
         range.end,
         cutoff,
         repo ?? null,
         position?.at ?? null,
         position?.id ?? null,
+        scope.noteUserId ?? null,
+        scope.workspaceId ?? null,
+        scope.ownerLogin ?? null,
       ],
     );
     const page = rows.rows.slice(0, 100);

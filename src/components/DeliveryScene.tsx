@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import type { PulseRange } from "../../shared/pulse";
 import type { HealthSnapshot } from "../../shared/health";
 import type { EngineeringWallSnapshot } from "../../shared/wall";
 import { deliveryMetrics, formatDuration } from "../lib/delivery-metrics";
@@ -29,17 +30,23 @@ export function DeliveryScene({
   snapshot,
   health,
   now,
+  range,
 }: {
   snapshot: EngineeringWallSnapshot;
   health?: HealthSnapshot;
   now: number;
+  range?: PulseRange;
 }) {
   const [chosen, setChosen] = useState<string>();
   const metrics = useMemo(
-    () => deliveryMetrics(snapshot, health, now, chosen),
-    [snapshot, health, now, chosen],
+    () => deliveryMetrics(snapshot, health, now, chosen, range),
+    [snapshot, health, now, chosen, range],
   );
   const { current, previous, environment } = metrics;
+  const grouping = range?.granularity ?? "week";
+  const periodLabel = range
+    ? `${weekLabel(range.from)}–${weekLabel(range.to)} UTC`
+    : "the last 30 days";
   const finished = current.deployments + current.failures;
   const figures: {
     label: string;
@@ -94,7 +101,7 @@ export function DeliveryScene({
     <>
       <SceneHeader
         title="Delivery"
-        description="How often the team ships and how quickly it recovers, over the last 30 days."
+        description={`How often the team ships and how quickly it recovers, over ${periodLabel}.`}
       >
         {metrics.environments.length > 1 && (
           <Picker
@@ -117,7 +124,10 @@ export function DeliveryScene({
               <small>{figure.detail}</small>
               {figure.before !== null && (
                 <small className="delivery-before">
-                  {figure.before} in the 30 days before
+                  {figure.before}{" "}
+                  {range
+                    ? "in the preceding period of equal duration"
+                    : "in the 30 days before"}
                 </small>
               )}
             </div>
@@ -135,24 +145,38 @@ export function DeliveryScene({
                 Failed
               </span>
               <span className="delivery-weeks-scope">
-                {environment}, by week
+                {environment}, by {grouping}
               </span>
             </div>
             <div
               className="delivery-weeks-bars"
+              data-period={range ? true : undefined}
+              style={
+                range
+                  ? {
+                      gridTemplateColumns: `repeat(${metrics.weeks.length}, minmax(0, 1fr))`,
+                      columnGap:
+                        metrics.weeks.length > 31
+                          ? 2
+                          : metrics.weeks.length > 16
+                            ? 4
+                            : undefined,
+                    }
+                  : undefined
+              }
               role="img"
-              aria-label={`Deployments to ${environment} by week, oldest first: ${metrics.weeks
+              aria-label={`Deployments to ${environment} by ${grouping}, oldest first: ${metrics.weeks
                 .map(
                   (week) =>
-                    `week of ${week.start}, ${week.deployments} successful and ${week.failures} failed`,
+                    `${grouping} starting ${week.start}, ${week.deployments} successful and ${week.failures} failed`,
                 )
                 .join("; ")}`}
             >
-              {metrics.weeks.map((week) => (
+              {metrics.weeks.map((week, index) => (
                 <div
                   className="delivery-week"
                   key={week.start}
-                  title={`Week of ${weekLabel(week.start)}: ${week.deployments} successful, ${week.failures} failed`}
+                  title={`${grouping === "day" ? "Day" : "Week starting"} ${weekLabel(week.start)}: ${week.deployments} successful, ${week.failures} failed`}
                 >
                   <div className="delivery-week-stack">
                     {week.deployments > 0 && (
@@ -170,7 +194,17 @@ export function DeliveryScene({
                       />
                     )}
                   </div>
-                  <small>{weekLabel(week.start)}</small>
+                  <small>
+                    {!range ||
+                    metrics.weeks.length <= 8 ||
+                    index === 0 ||
+                    index === metrics.weeks.length - 1 ||
+                    index % Math.ceil(metrics.weeks.length / 6) === 0
+                      ? range
+                        ? week.start.slice(5)
+                        : weekLabel(week.start)
+                      : "\u00a0"}
+                  </small>
                 </div>
               ))}
             </div>

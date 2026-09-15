@@ -1,3 +1,4 @@
+import type { PulseRange } from "../shared/pulse.js";
 import type { Pool } from "pg";
 import type {
   DeploymentState,
@@ -25,6 +26,65 @@ function settledOf(value: PipelineState): "passing" | "failing" | undefined {
 function signalKey(update: WallSignalUpdate): string {
   if (update.kind === "pull_request") return String(update.value.number);
   return String(update.value.id);
+}
+
+/** A repository may be present through more than one authorized installation. */
+export function combineWallSnapshots(
+  snapshots: EngineeringWallSnapshot[],
+): EngineeringWallSnapshot {
+  const repositories = new Map<number, WallRepositorySnapshot>();
+  function merge<T>(
+    values: T[],
+    key: (value: T) => string | number,
+    at: (value: T) => string,
+  ) {
+    const chosen = new Map<string | number, T>();
+    for (const value of values) {
+      const previous = chosen.get(key(value));
+      if (!previous || Date.parse(at(value)) > Date.parse(at(previous)))
+        chosen.set(key(value), value);
+    }
+    return [...chosen.values()];
+  }
+  for (const snapshot of snapshots)
+    for (const repository of snapshot.repositories) {
+      const previous = repositories.get(repository.repositoryId);
+      if (!previous) {
+        repositories.set(repository.repositoryId, repository);
+        continue;
+      }
+      repositories.set(repository.repositoryId, {
+        ...repository,
+        pullRequests: merge(
+          [...previous.pullRequests, ...repository.pullRequests],
+          (value) => value.number,
+          (value) => value.updatedAt,
+        ),
+        reviews: merge(
+          [...previous.reviews, ...repository.reviews],
+          (value) => value.id,
+          (value) => value.submittedAt,
+        ),
+        pipelines: merge(
+          [...previous.pipelines, ...repository.pipelines],
+          (value) => value.id,
+          (value) => value.updatedAt,
+        ),
+        deployments: merge(
+          [...previous.deployments, ...repository.deployments],
+          (value) => value.id,
+          (value) => value.updatedAt,
+        ),
+      });
+    }
+  return {
+    repositories: [...repositories.values()],
+    updatedAt:
+      snapshots
+        .map((value) => value.updatedAt)
+        .sort()
+        .at(-1) ?? new Date().toISOString(),
+  };
 }
 
 export class WallStore {
@@ -170,6 +230,7 @@ export class WallStore {
   async snapshot(
     installationId: number,
     repositoryIds: number[],
+    range?: Pick<PulseRange, "start" | "end">,
   ): Promise<EngineeringWallSnapshot> {
     if (!repositoryIds.length)
       return { repositories: [], updatedAt: new Date().toISOString() };
@@ -179,7 +240,28 @@ export class WallStore {
       kind: WallSignalUpdate["kind"];
       value: PullRequestState | ReviewState | PipelineState | DeploymentState;
     }>(
-      `SELECT repository_id,repository,kind,value
+      range
+        ? `WITH authorized AS (
+        SELECT * FROM ship_live_wall_signals WHERE installation_id=$1 AND repository_id=ANY($2::bigint[])
+      ), selected_pulls AS (
+        SELECT p.* FROM authorized p WHERE p.kind='pull_request' AND (p.value->>'createdAt')::timestamptz < $4::timestamptz
+        AND ((p.value->>'updatedAt')::timestamptz >= $3::timestamptz OR p.value->>'state'='open'
+          OR EXISTS (SELECT 1 FROM authorized signal WHERE signal.repository_id=p.repository_id
+            AND ((signal.kind='review' AND signal.value->>'pullRequestNumber'=p.value->>'number')
+              OR (signal.kind='pipeline' AND signal.value->>'headSha'=p.value->>'headSha'))
+            AND EXISTS (SELECT 1 FROM unnest(ARRAY[signal.value->>'submittedAt',signal.value->>'updatedAt',signal.value->>'startedAt',signal.value->>'completedAt']) AS stamp(value)
+              WHERE stamp.value::timestamptz >= $3::timestamptz AND stamp.value::timestamptz < $4::timestamptz)))
+      )
+      SELECT s.repository_id,s.repository,s.kind,s.value FROM authorized s
+      WHERE (s.kind='pull_request' AND EXISTS (SELECT 1 FROM selected_pulls p WHERE p.repository_id=s.repository_id AND p.signal_key=s.signal_key))
+      OR (s.kind<>'pull_request' AND (
+        EXISTS (SELECT 1 FROM unnest(ARRAY[s.value->>'submittedAt',s.value->>'updatedAt',s.value->>'startedAt',s.value->>'completedAt',s.value->>'succeededAt']) AS stamp(value)
+          WHERE stamp.value::timestamptz >= $3::timestamptz AND stamp.value::timestamptz < $4::timestamptz)
+        OR EXISTS (SELECT 1 FROM selected_pulls p WHERE p.repository_id=s.repository_id AND
+          ((s.kind='review' AND s.value->>'pullRequestNumber'=p.value->>'number')
+          OR (s.kind='pipeline' AND s.value->>'headSha'=p.value->>'headSha')))
+      )) ORDER BY s.repository,s.kind,s.observed_at DESC`
+        : `SELECT repository_id,repository,kind,value
        FROM (
          SELECT repository_id,repository,kind,value,observed_at,
                 row_number() OVER (
@@ -190,7 +272,17 @@ export class WallStore {
        ) scoped
        WHERE signal_rank <= 300
        ORDER BY repository,kind,observed_at DESC`,
-      [installationId, repositoryIds],
+      range
+        ? [
+            installationId,
+            repositoryIds,
+            new Date(
+              Date.parse(range.start) -
+                (Date.parse(range.end) - Date.parse(range.start)),
+            ).toISOString(),
+            range.end,
+          ]
+        : [installationId, repositoryIds],
     );
     const grouped = new Map<number, WallRepositorySnapshot>();
     for (const row of result.rows) {

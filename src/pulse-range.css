@@ -269,3 +269,30 @@
     visibility: hidden;
   }
 }
+
+.pulse-page-filter {
+  margin: 0 0 20px;
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+.pulse-page-filter .pulse-range-picker {
+  border-top: 0;
+  padding: 0 0 8px;
+}
+.pulse-page-filter > p,
+.pulse-health-coverage {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.pulse-page-filter > p span {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.pulse-health-coverage {
+  padding: 0 24px 12px;
+}
+.engineering-wall .pulse-range-state {
+  padding: 24px;
+}
