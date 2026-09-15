@@ -44,23 +44,21 @@ export function DeliveryScene({
   const [chosen, setChosen] = useState<string>();
   const selection = onEnvironmentChange
     ? requestedEnvironment
-    : (requestedEnvironment ?? chosen);
+    : (chosen ?? requestedEnvironment);
   const metrics = useMemo(
     () => deliveryMetrics(snapshot, health, now, selection, range),
     [snapshot, health, now, selection, range],
   );
   const { current, previous, environment } = metrics;
-  const unavailable =
-    !!requestedEnvironment &&
-    !metrics.environments.includes(requestedEnvironment);
+  const unavailable = !!selection && !metrics.environments.includes(selection);
   const environmentOptions = metrics.environments.map((value) => ({
     value,
     label: value,
   }));
   if (unavailable)
     environmentOptions.unshift({
-      value: requestedEnvironment!,
-      label: `${requestedEnvironment} (unavailable)`,
+      value: selection!,
+      label: `${selection} (unavailable)`,
     });
   const grouping = range?.granularity ?? "week";
   const periodLabel = range
@@ -127,7 +125,7 @@ export function DeliveryScene({
             label="Environment"
             value={
               unavailable
-                ? requestedEnvironment!
+                ? selection!
                 : (environment ?? metrics.environments[0])
             }
             options={environmentOptions}
@@ -140,8 +138,8 @@ export function DeliveryScene({
       </SceneHeader>
       {unavailable ? (
         <p className="delivery-note" role="status">
-          No stored deployments for {requestedEnvironment} in this view. Select
-          another environment to see its delivery metrics.
+          No stored deployments for {selection} in this view. Select another
+          environment to see its delivery metrics.
         </p>
       ) : (
         <div className="delivery-body">

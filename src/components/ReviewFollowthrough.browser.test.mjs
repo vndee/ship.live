@@ -333,3 +333,109 @@ test("a discarded review scope render cannot discard the committed scope refresh
   assert.equal(requests.length, 2);
   assert.ok(requests.every((url) => url.includes("/workspaces/one/")));
 });
+
+test("review mutation rejections retain only validated input errors and clear failed conflict refreshes", async (t) => {
+  const built = await build({
+    stdin: {
+      contents: `import React from 'react';import {createRoot} from 'react-dom/client';import {ReviewFollowthrough} from './src/components/ReviewFollowthrough.tsx';import {useReviewFollowthrough} from './src/hooks/useReviewFollowthrough.ts';function App(){const state=useReviewFollowthrough({workspaceId:'one',scopeKey:'one',userId:'alice',csrfToken:'token'},[{repositoryId:101,number:7}]);return <ReviewFollowthrough item={state.items[0]} loading={state.loading} error={state.error} pending={state.pending} historical={false} userId='alice' onAction={(a,h)=>state.act(state.items[0],a,h)}/>;}createRoot(document.getElementById('root')).render(<App/>);`,
+      resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
+      loader: "tsx",
+    },
+    bundle: true,
+    write: false,
+    outdir: "out",
+    platform: "browser",
+    format: "iife",
+    jsx: "automatic",
+  });
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  for (const status of [400, 401, 403, 404, 503, 409]) {
+    await t.test(`mutation ${status}`, async (t) => {
+      const page = await browser.newPage();
+      t.after(() => page.close());
+      page.setDefaultTimeout(3000);
+      const item = {
+        repositoryId: 101,
+        number: 7,
+        fingerprint: "a".repeat(64),
+        reasons: ["CI failing"],
+        actionable: true,
+        ageMs: 86400000,
+        inactiveMs: 3600000,
+      };
+      let rejected = false;
+      let rejectMutation = true;
+      await page.route("**/*", (route) => {
+        const req = route.request();
+        if (!req.url().includes("/api/"))
+          return route.fulfill({
+            contentType: "text/html",
+            body: '<div id="root"></div>',
+          });
+        if (req.method() === "GET")
+          return rejected && status === 409
+            ? route.fulfill({
+                status: 503,
+                json: { error: "Read unavailable." },
+              })
+            : route.fulfill({ json: { items: [item], current: true } });
+        if (rejectMutation) {
+          rejected = true;
+          return route.fulfill({ status, json: { error: "Action rejected." } });
+        }
+        return route.fulfill({
+          json: {
+            items: [
+              {
+                ...item,
+                claim: {
+                  userId: "alice",
+                  name: "Alice",
+                  expiresAt: new Date(Date.now() + 86400000).toISOString(),
+                },
+              },
+            ],
+            current: true,
+          },
+        });
+      });
+      await page.goto("http://ship.test");
+      await page.addScriptTag({
+        content: built.outputFiles.find((f) => f.path.endsWith(".js")).text,
+      });
+      await page
+        .getByRole("button", { name: "I'm looking", exact: true })
+        .click();
+      await page
+        .getByRole("alert")
+        .filter({
+          hasText:
+            status === 409
+              ? "Could not load current review status."
+              : "Action rejected.",
+        })
+        .waitFor();
+      assert.equal(
+        await page
+          .getByText("Current status: CI failing", { exact: true })
+          .count(),
+        status === 400 ? 1 : 0,
+      );
+      assert.equal(
+        await page.getByRole("button").count(),
+        status === 400 ? 2 : 0,
+      );
+      if (status === 400) {
+        rejectMutation = false;
+        await page
+          .getByRole("button", { name: "I'm looking", exact: true })
+          .click();
+        await page
+          .getByRole("button", { name: "Release my claim", exact: true })
+          .waitFor();
+        assert.equal(await page.getByRole("alert").count(), 0);
+      }
+    });
+  }
+});

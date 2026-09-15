@@ -119,6 +119,7 @@ export function useReviewFollowthrough(
     )
       return;
     let conflict = false;
+    let invalidInput = false;
     const request = ++sequence.current;
     mutation.current = { key, request };
     setState((s) => ({ ...s, pending: true, error: "" }));
@@ -142,6 +143,7 @@ export function useReviewFollowthrough(
       const data = await res.json();
       if (!res.ok) {
         conflict = res.status === 409;
+        invalidInput = res.status === 400;
         throw new Error(data.error || "Could not save review action.");
       }
       if (active.current === key && request === sequence.current)
@@ -159,7 +161,7 @@ export function useReviewFollowthrough(
         setState((s) => ({
           ...s,
           pending: false,
-          items: [],
+          items: invalidInput ? s.items : [],
           error:
             error instanceof Error
               ? error.message

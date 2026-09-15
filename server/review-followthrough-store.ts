@@ -153,6 +153,7 @@ export class ReviewFollowthroughStore {
     scope: ReviewScope,
   ) {
     const client = await this.pool.connect();
+    let failed = false;
     try {
       await client.query("BEGIN");
       // Serialize with wall signal ingestion: an old snapshot cannot replace a
@@ -220,10 +221,11 @@ export class ReviewFollowthroughStore {
         );
       await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      failed = true;
+      await client.query("ROLLBACK").catch(() => undefined);
       throw error;
     } finally {
-      client.release();
+      client.release(failed);
     }
   }
 }

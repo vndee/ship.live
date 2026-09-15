@@ -141,3 +141,5 @@ Review claims are atomic and expire after 24 hours. Claims and snoozes bind to a
 Overview comparisons aggregate two equal-length calendar ranges together with the same canonical contribution and authorization rules. Activity cursors bind the contribution-type filter as well as the complete source scope and dates. Saved views store validated internal navigation only, with explicit workspace binding; they grant no access. Dynamic presets resolve when opened, while custom dates remain fixed.
 
 Weekly recaps reuse bounded digest aggregation with exact source pairs. Reflections belong to one user/workspace/week and never enter outbound digests. The digest scheduler converts local weekday/time with PostgreSQL timezone rules, derives the most recent completed UTC week at that instant, and uses the existing unique workspace/week run key for idempotence.
+
+Recap saves serialize per router and use at most one additional short-lived database connection per process. Authorization reads retain access to the shared pool while each write transaction rechecks access before commit; a failed recheck rolls back the write, including updates to existing reflections or schedules.

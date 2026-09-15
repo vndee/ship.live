@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Pool } from "pg";
+import { Client, type Pool } from "pg";
 import type { Workspace } from "../shared/workspaces.js";
 import {
   DEFAULT_DIGEST_SCHEDULE,
@@ -59,6 +59,48 @@ export function recapRouter({
     await auth.assertActive(principal);
     if (fingerprint(scope) !== fingerprint(current))
       throw new AuthError(403, "Repository access changed. Reload the recap.");
+  }
+  // Serialize saves and use at most one extra connection per router. Auth and
+  // viewer query the shared pool, so holding its last client across a recheck
+  // would deadlock. Each short-lived write connection closes before the next save.
+  let mutationTail: Promise<void> = Promise.resolve();
+  function save(
+    principal: Principal,
+    id: string,
+    scope: Scope,
+    sql: string,
+    values: unknown[],
+  ) {
+    const pending = mutationTail.then(async () => {
+      // Requests may have queued while their original access was revoked.
+      await recheck(principal, id, scope);
+      const client = new Client(pool.options);
+      let connectionError: Error | undefined;
+      // Connection failures can arrive while the shared-pool recheck is pending.
+      client.on("error", (error: Error) => {
+        connectionError = error;
+      });
+      try {
+        await client.connect();
+        await client.query("BEGIN");
+        await client.query(sql, values);
+        await recheck(principal, id, scope);
+        if (connectionError) throw connectionError;
+        await client.query("COMMIT");
+      } catch (error) {
+        // A broken connection may reject rollback too; never mask the cause or
+        // reuse that connection. Closing it also discards any open transaction.
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally {
+        await client.end().catch(() => {});
+      }
+    });
+    mutationTail = pending.then(
+      () => {},
+      () => {},
+    );
+    return pending;
   }
   async function read(
     principal: Principal,
@@ -129,12 +171,13 @@ export function recapRouter({
     const reflection = req.body?.reflection;
     if (typeof reflection !== "string" || reflection.length > 5000)
       throw new AuthError(400, "Keep your reflection within 5,000 characters.");
-    await recheck(principal, req.params.id, initial);
-    await pool.query(
+    await save(
+      principal,
+      req.params.id,
+      initial,
       `INSERT INTO ship_live_recap_notes(workspace_id,user_id,week_start,reflection) VALUES($1,$2,$3::date,$4) ON CONFLICT(workspace_id,user_id,week_start) DO UPDATE SET reflection=EXCLUDED.reflection,updated_at=now()`,
       [req.params.id, principal.user.id, range.weekStart, reflection],
     );
-    await recheck(principal, req.params.id, initial);
     res.json({ reflection });
   });
   router.put(`${base}/schedule`, async (req, res) => {
@@ -153,12 +196,13 @@ export function recapRouter({
     );
     if (!zones.rowCount)
       throw new AuthError(400, "Choose a supported IANA timezone.");
-    await recheck(principal, req.params.id, initial);
-    await pool.query(
+    await save(
+      principal,
+      req.params.id,
+      initial,
       `INSERT INTO ship_live_digest_schedules(workspace_id,weekday,local_time,timezone) VALUES($1,$2,$3,$4) ON CONFLICT(workspace_id) DO UPDATE SET weekday=EXCLUDED.weekday,local_time=EXCLUDED.local_time,timezone=EXCLUDED.timezone,updated_at=now()`,
       [req.params.id, schedule.weekday, schedule.time, schedule.timezone],
     );
-    await recheck(principal, req.params.id, initial);
     res.json(schedule);
   });
   return router;

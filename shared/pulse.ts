@@ -136,11 +136,13 @@ export function aggregatePulse(
   const previousTotals = emptyPulseCounts();
   const currentParticipants = new Set<string>();
   const previousParticipants = new Set<string>();
-  const previousSeen = new Set<string>();
   const buckets = pulseBuckets(range);
   const totals = emptyPulseCounts();
   const repositories = new Map<string, PulseCounts & { repo: string }>();
-  const seen = new Set<string>();
+  const canonical = new Map<
+    string,
+    { event: ActivityEvent; time: number; login: string; tie: string }
+  >();
   let earliestStoredAt: string | null = null;
   for (const event of events) {
     const login = event.actor.login.trim().toLowerCase();
@@ -151,19 +153,29 @@ export function aggregatePulse(
       !login ||
       /\[bot\]$|-bot$/.test(login) ||
       ["dependabot", "renovate", "github-actions"].includes(login) ||
-      !Number.isFinite(time) ||
-      time > now ||
-      seen.has(event.id)
+      !Number.isFinite(time)
     )
       continue;
+    // Match stored Pulse queries: choose the newest eligible row before time
+    // filtering. Client events lack installation organization, so equal-time
+    // ties use the aggregate-relevant fields for stable results.
+    const tie = JSON.stringify([event.repo, event.type, login]);
+    const existing = canonical.get(event.id);
+    if (
+      !existing ||
+      time > existing.time ||
+      (time === existing.time && tie < existing.tie)
+    )
+      canonical.set(event.id, { event, time, login, tie });
+  }
+  for (const { event, time, login } of canonical.values()) {
+    if (time > now) continue;
     if (earliestStoredAt === null || time < Date.parse(earliestStoredAt))
       earliestStoredAt = new Date(time).toISOString();
     if (
       time >= Date.parse(previousRange.start) &&
-      time < Date.parse(previousRange.end) &&
-      !previousSeen.has(event.id)
+      time < Date.parse(previousRange.end)
     ) {
-      previousSeen.add(event.id);
       previousParticipants.add(login);
       previousTotals.count++;
       previousTotals.merges += Number(event.type === "merge");
@@ -172,7 +184,6 @@ export function aggregatePulse(
     }
     if (time < Date.parse(range.start) || time >= Date.parse(range.end))
       continue;
-    seen.add(event.id);
     currentParticipants.add(login);
     const repo = repositories.get(event.repo) ?? {
       repo: event.repo,

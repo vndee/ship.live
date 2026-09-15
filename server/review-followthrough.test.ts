@@ -12,6 +12,46 @@ import { createTestDatabase } from "./test-database.js";
 import { PostgresEventStore } from "./postgres-store.js";
 import { WallStore } from "./wall-store.js";
 import type { Workspace } from "../shared/workspaces.js";
+import type { Pool } from "pg";
+import { ReviewFollowthroughStore } from "./review-followthrough-store.js";
+import type { ReviewFollowthroughItem } from "../shared/review-followthrough.js";
+
+test("a broken rollback preserves the original review error and discards its connection", async () => {
+  const original = new Error("Connection lost during review mutation");
+  let released: boolean | undefined;
+  const queries: string[] = [];
+  const client = {
+    async query(sql: string) {
+      queries.push(sql);
+      if (sql === "BEGIN") return { rows: [] };
+      if (sql === "ROLLBACK") throw new Error("Connection still unavailable");
+      throw original;
+    },
+    release(failed?: boolean) {
+      released = failed;
+    },
+  };
+  const reviews = new ReviewFollowthroughStore({
+    connect: async () => client,
+  } as unknown as Pool);
+  await assert.rejects(
+    reviews.mutate(
+      "workspace",
+      "user",
+      { repositoryId: 101, number: 7 } as ReviewFollowthroughItem,
+      "claim",
+      undefined,
+      { sources: [{ installationId: 10, repositories: [{ id: 101 }] }] },
+    ),
+    (error) => error === original,
+  );
+  assert.equal(queries.at(-1), "ROLLBACK");
+  assert.equal(
+    released,
+    true,
+    "Do not reuse a connection whose rollback failed",
+  );
+});
 class FixtureAuth extends AuthService {
   userId = "";
   override async authenticate(

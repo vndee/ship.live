@@ -191,3 +191,100 @@ test("an older initial list response cannot erase a newly saved view", async (t)
     "The latest successful save must remain visible after an older list read finishes",
   );
 });
+
+for (const rejection of ["local", 400, 409]) {
+  test(`rejected saved-view input (${rejection}) keeps existing views available for deletion`, async (t) => {
+    const { page, rows } = await open(t);
+    for (let index = 0; index < 30; index++)
+      rows.push({
+        id: `existing-${index}`,
+        name: `Existing ${index}`,
+        href: `/?workspace=${workspace}&period=7d`,
+      });
+    if (rejection === "local")
+      await page.evaluate(() => window.renderView("one", "/unsupported"));
+    else
+      await page.route("**/api/saved-views", (route) =>
+        route.request().method() === "POST"
+          ? route.fulfill({
+              status: rejection,
+              json: { error: "Cannot save this input." },
+            })
+          : route.fallback(),
+      );
+    await page
+      .getByRole("button", { name: "Saved views", exact: true })
+      .click();
+    await page.getByRole("link", { name: "Existing 0", exact: true }).waitFor();
+    await page.getByLabel("View name", { exact: true }).fill("Another view");
+    await page
+      .getByRole("button", { name: "Save current view", exact: true })
+      .click();
+    await page.getByRole("alert").waitFor();
+    assert.equal(
+      await page.getByRole("link").count(),
+      30,
+      "Rejected input must leave existing saved views usable",
+    );
+    await page
+      .getByRole("button", { name: "Delete Existing 0", exact: true })
+      .click();
+    await page
+      .getByRole("link", { name: "Existing 0", exact: true })
+      .waitFor({ state: "detached" });
+    assert.equal(await page.getByRole("link").count(), 29);
+  });
+}
+
+for (const status of [401, 403, 404, 503]) {
+  test(`saved-view mutation failure ${status} clears unverified views`, async (t) => {
+    const { page, rows } = await open(t);
+    rows.push({
+      id: "existing",
+      name: "Private view",
+      href: `/?workspace=${workspace}&period=7d`,
+    });
+    await page
+      .getByRole("button", { name: "Saved views", exact: true })
+      .click();
+    await page
+      .getByRole("link", { name: "Private view", exact: true })
+      .waitFor();
+    await page.route("**/api/saved-views/*", (route) =>
+      route.fulfill({ status, json: { error: "Mutation unavailable." } }),
+    );
+    await page
+      .getByRole("button", { name: "Delete Private view", exact: true })
+      .click();
+    await page.getByRole("alert").waitFor();
+    assert.equal(await page.getByRole("link").count(), 0);
+  });
+}
+
+for (const status of [400, 409, 503]) {
+  test(`failed saved-view follow-up read ${status} clears previously loaded views`, async (t) => {
+    const { page, rows } = await open(t);
+    rows.push({
+      id: "existing",
+      name: "Private view",
+      href: `/?workspace=${workspace}&period=7d`,
+    });
+    await page
+      .getByRole("button", { name: "Saved views", exact: true })
+      .click();
+    await page
+      .getByRole("link", { name: "Private view", exact: true })
+      .waitFor();
+    await page.route("**/api/saved-views", (route) =>
+      route.fulfill({ status, json: { error: "Refresh unavailable." } }),
+    );
+    await page
+      .getByRole("button", { name: "Rename Private view", exact: true })
+      .click();
+    await page.getByLabel("New view name").fill("Renamed");
+    await page.getByRole("button", { name: "Save name", exact: true }).click();
+    await page.getByRole("alert").waitFor();
+    assert.equal(await page.getByLabel("New view name").count(), 0);
+    assert.equal(await page.getByRole("link").count(), 0);
+  });
+}

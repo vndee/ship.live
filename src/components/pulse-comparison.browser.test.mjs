@@ -22,7 +22,7 @@ before(async () => {
       {id:'release',type:'release',actor:{login:'alice'},repo:'a/b',title:'Previous release',occurredAt:'2026-09-14T10:00:00Z'},
     ];
     const data=aggregatePulse(events,resolvePulseRange({period:'today'},now),now);
-    data.coverage.earliestStoredAt='2026-09-15T00:00:00Z'; data.comparison.previous.coverage=data.coverage;
+    data.coverage.earliestStoredAt='2026-09-15T10:00:00Z'; data.comparison.previous.coverage=data.coverage;
     const source={enabled:true,demo:true,events}; window.historyClicks=[];
     function Harness(){ const [history,setHistory]=useState(null); const [demo,setDemo]=useState(false);
       window.showHistory=(kind)=>setHistory({from:'2026-09-15',to:'2026-09-15',kind}); window.setDemo=setDemo;
@@ -105,6 +105,8 @@ test("comparison shows absolute deltas, distinct participants, both coverage cav
   assert.match(text, /\+1/);
   assert.match(text, /−1/);
   assert.doesNotMatch(text, /Infinity|NaN|%/);
+  // First contribution time is not the beginning of collection: same-day
+  // activity still has unknown completeness.
   assert.match(text, /Current period: Completeness unknown/);
   assert.match(text, /Previous period: Limited history/);
   assert.match(text, /before.*earliest stored/i);

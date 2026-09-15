@@ -235,3 +235,200 @@ test("recap HTTP boundary enforces exact source pairs, author scope, private not
     await store.close();
   }
 });
+
+test("recap saves roll back inserted and updated rows when the final access check fails", async (t) => {
+  const db = await createTestDatabase(t);
+  if (!db) return;
+  const store = await PostgresEventStore.open(db);
+  const workspace = randomUUID(),
+    user = randomUUID();
+  await store.pool.query(
+    "INSERT INTO ship_live_auth_users(id,name) VALUES($1,'Alice')",
+    [user],
+  );
+  await store.pool.query(
+    "INSERT INTO ship_live_workspaces(id,name,kind,owner_user_id) VALUES($1,'Journal','personal',$2)",
+    [workspace, user],
+  );
+  let reads = 0,
+    activeChecks = 0,
+    failure: "scope" | "session" | undefined;
+  const principal = { user: { id: user }, sessionId: "session" } as Principal;
+  const auth = {
+    requireMutation: async () => principal,
+    assertActive: async () => {
+      activeChecks++;
+      await store.pool.query("SELECT 1");
+      if (failure === "session" && activeChecks === 2)
+        throw new AuthError(401, "Session revoked");
+    },
+  } as unknown as AuthService;
+  const viewer = async () => {
+    reads++;
+    await store.pool.query("SELECT 1");
+    return {
+      workspace: {
+        id: workspace,
+        name: "Journal",
+        kind: "personal" as const,
+        owner: true,
+      },
+      sources: [
+        {
+          installationId: 99,
+          repositories: [{ id: failure === "scope" && reads === 3 ? 8 : 7 }],
+        },
+      ],
+    };
+  };
+  const app = express();
+  app.use(
+    express.json(),
+    recapRouter({
+      auth,
+      store,
+      viewer,
+      now: () => Date.parse("2026-09-15T00:00:00Z"),
+    }),
+  );
+  app.use(((e, _q, r, _n) =>
+    r
+      .status(e instanceof AuthError ? e.status : 500)
+      .json({ error: e.message })) as ErrorRequestHandler);
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}/api/workspaces/${workspace}/recap`;
+  try {
+    for (const route of ["reflection", "schedule"] as const) {
+      const table =
+        route === "reflection"
+          ? "ship_live_recap_notes"
+          : "ship_live_digest_schedules";
+      for (const existing of [false, true]) {
+        for (const reason of ["scope", "session"] as const) {
+          await t.test(
+            `${route} ${existing ? "update" : "insert"} survives late ${reason} revocation without persisting changes`,
+            async () => {
+              await store.pool.query(`DELETE FROM ${table}`);
+              if (existing) {
+                if (route === "reflection")
+                  await store.pool.query(
+                    "INSERT INTO ship_live_recap_notes(workspace_id,user_id,week_start,reflection) VALUES($1,$2,'2026-09-07','Original reflection')",
+                    [workspace, user],
+                  );
+                else
+                  await store.pool.query(
+                    "INSERT INTO ship_live_digest_schedules(workspace_id,weekday,local_time,timezone) VALUES($1,1,'09:00','UTC')",
+                    [workspace],
+                  );
+              }
+              const before = (await store.pool.query(`SELECT * FROM ${table}`))
+                .rows;
+              reads = 0;
+              activeChecks = 0;
+              failure = reason;
+              const response = await fetch(`${base}/${route}`, {
+                method: "PUT",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(
+                  route === "reflection"
+                    ? { week: "2026-09-07", reflection: "Unauthorized edit" }
+                    : {
+                        weekday: 2,
+                        time: "16:30",
+                        timezone: "Asia/Ho_Chi_Minh",
+                      },
+                ),
+              });
+              assert.equal(response.status, reason === "scope" ? 403 : 401);
+              assert.deepEqual(
+                (await store.pool.query(`SELECT * FROM ${table}`)).rows,
+                before,
+                "a rejected save must leave stored rows unchanged",
+              );
+            },
+          );
+        }
+      }
+    }
+    failure = undefined;
+    // Both authorization callbacks query this same pool. A checked-out write
+    // transaction must not prevent them from obtaining its only connection.
+    store.pool.options.max = 1;
+    await t.test(
+      "concurrent saves finish with a one-connection authorization pool",
+      async () => {
+        const responses = await Promise.all(
+          ["reflection", "schedule"].map((route) =>
+            fetch(`${base}/${route}`, {
+              method: "PUT",
+              headers: { "content-type": "application/json" },
+              signal: AbortSignal.timeout(5000),
+              body: JSON.stringify(
+                route === "reflection"
+                  ? { week: "2026-09-07", reflection: "Authorized edit" }
+                  : { weekday: 3, time: "12:00", timezone: "UTC" },
+              ),
+            }),
+          ),
+        );
+        assert.deepEqual(
+          responses.map((r) => r.status),
+          [200, 200],
+        );
+        assert.equal(
+          (
+            await store.pool.query(
+              "SELECT reflection FROM ship_live_recap_notes",
+            )
+          ).rows[0].reflection,
+          "Authorized edit",
+        );
+        assert.equal(
+          (
+            await store.pool.query(
+              "SELECT weekday FROM ship_live_digest_schedules",
+            )
+          ).rows[0].weekday,
+          3,
+        );
+      },
+    );
+    await t.test(
+      "a failed write connection releases the save queue for the next request",
+      async () => {
+        const originalUrl = store.pool.options.connectionString;
+        const unavailable = new URL(db);
+        unavailable.pathname = "/ship_live_missing_database";
+        store.pool.options.connectionString = unavailable.toString();
+        const save = () =>
+          fetch(`${base}/reflection`, {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            signal: AbortSignal.timeout(1500),
+            body: JSON.stringify({
+              week: "2026-09-07",
+              reflection: "Recovered save",
+            }),
+          });
+        try {
+          assert.equal((await save()).status, 500);
+        } finally {
+          store.pool.options.connectionString = originalUrl;
+        }
+        assert.equal((await save()).status, 200);
+        assert.equal(
+          (
+            await store.pool.query(
+              "SELECT reflection FROM ship_live_recap_notes",
+            )
+          ).rows[0].reflection,
+          "Recovered save",
+        );
+      },
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await store.close();
+  }
+});

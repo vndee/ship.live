@@ -7,6 +7,17 @@ import {
 } from "../../shared/saved-views";
 import { Modal } from "./Modal";
 import "./saved-views.css";
+// These rejections leave the last verified list unchanged.
+class SavedViewInputError extends Error {}
+function validateSavedView(input: unknown) {
+  try {
+    return normalizeSavedView(input);
+  } catch (error) {
+    throw new SavedViewInputError(
+      error instanceof Error ? error.message : "Choose a valid view to save.",
+    );
+  }
+}
 export function SavedViews({
   csrfToken,
   scopeKey,
@@ -75,8 +86,12 @@ function SavedViewsDialog({
     });
     if (response.status === 204) return undefined as T;
     const data = await response.json();
-    if (!response.ok)
-      throw new Error(data.error || "Could not load saved views.");
+    if (!response.ok) {
+      const message = data.error || "Could not load saved views.";
+      if (method !== "GET" && [400, 409].includes(response.status))
+        throw new SavedViewInputError(message);
+      throw new Error(message);
+    }
     return data as T;
   }
   async function load() {
@@ -119,7 +134,7 @@ function SavedViewsDialog({
     } catch (e) {
       if (mounted.current && version === requestVersion.current) {
         setError(e instanceof Error ? e.message : "Could not save this view.");
-        setViews(null);
+        if (!(e instanceof SavedViewInputError)) setViews(null);
       }
     } finally {
       if (mounted.current && version === requestVersion.current) setBusy(false);
@@ -136,7 +151,7 @@ function SavedViewsDialog({
         onSubmit={(event) => {
           event.preventDefault();
           void mutate(async () => {
-            const input = normalizeSavedView({ name, href: currentHref });
+            const input = validateSavedView({ name, href: currentHref });
             await call("", "POST", input);
             if (mounted.current) setName("");
           });
@@ -251,7 +266,7 @@ function SavedViewsDialog({
                           call(
                             `/${view.id}`,
                             "PATCH",
-                            normalizeSavedView({
+                            validateSavedView({
                               name: view.name,
                               href: currentHref,
                             }),

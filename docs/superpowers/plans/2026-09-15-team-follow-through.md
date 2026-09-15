@@ -59,8 +59,8 @@ Files: server/workspace-app.ts, server/share-app.ts, server/migrations.ts, serve
 
 ## Completed validation
 
-- Full PostgreSQL suite: 433 passed, zero skipped.
-- Browser suite: 96 passed, including actual App navigation and discarded-render regressions.
+- Full PostgreSQL suite: 454 passed, zero skipped.
+- Browser suite: 116 passed, including actual App navigation and discarded-render regressions.
 - Deployment policy: 88 passed; Compose: 3 passed; runtime Docker image: 5 passed.
 - Production build, formatting and whitespace checks passed. Existing bundle size advisory remains.
 - Independent review fixes cover stale reads/mutations, repository ingestion races and hosted database default grants.

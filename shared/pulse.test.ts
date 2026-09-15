@@ -47,7 +47,7 @@ test("weekly buckets clip at both selected edges and exclude bots and notes", ()
   assert.equal(result.buckets[0].to, "2026-08-02");
   assert.equal(result.buckets.at(-1)?.to, "2026-09-15");
 });
-test("range filtering precedes duplicate suppression and preserves contribution counting", () => {
+test("latest duplicate supplies the contribution and preserves contribution counting", () => {
   const range = resolvePulseRange({ period: "today" }, now);
   const event = {
     id: "one",
@@ -155,4 +155,82 @@ test("today comparison marks the current period incomplete and preserves empty p
   assert.equal(result.comparison.previous.totals.count, 0);
   assert.equal(result.comparison.previous.participants, 0);
   assert.equal(result.comparison.currentIncomplete, true);
+});
+
+test("duplicates use the latest timestamp once across both comparison periods regardless of input order", () => {
+  const range = resolvePulseRange({ period: "today" }, now);
+  const earlier = {
+    id: "replayed",
+    type: "release" as const,
+    repo: "team/api",
+    actor: { login: "bob" },
+    title: "Release",
+    occurredAt: "2026-09-14T10:00:00Z",
+  };
+  const latest = {
+    ...earlier,
+    type: "merge" as const,
+    actor: { login: "alice" },
+    occurredAt: "2026-09-15T10:00:00Z",
+  };
+  for (const events of [
+    [earlier, latest],
+    [latest, earlier],
+  ]) {
+    const result = aggregatePulse(events, range, now);
+    assert.deepEqual(result.totals, {
+      count: 1,
+      merges: 1,
+      reviews: 0,
+      releases: 0,
+    });
+    assert.deepEqual(result.comparison?.previous.totals, {
+      count: 0,
+      merges: 0,
+      reviews: 0,
+      releases: 0,
+    });
+    assert.equal(result.comparison?.previous.participants, 0);
+    assert.equal(result.comparison?.currentParticipants, 1);
+    assert.equal(result.coverage.earliestStoredAt, "2026-09-15T10:00:00.000Z");
+  }
+});
+
+test("latest duplicate is chosen before the future-time boundary, like stored Pulse queries", () => {
+  const event = {
+    id: "replayed",
+    type: "merge" as const,
+    repo: "team/api",
+    actor: { login: "alice" },
+    title: "Merge",
+    occurredAt: "2026-09-15T10:00:00Z",
+  };
+  const result = aggregatePulse(
+    [event, { ...event, occurredAt: "2026-09-15T13:00:00Z" }],
+    resolvePulseRange({ period: "today" }, now),
+    now,
+  );
+  assert.equal(result.totals.count, 0);
+  assert.equal(result.coverage.earliestStoredAt, null);
+});
+
+test("equal-time duplicates keep aggregates deterministic when contribution metadata differs", () => {
+  const event = {
+    id: "replayed",
+    type: "release" as const,
+    repo: "team/api",
+    actor: { login: "bob" },
+    title: "Release",
+    occurredAt: "2026-09-15T10:00:00Z",
+  };
+  const duplicate = {
+    ...event,
+    type: "merge" as const,
+    actor: { login: "alice" },
+  };
+  const range = resolvePulseRange({ period: "today" }, now);
+  const left = aggregatePulse([event, duplicate], range, now);
+  const right = aggregatePulse([duplicate, event], range, now);
+  assert.deepEqual(left, right);
+  assert.equal(left.totals.count, 1);
 });
