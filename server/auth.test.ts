@@ -645,6 +645,10 @@ test("OAuth preserves a dashboard return destination and rejects external or mal
       "/?workspace=team-a&scene=review&period=custom&from=2026-09-07&to=2026-09-13";
     for (const [requested, expected] of [
       [scoped, scoped],
+      [
+        "/recap?workspace=team-a&week=2026-09-07",
+        "/recap?workspace=team-a&week=2026-09-07",
+      ],
       [scoped + "&person=alice", scoped + "&person=alice"],
       [
         scoped + "&person=dependabot%5Bbot%5D",

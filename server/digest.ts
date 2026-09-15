@@ -6,7 +6,6 @@ import { readDigestSummary } from "./digest-store.js";
 import { recordWorkspaceEvent } from "./webhook-outbox.js";
 
 const DAY = 86_400_000;
-const SEND_HOUR = 9;
 const day = (time: number) => new Date(time).toISOString().slice(0, 10);
 
 /** Monday 00:00 UTC of the week containing a time. */
@@ -20,41 +19,60 @@ export function mondayOf(time: number): number {
 }
 
 /**
- * After Monday 09:00 UTC, queues last week's digest once for each team
- * workspace with a webhook that listened since before then. The run table
- * makes this idempotent across replicas and restarts.
+ * Queue once per completed UTC week using each workspace's local schedule.
+ * PostgreSQL moves nonexistent DST times forward and chooses the later offset
+ * for repeated times. Existing installations default to Monday 09:00 UTC.
+ * Consider the prior local week too, so polling across Monday still catches
+ * the latest due occurrence. Convert each local date separately for DST.
  */
 export async function scheduleDigests(
   pool: Pool,
   now = Date.now(),
 ): Promise<number> {
-  const monday = mondayOf(now);
-  const sendAt = monday + SEND_HOUR * 3_600_000;
-  if (now < sendAt) return 0;
-  const weekStart = day(monday - 7 * DAY);
   const client = await pool.connect();
   let failed = false;
   try {
     await client.query("BEGIN");
-    const { rows } = await client.query<{ workspace_id: string }>(
-      `INSERT INTO ship_live_digest_runs (workspace_id, week_start)
-       SELECT w.id, $1::date FROM ship_live_workspaces w
-       WHERE EXISTS (
-         SELECT 1 FROM ship_live_webhooks h
-         WHERE h.workspace_id = w.id AND h.enabled
-           AND 'digest.weekly' = ANY(h.events) AND h.created_at <= $2)
-       ON CONFLICT DO NOTHING RETURNING workspace_id`,
-      [weekStart, new Date(sendAt)],
+    const { rows } = await client.query<{
+      workspace_id: string;
+      week_start: string;
+      send_at: Date;
+    }>(
+      `WITH configured AS (
+         SELECT w.id, coalesce(s.weekday,1) AS weekday,
+           coalesce(s.local_time,'09:00') AS local_time,coalesce(s.timezone,'UTC') AS timezone
+         FROM ship_live_workspaces w LEFT JOIN ship_live_digest_schedules s ON s.workspace_id=w.id
+       ), candidates AS (
+         SELECT id, (date_trunc('week',$1::timestamptz AT TIME ZONE timezone)
+           - lookback.days*interval '1 day'
+           + ((weekday+6)%7)*interval '1 day' + local_time::time) AT TIME ZONE timezone AS send_at
+         FROM configured CROSS JOIN (VALUES (0),(7)) AS lookback(days)
+       ), scheduled AS (
+         SELECT id,max(send_at) AS send_at FROM candidates
+         WHERE send_at <= $1::timestamptz GROUP BY id
+       ), due AS (
+         SELECT id,send_at,(date_trunc('week',send_at AT TIME ZONE 'UTC')-interval '7 days')::date AS week_start
+         FROM scheduled
+       ), inserted AS (
+         INSERT INTO ship_live_digest_runs(workspace_id,week_start)
+         SELECT d.id,d.week_start FROM due d WHERE EXISTS(
+           SELECT 1 FROM ship_live_webhooks h WHERE h.workspace_id=d.id AND h.enabled
+             AND 'digest.weekly'=ANY(h.events) AND h.created_at<=d.send_at)
+         ON CONFLICT DO NOTHING RETURNING workspace_id,week_start
+       ) SELECT i.workspace_id,to_char(i.week_start,'YYYY-MM-DD') AS week_start,d.send_at
+         FROM inserted i JOIN due d ON d.id=i.workspace_id`,
+      [new Date(now)],
     );
-    for (const { workspace_id } of rows)
-      await recordWorkspaceEvent(client, workspace_id, {
+    for (const row of rows) {
+      const start = Date.parse(`${row.week_start}T00:00:00Z`);
+      await recordWorkspaceEvent(client, row.workspace_id, {
         type: "digest.weekly",
-        dedupeKey: `digest:${weekStart}`,
-        // Routing compares this with each webhook's creation time.
-        occurredAt: new Date(sendAt).toISOString(),
-        summary: `Weekly digest for the week of ${weekStart}`,
-        data: { weekStart, weekEnd: day(monday - DAY) },
+        dedupeKey: `digest:${row.week_start}`,
+        occurredAt: row.send_at.toISOString(),
+        summary: `Weekly digest for the week of ${row.week_start}`,
+        data: { weekStart: row.week_start, weekEnd: day(start + 6 * DAY) },
       });
+    }
     await client.query("COMMIT");
     return rows.length;
   } catch (error) {

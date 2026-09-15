@@ -32,8 +32,19 @@ export interface PulseOverview {
       totalRepositories: number;
     };
   };
+  comparison?: {
+    previous: {
+      range: PulseRange;
+      totals: PulseCounts;
+      participants: number;
+      coverage: PulseOverview["coverage"];
+    };
+    currentParticipants: number;
+    currentIncomplete: boolean;
+  };
   generatedAt: string;
 }
+export type PulseActivityKind = "merge" | "review" | "release" | "contribution";
 export interface PulseActivityPage {
   events: ActivityEvent[];
   nextCursor: string | null;
@@ -81,6 +92,18 @@ export function resolvePulseRange(
     granularity: (last - start) / DAY + 1 <= 31 ? "day" : "week",
   };
 }
+/** Immediately preceding calendar range, with the same inclusive day count. */
+export function previousPulseRange(range: PulseRange): PulseRange {
+  const end = Date.parse(range.start);
+  const start = end - (Date.parse(range.end) - end);
+  return {
+    from: date(start),
+    to: date(end - DAY),
+    start: new Date(start).toISOString(),
+    end: range.start,
+    granularity: range.granularity,
+  };
+}
 export const emptyPulseCounts = (): PulseCounts => ({
   count: 0,
   merges: 0,
@@ -109,10 +132,17 @@ export function aggregatePulse(
   range: PulseRange,
   now: number,
 ): PulseOverview {
+  const previousRange = previousPulseRange(range);
+  const previousTotals = emptyPulseCounts();
+  const currentParticipants = new Set<string>();
+  const previousParticipants = new Set<string>();
   const buckets = pulseBuckets(range);
   const totals = emptyPulseCounts();
   const repositories = new Map<string, PulseCounts & { repo: string }>();
-  const seen = new Set<string>();
+  const canonical = new Map<
+    string,
+    { event: ActivityEvent; time: number; login: string; tie: string }
+  >();
   let earliestStoredAt: string | null = null;
   for (const event of events) {
     const login = event.actor.login.trim().toLowerCase();
@@ -123,16 +153,38 @@ export function aggregatePulse(
       !login ||
       /\[bot\]$|-bot$/.test(login) ||
       ["dependabot", "renovate", "github-actions"].includes(login) ||
-      !Number.isFinite(time) ||
-      time > now ||
-      seen.has(event.id)
+      !Number.isFinite(time)
     )
       continue;
+    // Match stored Pulse queries: choose the newest eligible row before time
+    // filtering. Client events lack installation organization, so equal-time
+    // ties use the aggregate-relevant fields for stable results.
+    const tie = JSON.stringify([event.repo, event.type, login]);
+    const existing = canonical.get(event.id);
+    if (
+      !existing ||
+      time > existing.time ||
+      (time === existing.time && tie < existing.tie)
+    )
+      canonical.set(event.id, { event, time, login, tie });
+  }
+  for (const { event, time, login } of canonical.values()) {
+    if (time > now) continue;
     if (earliestStoredAt === null || time < Date.parse(earliestStoredAt))
       earliestStoredAt = new Date(time).toISOString();
+    if (
+      time >= Date.parse(previousRange.start) &&
+      time < Date.parse(previousRange.end)
+    ) {
+      previousParticipants.add(login);
+      previousTotals.count++;
+      previousTotals.merges += Number(event.type === "merge");
+      previousTotals.reviews += Number(event.type === "review");
+      previousTotals.releases += Number(event.type === "release");
+    }
     if (time < Date.parse(range.start) || time >= Date.parse(range.end))
       continue;
-    seen.add(event.id);
+    currentParticipants.add(login);
     const repo = repositories.get(event.repo) ?? {
       repo: event.repo,
       ...emptyPulseCounts(),
@@ -156,6 +208,16 @@ export function aggregatePulse(
       (a, b) => b.count - a.count || a.repo.localeCompare(b.repo),
     ),
     coverage: { earliestStoredAt, retentionDays: null },
+    comparison: {
+      previous: {
+        range: previousRange,
+        totals: previousTotals,
+        participants: previousParticipants.size,
+        coverage: { earliestStoredAt, retentionDays: null },
+      },
+      currentParticipants: currentParticipants.size,
+      currentIncomplete: Date.parse(range.end) > now,
+    },
     generatedAt: new Date(now).toISOString(),
   };
 }

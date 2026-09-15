@@ -619,3 +619,109 @@ test("a discarded route render cannot steer an in-flight workspace refresh", asy
   );
   assert.equal(await page.locator("output").textContent(), "team-a");
 });
+
+test("Overview comparison opens type-filtered history and retains workspace when returning", async (t) => {
+  const page = await open(
+    t,
+    "/?workspace=team-a&period=custom&from=2026-09-07&to=2026-09-13",
+  );
+  await page
+    .getByRole("button", {
+      name: "View previous period merges: 0",
+      exact: true,
+    })
+    .click();
+  await page.waitForFunction(() =>
+    window.requests.some(
+      (path) =>
+        path.includes("/team-a/pulse/activity?") && path.includes("kind=merge"),
+    ),
+  );
+  const url = new URL(page.url());
+  assert.equal(url.pathname, "/feed");
+  assert.equal(url.searchParams.get("workspace"), "team-a");
+  assert.equal(url.searchParams.get("type"), "merge");
+  assert.equal(url.searchParams.get("from"), "2026-08-31");
+  assert.equal(url.searchParams.get("to"), "2026-09-06");
+  await page
+    .getByRole("button", { name: "← Back to Overview", exact: true })
+    .click();
+  assert.equal(new URL(page.url()).searchParams.get("workspace"), "team-a");
+  await selected(page, "Overview");
+});
+
+test("Weekly recap navigation retains workspace and explicit week through Back", async (t) => {
+  const page = await open(t, "/?workspace=team-a");
+  await selected(page, "Overview");
+  await page.evaluate(() => {
+    const original = window.fetch;
+    window.fetch = async (path, init) => {
+      if (String(path).includes("/recap")) {
+        window.requests.push(path);
+        const week =
+          new URL(path, location.origin).searchParams.get("week") ||
+          "2026-09-07";
+        return new Response(
+          JSON.stringify({
+            workspaceName: "Digest Team",
+            weekStart: week,
+            weekEnd: week === "2026-09-07" ? "2026-09-13" : "2026-09-06",
+            checkedAt: "2026-09-15T00:00:00Z",
+            totals: {
+              merges: 3,
+              reviews: 2,
+              releases: 1,
+              contributors: 2,
+              xp: 120,
+            },
+            shipped: [],
+            helpfulReviewers: [],
+            needsHelp: [],
+            reflection: "Private reflection",
+            schedule: { weekday: 1, time: "09:00", timezone: "UTC" },
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      return original(path, init);
+    };
+  });
+  await page.getByRole("link", { name: "Weekly recap", exact: true }).click();
+  await page
+    .getByRole("heading", { name: "Shipped highlights", exact: true })
+    .waitFor();
+  assert.equal(new URL(page.url()).pathname, "/recap");
+  assert.equal(new URL(page.url()).searchParams.get("workspace"), "team-a");
+  await page
+    .getByRole("button", { name: "Previous week", exact: true })
+    .click();
+  await page.waitForFunction(() => location.search.includes("week=2026-08-31"));
+  await page.goBack();
+  await page.getByLabel("Week starting", { exact: true }).waitFor();
+  assert.equal(
+    await page.getByLabel("Week starting", { exact: true }).inputValue(),
+    "2026-09-07",
+  );
+  assert.equal(
+    await page.evaluate(() =>
+      window.requests.some((path) => path.includes("/personal-a/recap")),
+    ),
+    false,
+  );
+});
+
+test("a saved Delivery environment stays explicit when unavailable", async (t) => {
+  const page = await open(
+    t,
+    "/?workspace=team-a&scene=delivery&env=production",
+  );
+  await selected(page, "Delivery");
+  await page
+    .getByText(/No stored deployments for production in this view/)
+    .waitFor();
+  assert.equal(new URL(page.url()).searchParams.get("env"), "production");
+  await page.getByRole("button", { name: /^Period:/ }).click();
+  await page.getByRole("option", { name: "Today", exact: true }).click();
+  assert.equal(new URL(page.url()).searchParams.get("env"), "production");
+  await selected(page, "Delivery");
+});

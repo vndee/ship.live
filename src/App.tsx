@@ -1,3 +1,6 @@
+import { RecapPage } from "./pages/RecapPage";
+import { parseRoute, routeHref } from "./lib/routes";
+import { SavedViews } from "./components/SavedViews";
 import { usePulseLocation, setPulseLocation } from "./hooks/usePulse";
 import { usePulseDashboard } from "./hooks/usePulseDashboard";
 import { PulsePageFilter } from "./components/PulsePageFilter";
@@ -146,8 +149,12 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   const [pulseKind, setPulseKind] = useState<Kind | "">("");
   const onFeed = page === "feed";
   // Service Health and Webhooks have their own status; other pages follow the feed.
-  const activity = page !== "health" && page !== "webhooks";
-  const kind = onFeed ? (route.kind ?? "") : pulseKind;
+  const activity = page !== "health" && page !== "webhooks" && page !== "recap";
+  const kind = onFeed
+    ? route.kind === "contribution"
+      ? ""
+      : (route.kind ?? "")
+    : pulseKind;
   const repo = onFeed ? (route.repo ?? "") : "";
   const query = onFeed ? (route.query ?? "") : "";
   const period: Period = onFeed ? (route.period ?? "24h") : "24h";
@@ -583,6 +590,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                       : "The activity log.",
                     health: "Service Health",
                     webhooks: "Webhooks",
+                    recap: "Your week, together.",
                     team: "The people behind it.",
                     milestones: "Built, together.",
                   }[page]
@@ -606,6 +614,24 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
               )}
           </div>
           <div className="page-tools">
+            {!feed.demo &&
+              feed.workspace &&
+              feed.session.user &&
+              feed.session.csrfToken && (
+                <SavedViews
+                  key={feed.scopeKey}
+                  scopeKey={feed.scopeKey}
+                  csrfToken={feed.session.csrfToken}
+                  currentHref={routeHref({
+                    ...route,
+                    workspace: feed.workspace.id,
+                  })}
+                  onOpen={(href) => {
+                    const url = new URL(href, window.location.origin);
+                    navigate(parseRoute(url.pathname, url.search));
+                  }}
+                />
+              )}
             {feed.demo && page === "pulse" && (
               <button
                 className="button secondary demo-activity-button"
@@ -629,6 +655,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
               )}
             {!personal &&
               page !== "webhooks" &&
+              page !== "recap" &&
               !(feed.demo && page === "health") && (
                 <button
                   className="button secondary share-dashboard-button"
@@ -768,6 +795,24 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             />
             <div className="dashboard-layout">
               <EngineeringWall
+                reviewContext={
+                  !feed.demo &&
+                  feed.workspace &&
+                  feed.session.user &&
+                  feed.session.csrfToken &&
+                  !feed.error
+                    ? {
+                        workspaceId: feed.workspace.id,
+                        csrfToken: feed.session.csrfToken,
+                        userId: feed.session.user.id,
+                        scopeKey: feed.scopeKey,
+                      }
+                    : undefined
+                }
+                environment={route.environment}
+                onEnvironmentChange={(environment) =>
+                  navigate({ ...route, environment })
+                }
                 requestedScene={route.scene}
                 onSceneChange={(scene) => navigate({ ...route, scene })}
                 overview={
@@ -778,8 +823,8 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                       data: pulseDashboard.data?.overview ?? null,
                     }}
                     now={now}
-                    onHistory={(from, to, repo) =>
-                      navigate({ ...route, page: "feed", from, to, repo })
+                    onHistory={(from, to, repo, kind) =>
+                      navigate({ ...route, page: "feed", from, to, repo, kind })
                     }
                     onMilestones={() => navigate({ page: "milestones" })}
                   />
@@ -843,10 +888,19 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             from={route.from}
             to={route.to}
             repo={repo}
+            kind={
+              route.kind === "merge" ||
+              route.kind === "review" ||
+              route.kind === "release" ||
+              route.kind === "contribution"
+                ? route.kind
+                : undefined
+            }
             now={now}
             onBack={() =>
               navigate({
                 page: "pulse",
+                workspace: feed.workspace?.id,
                 pulsePeriod: "custom",
                 from: route.from,
                 to: route.to,
@@ -914,6 +968,34 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                 Sign in and open your journal or a team workspace to send its
                 activity, CI, deployments, and incidents to Slack, Discord,
                 Teams, Google Chat, Lark, or any URL.
+              </p>
+              <button className="button secondary" onClick={openConnect}>
+                {feed.session.user ? "Choose a workspace" : "Sign in"}
+              </button>
+            </div>
+          ))}
+        {page === "recap" &&
+          (!feed.demo &&
+          feed.workspace &&
+          feed.session.user &&
+          feed.session.csrfToken &&
+          !feed.error ? (
+            <RecapPage
+              key={feed.scopeKey}
+              workspaceId={feed.workspace.id}
+              csrfToken={feed.session.csrfToken}
+              scopeKey={feed.scopeKey}
+              week={route.week}
+              onWeekChange={(week) =>
+                navigate({ page: "recap", workspace: feed.workspace!.id, week })
+              }
+            />
+          ) : (
+            <div className="empty-state">
+              <h3>Your weekly recap</h3>
+              <p>
+                Sign in and open a workspace to review shipped work, write a
+                private reflection, and export your week.
               </p>
               <button className="button secondary" onClick={openConnect}>
                 {feed.session.user ? "Choose a workspace" : "Sign in"}

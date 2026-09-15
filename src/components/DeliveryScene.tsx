@@ -31,18 +31,35 @@ export function DeliveryScene({
   health,
   now,
   range,
+  requestedEnvironment,
+  onEnvironmentChange,
 }: {
   snapshot: EngineeringWallSnapshot;
   health?: HealthSnapshot;
   now: number;
   range?: PulseRange;
+  requestedEnvironment?: string;
+  onEnvironmentChange?: (environment: string) => void;
 }) {
   const [chosen, setChosen] = useState<string>();
+  const selection = onEnvironmentChange
+    ? requestedEnvironment
+    : (chosen ?? requestedEnvironment);
   const metrics = useMemo(
-    () => deliveryMetrics(snapshot, health, now, chosen, range),
-    [snapshot, health, now, chosen, range],
+    () => deliveryMetrics(snapshot, health, now, selection, range),
+    [snapshot, health, now, selection, range],
   );
   const { current, previous, environment } = metrics;
+  const unavailable = !!selection && !metrics.environments.includes(selection);
+  const environmentOptions = metrics.environments.map((value) => ({
+    value,
+    label: value,
+  }));
+  if (unavailable)
+    environmentOptions.unshift({
+      value: selection!,
+      label: `${selection} (unavailable)`,
+    });
   const grouping = range?.granularity ?? "week";
   const periodLabel = range
     ? `${weekLabel(range.from)}–${weekLabel(range.to)} UTC`
@@ -103,121 +120,132 @@ export function DeliveryScene({
         title="Delivery"
         description={`How often the team ships and how quickly it recovers, over ${periodLabel}.`}
       >
-        {metrics.environments.length > 1 && (
+        {(environmentOptions.length > 1 || unavailable) && (
           <Picker
             label="Environment"
-            value={environment ?? metrics.environments[0]}
-            options={metrics.environments.map((item) => ({
-              value: item,
-              label: item,
-            }))}
-            onChange={setChosen}
+            value={
+              unavailable
+                ? selection!
+                : (environment ?? metrics.environments[0])
+            }
+            options={environmentOptions}
+            onChange={(next) => {
+              setChosen(next);
+              onEnvironmentChange?.(next);
+            }}
           />
         )}
       </SceneHeader>
-      <div className="delivery-body">
-        <div className="delivery-figures">
-          {figures.map((figure) => (
-            <div className="delivery-figure" key={figure.label}>
-              <span>{figure.label}</span>
-              <strong>{figure.value}</strong>
-              <small>{figure.detail}</small>
-              {figure.before !== null && (
-                <small className="delivery-before">
-                  {figure.before}{" "}
-                  {range
-                    ? "in the preceding period of equal duration"
-                    : "in the 30 days before"}
-                </small>
-              )}
-            </div>
-          ))}
-        </div>
-        {environment && (
-          <div className="delivery-weeks">
-            <div className="delivery-weeks-legend">
-              <span>
-                <i className="delivery-successful" aria-hidden="true" />
-                Deployments
-              </span>
-              <span>
-                <i className="delivery-failing" aria-hidden="true" />
-                Failed
-              </span>
-              <span className="delivery-weeks-scope">
-                {environment}, by {grouping}
-              </span>
-            </div>
-            <div
-              className="delivery-weeks-bars"
-              data-period={range ? true : undefined}
-              style={
-                range
-                  ? {
-                      gridTemplateColumns: `repeat(${metrics.weeks.length}, minmax(0, 1fr))`,
-                      columnGap:
-                        metrics.weeks.length > 31
-                          ? 2
-                          : metrics.weeks.length > 16
-                            ? 4
-                            : undefined,
-                    }
-                  : undefined
-              }
-              role="img"
-              aria-label={`Deployments to ${environment} by ${grouping}, oldest first: ${metrics.weeks
-                .map(
-                  (week) =>
-                    `${grouping} starting ${week.start}, ${week.deployments} successful and ${week.failures} failed`,
-                )
-                .join("; ")}`}
-            >
-              {metrics.weeks.map((week, index) => (
-                <div
-                  className="delivery-week"
-                  key={week.start}
-                  title={`${grouping === "day" ? "Day" : "Week starting"} ${weekLabel(week.start)}: ${week.deployments} successful, ${week.failures} failed`}
-                >
-                  <div className="delivery-week-stack">
-                    {week.deployments > 0 && (
-                      <span
-                        className="delivery-successful"
-                        style={{
-                          height: `${(week.deployments / peak) * 100}%`,
-                        }}
-                      />
-                    )}
-                    {week.failures > 0 && (
-                      <span
-                        className="delivery-failing"
-                        style={{ height: `${(week.failures / peak) * 100}%` }}
-                      />
-                    )}
-                  </div>
-                  <small>
-                    {!range ||
-                    metrics.weeks.length <= 8 ||
-                    index === 0 ||
-                    index === metrics.weeks.length - 1 ||
-                    index % Math.ceil(metrics.weeks.length / 6) === 0
-                      ? range
-                        ? week.start.slice(5)
-                        : weekLabel(week.start)
-                      : "\u00a0"}
-                  </small>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        <p className="delivery-note">
-          {current.incidents > 0 &&
-            `Service Health had ${metrics.incidentsCapped ? "at least " : ""}${current.incidents} ${current.incidents === 1 ? "incident" : "incidents"}${current.incidentRestoreMs === null ? "" : `, restored in ${formatDuration(current.incidentRestoreMs)} at the median`}. `}
-          Lead time is shown as time to merge: GitHub does not link a deployment
-          to the pull requests it ships. These figures describe the team, never
-          a person.
+      {unavailable ? (
+        <p className="delivery-note" role="status">
+          No stored deployments for {selection} in this view. Select another
+          environment to see its delivery metrics.
         </p>
-      </div>
+      ) : (
+        <div className="delivery-body">
+          <div className="delivery-figures">
+            {figures.map((figure) => (
+              <div className="delivery-figure" key={figure.label}>
+                <span>{figure.label}</span>
+                <strong>{figure.value}</strong>
+                <small>{figure.detail}</small>
+                {figure.before !== null && (
+                  <small className="delivery-before">
+                    {figure.before}{" "}
+                    {range
+                      ? "in the preceding period of equal duration"
+                      : "in the 30 days before"}
+                  </small>
+                )}
+              </div>
+            ))}
+          </div>
+          {environment && (
+            <div className="delivery-weeks">
+              <div className="delivery-weeks-legend">
+                <span>
+                  <i className="delivery-successful" aria-hidden="true" />
+                  Deployments
+                </span>
+                <span>
+                  <i className="delivery-failing" aria-hidden="true" />
+                  Failed
+                </span>
+                <span className="delivery-weeks-scope">
+                  {environment}, by {grouping}
+                </span>
+              </div>
+              <div
+                className="delivery-weeks-bars"
+                data-period={range ? true : undefined}
+                style={
+                  range
+                    ? {
+                        gridTemplateColumns: `repeat(${metrics.weeks.length}, minmax(0, 1fr))`,
+                        columnGap:
+                          metrics.weeks.length > 31
+                            ? 2
+                            : metrics.weeks.length > 16
+                              ? 4
+                              : undefined,
+                      }
+                    : undefined
+                }
+                role="img"
+                aria-label={`Deployments to ${environment} by ${grouping}, oldest first: ${metrics.weeks
+                  .map(
+                    (week) =>
+                      `${grouping} starting ${week.start}, ${week.deployments} successful and ${week.failures} failed`,
+                  )
+                  .join("; ")}`}
+              >
+                {metrics.weeks.map((week, index) => (
+                  <div
+                    className="delivery-week"
+                    key={week.start}
+                    title={`${grouping === "day" ? "Day" : "Week starting"} ${weekLabel(week.start)}: ${week.deployments} successful, ${week.failures} failed`}
+                  >
+                    <div className="delivery-week-stack">
+                      {week.deployments > 0 && (
+                        <span
+                          className="delivery-successful"
+                          style={{
+                            height: `${(week.deployments / peak) * 100}%`,
+                          }}
+                        />
+                      )}
+                      {week.failures > 0 && (
+                        <span
+                          className="delivery-failing"
+                          style={{ height: `${(week.failures / peak) * 100}%` }}
+                        />
+                      )}
+                    </div>
+                    <small>
+                      {!range ||
+                      metrics.weeks.length <= 8 ||
+                      index === 0 ||
+                      index === metrics.weeks.length - 1 ||
+                      index % Math.ceil(metrics.weeks.length / 6) === 0
+                        ? range
+                          ? week.start.slice(5)
+                          : weekLabel(week.start)
+                        : "\u00a0"}
+                    </small>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <p className="delivery-note">
+            {current.incidents > 0 &&
+              `Service Health had ${metrics.incidentsCapped ? "at least " : ""}${current.incidents} ${current.incidents === 1 ? "incident" : "incidents"}${current.incidentRestoreMs === null ? "" : `, restored in ${formatDuration(current.incidentRestoreMs)} at the median`}. `}
+            Lead time is shown as time to merge: GitHub does not link a
+            deployment to the pull requests it ships. These figures describe the
+            team, never a person.
+          </p>
+        </div>
+      )}
     </>
   );
 }

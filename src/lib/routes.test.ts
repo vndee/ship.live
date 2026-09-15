@@ -174,3 +174,29 @@ test("only dashboard scenes are parsed; explicit workspace parameters never beco
     "unknown/workspace",
   );
 });
+
+test("weekly recap URLs retain workspace and explicit week", () => {
+  const route = parseRoute("/recap", "?workspace=team-a&week=2026-09-07");
+  assert.deepEqual(route, {
+    page: "recap",
+    workspace: "team-a",
+    week: "2026-09-07",
+  });
+  assert.equal(routeHref(route), "/recap?workspace=team-a&week=2026-09-07");
+});
+
+test("Delivery environment survives dashboard navigation and clears outside Pulse", () => {
+  const route: Route = {
+    page: "pulse",
+    scene: "delivery",
+    environment: "Preview / EU",
+    pulsePeriod: "30d",
+  };
+  const href = routeHref(route);
+  assert.equal(href, "/?scene=delivery&env=Preview+%2F+EU&period=30d");
+  const url = new URL(href, "http://ship.test");
+  assert.deepEqual(parseRoute(url.pathname, url.search), route);
+  assert.equal(parseRoute("/team", "?env=production").environment, undefined);
+  assert.equal(routeHref({ page: "team", environment: "production" }), "/team");
+  assert.equal(parseRoute("/", "?env=%00private").environment, undefined);
+});

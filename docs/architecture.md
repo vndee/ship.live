@@ -131,3 +131,15 @@ Sources record webhook events in the transaction that causes them: `PostgresEven
 ## Hosting
 
 One Node service and PostgreSQL are sufficient. Supabase can provide both Auth and the database, with Railway hosting Node. Shared state, including request limits, supports replicas; concurrent-stream limits remain process-local. An HTTPS origin, consistent secrets, database connection capacity, and access-controlled backups are operational requirements. [Configuration](configuration.md) and [Railway deployment](railway.md) describe setup and free-plan limitations.
+
+## Team follow-through and private views
+
+Migration 022 adds workspace review claims, per-viewer snoozes, account-owned saved routes, private recap reflections and workspace digest schedules. All five tables enable RLS and revoke PUBLIC and browser API role grants. New Express routers use the existing authenticated viewer scope; recap and review reads recheck the exact installation/repository/author scope after asynchronous reads. Mutations require the existing origin/CSRF checks.
+
+Review claims are atomic and expire after 24 hours. Claims and snoozes bind to a fingerprint of the recorded head/check/review state and source installations. Mutations acquire the same repository advisory locks as wall ingestion, reread the current fingerprint, and reject stale writes. The browser requests a bounded batch for the visible radar and invalidates private state after authorization errors.
+
+Overview comparisons aggregate two equal-length calendar ranges together with the same canonical contribution and authorization rules. Activity cursors bind the contribution-type filter as well as the complete source scope and dates. Saved views store validated internal navigation only, with explicit workspace binding; they grant no access. Dynamic presets resolve when opened, while custom dates remain fixed.
+
+Weekly recaps reuse bounded digest aggregation with exact source pairs. Reflections belong to one user/workspace/week and never enter outbound digests. The digest scheduler converts local weekday/time with PostgreSQL timezone rules, derives the most recent completed UTC week at that instant, and uses the existing unique workspace/week run key for idempotence.
+
+Recap saves serialize per router and use at most one additional short-lived database connection per process. Authorization reads retain access to the shared pool while each write transaction rechecks access before commit; a failed recheck rolls back the write, including updates to existing reflections or schedules.

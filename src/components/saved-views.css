@@ -1,0 +1,75 @@
+.saved-views-panel {
+  display: grid;
+  gap: 1.25rem;
+}
+.saved-views-intro,
+.saved-views-empty {
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 0;
+}
+.saved-view-create,
+.saved-view-rename {
+  display: flex;
+  gap: 0.75rem;
+  align-items: end;
+  flex-wrap: wrap;
+}
+.saved-view-create label,
+.saved-view-rename label {
+  display: grid;
+  gap: 0.4rem;
+  flex: 1;
+  min-width: 160px;
+  font-weight: 600;
+}
+.saved-view-create input,
+.saved-view-rename input {
+  width: 100%;
+}
+.saved-view-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0;
+}
+.saved-view-list li {
+  display: grid;
+  gap: 0.4rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--line);
+}
+.saved-view-name {
+  font-size: 1rem;
+  font-weight: 650;
+  width: fit-content;
+}
+.saved-view-list small {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.saved-view-actions {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+@media (max-width: 560px) {
+  .saved-view-create > button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+.saved-view-create input,
+.saved-view-rename input {
+  box-sizing: border-box;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.65rem 0.75rem;
+  font: inherit;
+  font-weight: 400;
+  min-height: 40px;
+}
