@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.2.1 — 2026-09-15
+
+- Filter team Pulse Overview by Today, Last 7 days, Last 30 days, This month, or custom UTC dates up to 366 days. Totals and charts aggregate all stored contributions in the viewer's authorized repository scope.
+- Keep selected dates in URLs and preserve them when opening a chart bucket or repository's paginated activity. Read-only shared dashboards support the same date filters.
+- Explain historical coverage and retention limits. Weekly recognition and current service status keep their labeled time windows.
+- Preserve historical pagination during live refresh and clear stale requests on range, access, or retry changes. Shared historical views pause live celebrations and resume only for new activity after returning to Overview.
+- Correct package and lockfile versions to match the release tag; the initial v0.2.1 publication attempt stopped at version validation before image publication or deployment.
+- Upgrade note: no database migration is required. Personal dashboard date filtering is not included in this release.
+
 ## 0.2.0 — 2026-09-12
 
 - Rename workspaces. In **Account and GitHub connections**, the pencil beside a workspace gives it its own name: any member can rename a team, and you can rename your journal. The GitHub organization or account name stays beside a renamed workspace, in the header's tooltip, and an empty name restores the default. Webhooks and digests use the new name.
