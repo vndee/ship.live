@@ -22,6 +22,8 @@ export function mondayOf(time: number): number {
  * Queue once per completed UTC week using each workspace's local schedule.
  * PostgreSQL moves nonexistent DST times forward and chooses the later offset
  * for repeated times. Existing installations default to Monday 09:00 UTC.
+ * Consider the prior local week too, so polling across Monday still catches
+ * the latest due occurrence. Convert each local date separately for DST.
  */
 export async function scheduleDigests(
   pool: Pool,
@@ -40,13 +42,17 @@ export async function scheduleDigests(
          SELECT w.id, coalesce(s.weekday,1) AS weekday,
            coalesce(s.local_time,'09:00') AS local_time,coalesce(s.timezone,'UTC') AS timezone
          FROM ship_live_workspaces w LEFT JOIN ship_live_digest_schedules s ON s.workspace_id=w.id
-       ), scheduled AS (
+       ), candidates AS (
          SELECT id, (date_trunc('week',$1::timestamptz AT TIME ZONE timezone)
+           - lookback.days*interval '1 day'
            + ((weekday+6)%7)*interval '1 day' + local_time::time) AT TIME ZONE timezone AS send_at
-         FROM configured
+         FROM configured CROSS JOIN (VALUES (0),(7)) AS lookback(days)
+       ), scheduled AS (
+         SELECT id,max(send_at) AS send_at FROM candidates
+         WHERE send_at <= $1::timestamptz GROUP BY id
        ), due AS (
          SELECT id,send_at,(date_trunc('week',send_at AT TIME ZONE 'UTC')-interval '7 days')::date AS week_start
-         FROM scheduled WHERE send_at <= $1::timestamptz
+         FROM scheduled
        ), inserted AS (
          INSERT INTO ship_live_digest_runs(workspace_id,week_start)
          SELECT d.id,d.week_start FROM due d WHERE EXISTS(

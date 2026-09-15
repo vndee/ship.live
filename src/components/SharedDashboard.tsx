@@ -186,6 +186,7 @@ export function SharedDashboard() {
                   from={pulseLocation.selection.from}
                   to={pulseLocation.selection.to}
                   repo={pulseLocation.repo}
+                  kind={pulseLocation.kind}
                   now={now}
                   onBack={() => setPulseLocation(pulseLocation.selection)}
                 />
@@ -199,11 +200,12 @@ export function SharedDashboard() {
                         data: dashboard.data?.overview ?? null,
                       }}
                       now={now}
-                      onHistory={(from, to, repo) =>
+                      onHistory={(from, to, repo, kind) =>
                         setPulseLocation(
                           { period: "custom", from, to },
                           true,
                           repo,
+                          kind,
                         )
                       }
                     />

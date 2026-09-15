@@ -21,6 +21,90 @@ test("weeks start on Monday in UTC", () => {
   );
 });
 
+test("digest polling catches the previous local week's due time once after rollover", async (t) => {
+  for (const scenario of [
+    {
+      zone: "UTC",
+      time: "23:59",
+      created: "2026-09-07T00:00:00Z",
+      before: "2026-09-13T23:55:00Z",
+      after: "2026-09-14T00:05:00Z",
+      sent: "2026-09-13T23:59:00.000Z",
+      week: "2026-08-31",
+    },
+    {
+      zone: "Asia/Ho_Chi_Minh",
+      time: "23:59",
+      created: "2026-09-07T00:00:00Z",
+      before: "2026-09-13T16:55:00Z",
+      after: "2026-09-13T17:05:00Z",
+      sent: "2026-09-13T16:59:00.000Z",
+      week: "2026-08-31",
+    },
+    {
+      zone: "America/New_York",
+      time: "02:30",
+      created: "2026-03-02T12:00:00Z",
+      before: "2026-03-08T07:25:00Z",
+      after: "2026-03-09T04:05:00Z",
+      sent: "2026-03-08T07:30:00.000Z",
+      week: "2026-02-23",
+    },
+    {
+      zone: "America/New_York",
+      time: "01:30",
+      created: "2026-10-26T12:00:00Z",
+      before: "2026-11-01T05:35:00Z",
+      after: "2026-11-02T05:05:00Z",
+      sent: "2026-11-01T06:30:00.000Z",
+      week: "2026-10-19",
+    },
+  ])
+    await t.test(`${scenario.zone} ${scenario.sent}`, async (t) => {
+      await withWorkspace(t, async ({ pool, workspace, user }) => {
+        await listen(pool, workspace, user);
+        await pool.query("UPDATE ship_live_webhooks SET created_at=$1", [
+          scenario.created,
+        ]);
+        await pool.query(
+          "INSERT INTO ship_live_digest_schedules(workspace_id,weekday,local_time,timezone) VALUES($1,0,$2,$3)",
+          [workspace, scenario.time, scenario.zone],
+        );
+        assert.equal(
+          await scheduleDigests(pool, Date.parse(scenario.before)),
+          0,
+        );
+        // A webhook added after the scheduled time must not receive the catch-up.
+        const late = await listen(pool, workspace, user);
+        await pool.query(
+          "UPDATE ship_live_webhooks SET created_at=$1 WHERE id=$2",
+          [scenario.after, late.webhook.id],
+        );
+        assert.equal(
+          await scheduleDigests(pool, Date.parse(scenario.after)),
+          1,
+        );
+        assert.deepEqual(
+          await Promise.all([
+            scheduleDigests(pool, Date.parse(scenario.after)),
+            scheduleDigests(pool, Date.parse(scenario.after)),
+          ]),
+          [0, 0],
+        );
+        const { rows } = await pool.query(
+          "SELECT payload->>'occurredAt' AS at,payload->'data'->>'weekStart' AS week FROM ship_live_webhook_events",
+        );
+        assert.deepEqual(rows, [{ at: scenario.sent, week: scenario.week }]);
+        await routeEvents(pool, async () => new Set([7]));
+        const deliveries = await pool.query(
+          "SELECT webhook_id FROM ship_live_webhook_deliveries",
+        );
+        assert.equal(deliveries.rows.length, 1);
+        assert.notEqual(deliveries.rows[0].webhook_id, late.webhook.id);
+      });
+    });
+});
+
 async function withWorkspace(
   t: TestContext,
   run: (fixture: {
@@ -67,6 +151,11 @@ test("last week's digest is queued once, after Monday 09:00 UTC, for webhooks th
   await withWorkspace(t, async ({ pool, workspace, user }) => {
     await listen(pool, workspace, user);
     await pool.query("UPDATE ship_live_webhooks SET created_at = '2026-08-01'");
+    // The previous occurrence was delivered; only the upcoming one is pending.
+    await pool.query(
+      "INSERT INTO ship_live_digest_runs(workspace_id,week_start) VALUES($1,'2026-08-24')",
+      [workspace],
+    );
     // A second team whose webhook was added after this week's send time.
     const late = randomUUID();
     await pool.query(
@@ -851,6 +940,10 @@ test("workspace schedules use local day and minute, retain UTC week basis and cr
     await listen(pool, workspace, user);
     await pool.query("UPDATE ship_live_webhooks SET created_at='2026-08-01'");
     await pool.query(
+      "INSERT INTO ship_live_digest_runs(workspace_id,week_start) VALUES($1,'2026-08-24')",
+      [workspace],
+    );
+    await pool.query(
       "INSERT INTO ship_live_digest_schedules(workspace_id,weekday,local_time,timezone) VALUES($1,2,'16:30','Asia/Ho_Chi_Minh')",
       [workspace],
     );
@@ -882,6 +975,11 @@ test("DST spring gap moves the scheduled time forward and fall overlap sends onc
   await withWorkspace(t, async ({ pool, workspace, user }) => {
     await listen(pool, workspace, user);
     await pool.query("UPDATE ship_live_webhooks SET created_at='2026-01-01'");
+    // The occurrences before each DST test have already been delivered.
+    await pool.query(
+      "INSERT INTO ship_live_digest_runs(workspace_id,week_start) VALUES($1,'2026-02-16'),($1,'2026-10-12')",
+      [workspace],
+    );
     await pool.query(
       "INSERT INTO ship_live_digest_schedules(workspace_id,weekday,local_time,timezone) VALUES($1,0,'02:30','America/New_York')",
       [workspace],

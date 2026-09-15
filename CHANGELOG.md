@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## 0.3.0 — 2026-09-15
+
+- Preserve type filters when opening comparison activity on shared dashboards, including reloads. Catch the latest due digest across local week boundaries without duplicate sends.
 - Add Review Radar follow-through: current reasons and age, atomic teammate claims, and personal four-hour snoozes. Current head/state changes invalidate obsolete actions; historical and shared views remain read-only.
 - Compare Overview merges, releases, reviews and participating contributors with the equal-length preceding UTC period. Both periods link to type-filtered activity; incomplete periods and retained-history limits remain explicit.
 - Save up to 30 private named views per account, synchronized across browsers. Preserve workspace, Delivery environment and supported URL filters, distinguish rolling periods from fixed dates, and rename, replace or delete views.
