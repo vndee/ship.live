@@ -1,3 +1,4 @@
+import type { PulseRange } from "./pulse.js";
 export type HealthStatus =
   "healthy" | "degraded" | "down" | "unknown" | "paused";
 export interface ProbeInput {
@@ -40,14 +41,22 @@ export interface LatencyWindow {
   maxLatencyMs: number;
   checks: number;
 }
-/** Response times of every check in the last 24 hours. */
+/** Response times of recorded checks in a selected window. */
 export interface LatencyStats {
   mean: number;
-  /** Population standard deviation. */
-  sd: number;
+  /** Population standard deviation; unavailable from daily rollups. */
+  sd: number | null;
   checks: number;
 }
+export interface HealthPeriodStats {
+  checks: number;
+  /** Null when there are no checks or historical pass counts are unknown. */
+  successRate: number | null;
+  latencyStats: LatencyStats | null;
+}
 export interface HealthProbe extends ProbeInput {
+  /** UTC day rollups for the snapshot range, excluding maintenance. */
+  periodStats?: HealthPeriodStats;
   id: string;
   serviceId: string;
   hasHeaders: boolean;
@@ -99,6 +108,14 @@ export interface HealthService {
   maintenance?: MaintenanceWindow[];
 }
 export interface HealthSnapshot {
+  range?: PulseRange;
+  /** Storage bounds, not a guarantee of uninterrupted monitoring. */
+  coverage?: {
+    earliestStoredDate: string | null;
+    retentionDays: number;
+    incidentsPerServiceLimit: number;
+    recentChecksPerProbeLimit: number;
+  };
   services: HealthService[];
   updatedAt: string;
 }

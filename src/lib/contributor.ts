@@ -1,3 +1,5 @@
+import type { PulseRange } from "../../shared/pulse";
+import { inPeriod } from "./period";
 import type { ActivityEvent, ActivityType } from "../../shared/types";
 import { getCreditedEvents, getLeaderboard, getWeekStart } from "./activity";
 
@@ -16,8 +18,9 @@ export interface ContributorDay {
 export interface ContributorProfile {
   login: string;
   avatarUrl?: string;
-  /** Position on this week's board, or null without weekly activity. */
+  /** Position on the selected period board, or the weekly board without a range. */
   rank: number | null;
+  /** Legacy field names: with a range all counts cover that selected period. */
   weeklyXp: number;
   xp30: number;
   contributions30: number;
@@ -42,6 +45,7 @@ const dayKey = (time: number) => new Date(time).toISOString().slice(0, 10);
 export function activityDays(
   items: { event: ActivityEvent; points: number }[],
   now: number,
+  range?: PulseRange,
 ): {
   heatmap: (ContributorDay | null)[];
   history: ContributorDay[];
@@ -49,6 +53,7 @@ export function activityDays(
 } {
   const days = new Map<string, ContributorDay>();
   for (const { event, points } of items) {
+    if (range && !inPeriod(event.occurredAt, range, now)) continue;
     const date = dayKey(Date.parse(event.occurredAt));
     const day = days.get(date) ?? { date, count: 0, xp: 0 };
     day.count += 1;
@@ -57,6 +62,14 @@ export function activityDays(
   }
   const dayAt = (time: number): ContributorDay =>
     days.get(dayKey(time)) ?? { date: dayKey(time), count: 0, xp: 0 };
+  if (range) {
+    const since = Date.parse(range.start);
+    const history = Array.from(
+      { length: Math.ceil((Date.parse(range.end) - since) / DAY) },
+      (_, index) => dayAt(since + index * DAY),
+    );
+    return { heatmap: history, history, since };
+  }
   const today = Date.parse(`${dayKey(now)}T00:00:00Z`);
   const heatmapStart =
     getWeekStart(now).getTime() - (HEATMAP_WEEKS - 1) * 7 * DAY;
@@ -76,12 +89,15 @@ export function getContributorProfile(
   events: ActivityEvent[],
   login: string,
   now = Date.now(),
+  range?: PulseRange,
 ): ContributorProfile {
   const key = login.toLowerCase();
   const mine = getCreditedEvents(events, now).filter(
-    ({ event }) => event.actor.login.toLowerCase() === key,
+    ({ event }) =>
+      event.actor.login.toLowerCase() === key &&
+      (!range || inPeriod(event.occurredAt, range, now)),
   );
-  const { heatmap, history: xpHistory, since } = activityDays(mine, now);
+  const { heatmap, history: xpHistory, since } = activityDays(mine, now, range);
   const lastMonth = mine.filter(
     ({ event }) => Date.parse(event.occurredAt) >= since,
   );
@@ -99,7 +115,7 @@ export function getContributorProfile(
     entry.xp += points;
     types.set(event.type, entry);
   }
-  const board = getLeaderboard(events, now).find(
+  const board = getLeaderboard(events, now, range).find(
     (person) => person.login.toLowerCase() === key,
   );
   const newestFirst = [...mine].sort(

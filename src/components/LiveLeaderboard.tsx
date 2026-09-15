@@ -13,6 +13,7 @@ import {
   Users,
   Zap,
 } from "lucide-react";
+import type { PulseRange } from "../../shared/pulse";
 import type { ActivityEvent } from "../../shared/types";
 import {
   getLeaderboard,
@@ -101,9 +102,11 @@ export function LiveLeaderboard({
   personal = false,
   status = "Live",
   loading = false,
+  range,
 }: {
   events: ActivityEvent[];
   now: number;
+  range?: PulseRange;
   demo?: boolean;
   moving?: boolean;
   onToggleMotion?: () => void;
@@ -117,8 +120,14 @@ export function LiveLeaderboard({
   status?: string;
   loading?: boolean;
 }) {
-  const people = useMemo(() => getLeaderboard(events, now), [events, now]);
-  const metrics = useMemo(() => getMetrics(events, now), [events, now]);
+  const people = useMemo(
+    () => getLeaderboard(events, now, range),
+    [events, now, range],
+  );
+  const metrics = useMemo(
+    () => getMetrics(events, now, range),
+    [events, now, range],
+  );
   const list = useRef<HTMLOListElement>(null);
   const positions = useRef(new Map<string, number>());
   const previous = useRef<LeaderboardEntry[]>([]);
@@ -128,7 +137,12 @@ export function LiveLeaderboard({
   const [reduced, setReduced] = useState(
     () => matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
-  const animate = moving && !reduced;
+  const periodKey = range
+    ? `${range.start}/${range.end}`
+    : getWeekStart(now).toISOString();
+  const previousPeriod = useRef(periodKey);
+  const samePeriod = previousPeriod.current === periodKey;
+  const animate = moving && !reduced && samePeriod;
   useEffect(() => {
     const media = matchMedia("(prefers-reduced-motion: reduce)");
     const update = () => setReduced(media.matches);
@@ -157,15 +171,20 @@ export function LiveLeaderboard({
     positions.current = next;
   }, [people, animate]);
   useEffect(() => {
-    const next = getLeaderboardChanges(previous.current, people);
+    const next = samePeriod
+      ? getLeaderboardChanges(previous.current, people)
+      : new Map();
+    previousPeriod.current = periodKey;
     previous.current = people;
     setChanges(next);
     if (!next.size) return;
     const timer = setTimeout(() => setChanges(new Map()), 4000);
     return () => clearTimeout(timer);
-  }, [people]);
-  const week = getWeekStart(now);
-  const reset = new Date(week.getTime() + 7 * 86400000);
+  }, [people, periodKey, samePeriod]);
+  const week = range ? new Date(range.start) : getWeekStart(now);
+  const reset = range
+    ? new Date(range.end)
+    : new Date(week.getTime() + 7 * 86400000);
   return (
     <section
       className={`live-leaderboard ${animate ? "has-motion" : ""}`}
@@ -179,7 +198,9 @@ export function LiveLeaderboard({
           </div>
           <p>
             {personal
-              ? "Your week across every source, alongside everyone active in them."
+              ? range
+                ? "Your selected period across every source, alongside everyone active in them."
+                : "Your week across every source, alongside everyone active in them."
               : "Good work adds up. Every contribution moves the team."}
           </p>
         </div>
@@ -213,7 +234,8 @@ export function LiveLeaderboard({
       </div>
       <div className="leaderboard-period">
         <span>
-          This week <span className="subtle-divider">/</span>{" "}
+          {range ? "Selected period" : "This week"}{" "}
+          <span className="subtle-divider">/</span>{" "}
           {week.toLocaleDateString(undefined, {
             month: "short",
             day: "numeric",
@@ -226,14 +248,16 @@ export function LiveLeaderboard({
             timeZone: "UTC",
           })}
         </span>
-        <span>Weekly XP</span>
+        <span>{range ? "Period XP" : "Weekly XP"}</span>
       </div>
       <ol className="leaderboard-list" ref={list}>
         {people.map((person) => {
           const name = demo
             ? demoNames[person.login] || person.login
             : person.login;
-          const change = changes.get(person.login.toLowerCase());
+          const change = samePeriod
+            ? changes.get(person.login.toLowerCase())
+            : undefined;
           return (
             <li
               key={person.login.toLowerCase()}
@@ -265,7 +289,12 @@ export function LiveLeaderboard({
                 <div>
                   <strong>{name}</strong>
                   {person.rank === 1 && (
-                    <Trophy size={13} aria-label="Leading this week" />
+                    <Trophy
+                      size={13}
+                      aria-label={
+                        range ? "Leading this period" : "Leading this week"
+                      }
+                    />
                   )}
                 </div>
                 <span>
@@ -310,8 +339,10 @@ export function LiveLeaderboard({
           <Trophy size={30} />
           <h3>
             {loading
-              ? "Loading this week’s contributions…"
-              : "A new week, ready to ship."}
+              ? "Loading contributions…"
+              : range
+                ? "No stored contributions in this period."
+                : "A new week, ready to ship."}
           </h3>
           <p>
             {personal
@@ -321,7 +352,11 @@ export function LiveLeaderboard({
         </div>
       )}
       <div className="leaderboard-bottom">
-        <span>Resets Monday, 00:00 UTC</span>
+        <span>
+          {range
+            ? "Contributions in the selected dates · UTC"
+            : "Resets Monday, 00:00 UTC"}
+        </span>
         <div>
           {onAllContributors && (
             <button className="text-button" onClick={onAllContributors}>
@@ -355,7 +390,7 @@ export function LiveLeaderboard({
         </div>
       </div>
       <div className="sr-only" role="status" aria-live="polite">
-        {[...changes]
+        {[...(samePeriod ? changes : new Map())]
           .filter(([, change]) => change.xp > 0)
           .map(([login, change]) => `${login} earned ${change.xp} XP.`)
           .join(" ")}

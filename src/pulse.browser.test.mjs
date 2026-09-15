@@ -157,7 +157,8 @@ test("remote overview uses full server totals, UTC dates, and exact repository d
 test("superseded range and workspace responses never restore stale totals; access failure clears results", async (t) => {
   const page = await open(t);
   await request(page, 0);
-  await page.getByLabel("Overview period").selectOption("today");
+  await page.getByRole("button", { name: /^Period:/ }).click();
+  await page.getByRole("option", { name: "Today", exact: true }).click();
   const today = await request(page, 1);
   assert.match(today.url, /from=2026-09-15&to=2026-09-15$/);
   await respond(page, 1, overview(today.url, 42));

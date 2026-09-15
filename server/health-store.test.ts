@@ -431,3 +431,132 @@ test("latency buckets include failures, survive rule edits and retain 30 days", 
     2,
   );
 });
+
+test("ranged health aggregates inclusive UTC rollups beyond recent checks and filters overlapping incidents", async (t) => {
+  const f = await fixture(t);
+  if (!f) return;
+  const { resolvePulseRange } = await import("../shared/pulse.js");
+  const range = resolvePulseRange(
+    { period: "custom", from: "2026-06-01", to: "2026-06-03" },
+    Date.parse("2026-09-15T12:00:00Z"),
+  );
+  const service = await f.health.createService(f.workspace, "API");
+  const probe = await f.health.saveProbe(f.workspace, service.id, null, config);
+  const foreignService = await f.health.createService(f.other, "Private");
+  const foreignProbe = await f.health.saveProbe(
+    f.other,
+    foreignService.id,
+    null,
+    config,
+  );
+  for (const [day, checks, passed, total] of [
+    ["2026-05-31", 100, 100, 10000],
+    ["2026-06-01", 400, 200, 4000],
+    ["2026-06-03", 100, 100, 5000],
+    ["2026-06-04", 100, 0, 10000],
+  ] as const)
+    await f.events.pool.query(
+      "INSERT INTO ship_live_health_latency_daily(probe_id,day,checks,passed,total_latency,min_latency,max_latency) VALUES($1,$2,$3,$4,$5,10,50)",
+      [probe.id, day, checks, passed, total],
+    );
+  await f.events.pool.query(
+    "INSERT INTO ship_live_health_latency_daily(probe_id,day,checks,passed,total_latency,min_latency,max_latency) VALUES($1,'2026-01-01',1,1,1,1,1)",
+    [foreignProbe.id],
+  );
+  const included: string[] = [];
+  for (const [opened, resolved, include] of [
+    ["2026-05-30T00:00:00Z", "2026-06-01T00:00:00Z", false],
+    ["2026-05-30T00:00:00Z", "2026-06-01T00:00:01Z", true],
+    ["2026-06-03T23:59:59Z", "2026-06-04T01:00:00Z", true],
+    ["2026-06-04T00:00:00Z", "2026-06-04T01:00:00Z", false],
+    ["2026-05-30T00:00:00Z", null, true],
+  ] as const) {
+    const id = randomUUID();
+    if (include) included.push(id);
+    await f.events.pool.query(
+      "INSERT INTO ship_live_health_incidents(id,workspace_id,service_id,probe_id,opened_at,resolved_at,reason) VALUES($1,$2,$3,$4,$5,$6,'Down')",
+      [id, f.workspace, service.id, probe.id, opened, resolved],
+    );
+  }
+  for (const at of [
+    "2026-05-31T23:59:59Z",
+    "2026-06-01T00:00:00Z",
+    "2026-06-03T23:59:59Z",
+    "2026-06-04T00:00:00Z",
+  ])
+    await f.events.pool.query(
+      "INSERT INTO ship_live_health_checks(probe_id,checked_at,result,state) VALUES($1,$2,$3,'healthy')",
+      [probe.id, at, success],
+    );
+  const snapshot = await f.health.snapshot(f.workspace, range);
+  assert.deepEqual(snapshot.range, range);
+  assert.equal(snapshot.services.length, 1);
+  assert.deepEqual(snapshot.services[0].probes[0].periodStats, {
+    checks: 500,
+    successRate: 60,
+    latencyStats: { mean: 18, sd: null, checks: 500 },
+  });
+  assert.deepEqual(
+    snapshot.services[0].incidents!.map((i) => i.id).sort(),
+    included.sort(),
+  );
+  assert.deepEqual(snapshot.coverage, {
+    earliestStoredDate: "2026-05-31",
+    retentionDays: 91,
+    incidentsPerServiceLimit: 20,
+    recentChecksPerProbeLimit: 120,
+  });
+  assert.equal(snapshot.services[0].probes[0].checks24h, 0);
+  assert.deepEqual(
+    snapshot.services[0].probes[0].history.map((c) =>
+      new Date(c.checkedAt).toISOString(),
+    ),
+    ["2026-06-03T23:59:59.000Z", "2026-06-01T00:00:00.000Z"],
+  );
+  assert.deepEqual(
+    snapshot.services[0].probes[0].latencyHistory.map((d) => d.date),
+    ["2026-06-01", "2026-06-03"],
+  );
+  assert.deepEqual(
+    snapshot.services[0].probes[0].uptime90d!.map((d) => d.date),
+    ["2026-06-01", "2026-06-03"],
+  );
+  assert.deepEqual(snapshot.services[0].probes[0].latency24h, []);
+  const emptyRange = resolvePulseRange(
+    { period: "custom", from: "2026-07-01", to: "2026-07-02" },
+    Date.parse("2026-09-15T12:00:00Z"),
+  );
+  assert.deepEqual(
+    (await f.health.snapshot(f.workspace, emptyRange)).services[0].probes[0]
+      .periodStats,
+    { checks: 0, successRate: null, latencyStats: null },
+  );
+  await f.events.pool.query(
+    "UPDATE ship_live_health_latency_daily SET passed=NULL WHERE probe_id=$1 AND day='2026-06-01'",
+    [probe.id],
+  );
+  assert.deepEqual(
+    (await f.health.snapshot(f.workspace, range)).services[0].probes[0]
+      .periodStats,
+    {
+      checks: 500,
+      successRate: null,
+      latencyStats: { mean: 18, sd: null, checks: 500 },
+    },
+  );
+  for (let index = 0; index < 21; index++)
+    await f.events.pool.query(
+      "INSERT INTO ship_live_health_incidents(id,workspace_id,service_id,probe_id,opened_at,resolved_at,reason) VALUES($1,$2,$3,$4,'2026-06-02T00:00:00Z','2026-06-02T00:01:00Z','Down')",
+      [randomUUID(), f.workspace, service.id, probe.id],
+    );
+  await f.events.pool.query(
+    "INSERT INTO ship_live_health_checks(probe_id,checked_at,result,state) SELECT $1,'2026-06-02T00:00:00Z'::timestamptz,$2,'healthy' FROM generate_series(1,121)",
+    [probe.id, success],
+  );
+  const capped = await f.health.snapshot(f.workspace, range);
+  assert.equal(capped.services[0].incidents!.length, 20);
+  assert.equal(capped.services[0].probes[0].history.length, 120);
+  const current = await f.health.snapshot(f.workspace);
+  assert.equal(current.range, undefined);
+  assert.equal(current.services[0].probes[0].periodStats, undefined);
+});

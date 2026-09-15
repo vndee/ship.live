@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { resolvePulseRange } from "../../shared/pulse";
 import type { ActivityEvent } from "../../shared/types";
 import { getContributorProfile, HEATMAP_WEEKS } from "./contributor.js";
 
@@ -87,4 +88,59 @@ test("someone without received activity gets an empty profile", () => {
   );
   assert.ok(profile.heatmap.every((day) => !day || day.count === 0));
   assert.equal(profile.firstSeen, null);
+});
+
+test("historical contributor profiles use the same selected range for rank, XP, breakdown, and daily history", () => {
+  const range = resolvePulseRange(
+    { period: "custom", from: "2026-07-01", to: "2026-07-07" },
+    now,
+  );
+  const historical = [
+    ...events,
+    event("last", "alex", "review", "2026-07-07T23:59:59.999Z"),
+    event("end", "alex", "release", range.end),
+    event("rival", "sam", "release", range.start),
+  ];
+  const profile = getContributorProfile(historical, "alex", now, range);
+  assert.equal(profile.rank, 1);
+  assert.equal(profile.weeklyXp, 65);
+  assert.equal(profile.xp30, 65);
+  assert.equal(profile.contributions30, 2);
+  assert.equal(profile.activeDays30, 2);
+  assert.deepEqual(
+    profile.byType.map((item) => item.type),
+    ["release", "review"],
+  );
+  assert.equal(profile.xpHistory.length, 7);
+  assert.deepEqual(profile.xpHistory[0], {
+    date: range.from,
+    count: 1,
+    xp: 50,
+  });
+  assert.deepEqual(profile.xpHistory.at(-1), {
+    date: range.to,
+    count: 1,
+    xp: 15,
+  });
+  assert.equal(profile.heatmap.length, 7);
+  assert.deepEqual(
+    profile.recent.map((item) => item.event.id),
+    ["last", "e6"],
+  );
+});
+
+test("selected contributor periods include quiet days and exclude future activity", () => {
+  const range = resolvePulseRange({ period: "today" }, now);
+  const profile = getContributorProfile(
+    [...events, event("future-today", "alex", "merge", "2026-09-09T13:00:00Z")],
+    "alex",
+    now,
+    range,
+  );
+  assert.equal(profile.contributions30, 3);
+  assert.equal(profile.xpHistory.length, 1);
+  assert.equal(profile.xpHistory[0].xp, 45);
+  const empty = getContributorProfile(events, "nobody", now, range);
+  assert.equal(empty.rank, null);
+  assert.deepEqual(empty.xpHistory, [{ date: range.from, count: 0, xp: 0 }]);
 });

@@ -39,9 +39,13 @@ test("SQL aggregates full authorized history and stable keyset pages", async (t)
       { ...events[0], id: "boundary", occurredAt: range.start },
     );
     await store.merge("installation-70", events, { restricted: true });
-    await store.merge("installation-71", [{ ...events[0], id: "other" }], {
-      restricted: true,
-    });
+    await store.merge(
+      "installation-71",
+      [events[0], { ...events[0], id: "other" }],
+      {
+        restricted: true,
+      },
+    );
     const pulse = new PulseStore(store.pool);
     const result = await pulse.overview(70, [101], range, now);
     const expected = aggregatePulse(
@@ -51,6 +55,97 @@ test("SQL aggregates full authorized history and stable keyset pages", async (t)
     );
     assert.deepEqual(result, expected);
     assert.equal(result.totals.count, 2106);
+    const scope = {
+      sources: [
+        { installationId: 70, repositoryIds: [101] },
+        { installationId: 71, repositoryIds: [101] },
+      ],
+      author: "alice",
+    };
+    const full = await pulse.events(scope, range, now);
+    assert.equal(
+      full.length,
+      2107,
+      "dashboard reads all selected events across installations",
+    );
+    assert.ok(
+      !full.some(
+        (event) =>
+          event.id === "before" ||
+          event.id === "private" ||
+          event.id === "future" ||
+          event.type === "note",
+      ),
+    );
+    assert.equal(
+      (await pulse.overview(undefined, [], range, now, scope)).totals.count,
+      2107,
+    );
+    assert.equal(
+      (await pulse.events({ ...scope, author: "bob" }, range, now)).length,
+      0,
+    );
+    const scopedPage = await pulse.activity(
+      undefined,
+      [],
+      range,
+      undefined,
+      undefined,
+      now,
+      scope,
+    );
+    assert.ok(scopedPage.nextCursor);
+    const scopedIds = scopedPage.events.map((event) => event.id);
+    let scopedCursor: string | null = scopedPage.nextCursor;
+    while (scopedCursor) {
+      const page = await pulse.activity(
+        undefined,
+        [],
+        range,
+        undefined,
+        scopedCursor,
+        now,
+        scope,
+      );
+      scopedIds.push(...page.events.map((event) => event.id));
+      scopedCursor = page.nextCursor;
+    }
+    assert.equal(
+      scopedIds.length,
+      2107,
+      "duplicate normalized events across installations count once",
+    );
+    assert.equal(
+      new Set(scopedIds).size,
+      2107,
+      "duplicate source rows cannot cross or disappear at cursor boundaries",
+    );
+
+    await assert.rejects(
+      pulse.activity(
+        undefined,
+        [],
+        range,
+        undefined,
+        scopedPage.nextCursor!,
+        now,
+        { ...scope, author: "bob" },
+      ),
+      /Invalid activity cursor/,
+    );
+    await assert.rejects(
+      pulse.activity(
+        undefined,
+        [],
+        range,
+        undefined,
+        scopedPage.nextCursor!,
+        now,
+        { ...scope, sources: scope.sources.slice(0, 1) },
+      ),
+      /Invalid activity cursor/,
+    );
+
     const weeklyRange = resolvePulseRange(
       { period: "custom", from: "2026-08-01", to: "2026-09-15" },
       now,

@@ -1,13 +1,14 @@
-import type { LatencyStats } from "../../shared/health";
+import type { LatencyStats, HealthPeriodStats } from "../../shared/health";
 
 type StatsProbe = {
+  periodStats?: HealthPeriodStats;
   successRate24h: number | null;
   checks24h: number;
   latencyStats24h?: LatencyStats | null;
 };
 
 export interface ServiceStats {
-  /** Percentage of recorded checks that passed in the last 24 hours. */
+  /** Percentage of recorded checks that passed in the selected window. */
   uptime: number | null;
   checks: number;
   latencyMean: number | null;
@@ -16,21 +17,35 @@ export interface ServiceStats {
 }
 
 /**
- * One service's 24-hour figures across its probes: uptime weighted by each
+ * One service's figures across its probes (24 hours by default; selected
+ * period when ranged is true): uptime weighted by each
  * probe's recorded checks, and latency pooled into one mean and population
  * standard deviation, as if every check came from a single probe.
  */
-export function serviceStats(probes: StatsProbe[]): ServiceStats {
+export function serviceStats(
+  probes: StatsProbe[],
+  ranged = false,
+): ServiceStats {
+  if (ranged)
+    probes = probes.map((probe) => ({
+      checks24h: probe.periodStats?.checks ?? 0,
+      successRate24h: probe.periodStats?.successRate ?? null,
+      latencyStats24h: probe.periodStats?.latencyStats ?? null,
+    }));
   const rated = probes.filter(
     (probe) => probe.successRate24h !== null && probe.checks24h > 0,
   );
-  const checks = rated.reduce((sum, probe) => sum + probe.checks24h, 0);
-  const uptime = checks
-    ? rated.reduce(
-        (sum, probe) => sum + probe.successRate24h! * probe.checks24h,
-        0,
-      ) / checks
-    : null;
+  const checks = probes.reduce((sum, probe) => sum + probe.checks24h, 0);
+  const uptime =
+    checks &&
+    !probes.some(
+      (probe) => probe.checks24h > 0 && probe.successRate24h === null,
+    )
+      ? rated.reduce(
+          (sum, probe) => sum + probe.successRate24h! * probe.checks24h,
+          0,
+        ) / checks
+      : null;
   const timed = probes.flatMap((probe) =>
     probe.latencyStats24h && probe.latencyStats24h.checks > 0
       ? [probe.latencyStats24h]
@@ -51,14 +66,16 @@ export function serviceStats(probes: StatsProbe[]): ServiceStats {
   const variance =
     timed.reduce(
       (sum, stats) =>
-        sum + stats.checks * (stats.sd ** 2 + (stats.mean - mean) ** 2),
+        sum + stats.checks * ((stats.sd ?? 0) ** 2 + (stats.mean - mean) ** 2),
       0,
     ) / latencyChecks;
   return {
     uptime,
     checks,
     latencyMean: mean,
-    latencySd: Math.sqrt(variance),
+    latencySd: timed.some((stats) => stats.sd === null)
+      ? null
+      : Math.sqrt(variance),
     latencyChecks,
   };
 }

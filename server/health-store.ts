@@ -7,6 +7,7 @@ import {
 import type { Pool, PoolClient } from "pg";
 import type {
   HealthStatus,
+  HealthPeriodStats,
   HealthSnapshot,
   HealthCheck,
   HealthIncident,
@@ -19,6 +20,7 @@ import type {
   ProbeResult,
 } from "../shared/health.js";
 import { HEALTH_INCIDENT_LIMIT } from "../shared/health.js";
+import type { PulseRange } from "../shared/pulse.js";
 import { AuthError } from "./auth.js";
 import { ACTIVITY_CHANNEL } from "./postgres-notifications.js";
 import { healthOutboxEvents, type IncidentChange } from "./webhook-events.js";
@@ -330,12 +332,16 @@ export class HealthStore {
         "Probe is paused, running, or checked within the last 10 seconds.",
       );
   }
-  async snapshot(workspaceId: string): Promise<HealthSnapshot> {
+  async snapshot(
+    workspaceId: string,
+    range?: PulseRange,
+  ): Promise<HealthSnapshot> {
     if (!validId(workspaceId)) throw missing();
     const result = await this.pool.query<{
       id: string;
       name: string;
       probes: (ProbeRow & {
+        periodStats?: HealthPeriodStats;
         history: HealthCheck[];
         latencyHistory: DailyLatency[];
         latency24h: LatencyWindow[];
@@ -348,21 +354,37 @@ export class HealthStore {
       maintenance: MaintenanceWindow[];
     }>(
       `SELECT s.id,s.name,coalesce((SELECT jsonb_agg(to_jsonb(p)-'headers_encrypted'||jsonb_build_object('has_headers',p.headers_encrypted IS NOT NULL,
-    'history',coalesce((SELECT jsonb_agg(h.entry ORDER BY h.checked_at DESC,h.id DESC) FROM (SELECT c.id,c.checked_at,c.result||jsonb_build_object('checkedAt',c.checked_at,'status',c.state) AS entry FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '30 days' ORDER BY c.checked_at DESC,c.id DESC LIMIT 120) h),'[]'::jsonb),
-    'latencyHistory',coalesce((SELECT jsonb_agg(jsonb_build_object('date',d.day,'avgLatencyMs',round(d.total_latency/d.checks,2),'minLatencyMs',d.min_latency,'maxLatencyMs',d.max_latency,'checks',d.checks) ORDER BY d.day) FROM ship_live_health_latency_daily d WHERE d.probe_id=p.id AND d.day >= (now() AT TIME ZONE 'UTC')::date-29),'[]'::jsonb),
-    'uptime90d',coalesce((SELECT jsonb_agg(jsonb_build_object('date',d.day,'checks',d.checks,'passed',d.passed) ORDER BY d.day) FROM ship_live_health_latency_daily d WHERE d.probe_id=p.id AND d.day >= (now() AT TIME ZONE 'UTC')::date-89 AND d.passed IS NOT NULL),'[]'::jsonb),
-    'latency24h',coalesce((SELECT jsonb_agg(jsonb_build_object('start',w.start,'avgLatencyMs',round(w.avg,2),'minLatencyMs',w.min,'maxLatencyMs',w.max,'checks',w.checks) ORDER BY w.start) FROM (SELECT to_timestamp(floor(extract(epoch FROM c.checked_at)/900)*900) AS start,avg((c.result->>'latencyMs')::numeric) AS avg,min((c.result->>'latencyMs')::numeric) AS min,max((c.result->>'latencyMs')::numeric) AS max,count(c.result->>'latencyMs') AS checks FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>=to_timestamp(floor(extract(epoch FROM now())/900)*900-95*900) GROUP BY 1 HAVING count(c.result->>'latencyMs')>0) w),'[]'::jsonb),
+    'history',coalesce((SELECT jsonb_agg(h.entry ORDER BY h.checked_at DESC,h.id DESC) FROM (SELECT c.id,c.checked_at,c.result||jsonb_build_object('checkedAt',c.checked_at,'status',c.state) AS entry FROM ship_live_health_checks c WHERE c.probe_id=p.id AND ${range ? "c.checked_at >= $2::timestamptz AND c.checked_at < $3::timestamptz" : "c.checked_at>now()-interval '30 days'"} ORDER BY c.checked_at DESC,c.id DESC LIMIT 120) h),'[]'::jsonb),
+    'latencyHistory',coalesce((SELECT jsonb_agg(jsonb_build_object('date',d.day,'avgLatencyMs',round(d.total_latency/d.checks,2),'minLatencyMs',d.min_latency,'maxLatencyMs',d.max_latency,'checks',d.checks) ORDER BY d.day) FROM ship_live_health_latency_daily d WHERE d.probe_id=p.id AND ${range ? "d.day >= ($2::timestamptz AT TIME ZONE 'UTC')::date AND d.day < ($3::timestamptz AT TIME ZONE 'UTC')::date" : "d.day >= (now() AT TIME ZONE 'UTC')::date-29"}),'[]'::jsonb),
+    'uptime90d',coalesce((SELECT jsonb_agg(jsonb_build_object('date',d.day,'checks',d.checks,'passed',d.passed) ORDER BY d.day) FROM ship_live_health_latency_daily d WHERE d.probe_id=p.id AND ${range ? "d.day >= ($2::timestamptz AT TIME ZONE 'UTC')::date AND d.day < ($3::timestamptz AT TIME ZONE 'UTC')::date" : "d.day >= (now() AT TIME ZONE 'UTC')::date-89"} AND d.passed IS NOT NULL),'[]'::jsonb),
+    'latency24h',coalesce((SELECT jsonb_agg(jsonb_build_object('start',w.start,'avgLatencyMs',round(w.avg,2),'minLatencyMs',w.min,'maxLatencyMs',w.max,'checks',w.checks) ORDER BY w.start) FROM (SELECT to_timestamp(floor(extract(epoch FROM c.checked_at)/900)*900) AS start,avg((c.result->>'latencyMs')::numeric) AS avg,min((c.result->>'latencyMs')::numeric) AS min,max((c.result->>'latencyMs')::numeric) AS max,count(c.result->>'latencyMs') AS checks FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>=to_timestamp(floor(extract(epoch FROM now())/900)*900-95*900) ${range ? "AND c.checked_at >= $2::timestamptz AND c.checked_at < $3::timestamptz" : ""} GROUP BY 1 HAVING count(c.result->>'latencyMs')>0) w),'[]'::jsonb),
     'latencyStats24h',(SELECT CASE WHEN count(x.l)>0 THEN jsonb_build_object('mean',round(avg(x.l),2),'sd',round(coalesce(stddev_pop(x.l),0),2),'checks',count(x.l)) END FROM (SELECT (c.result->>'latencyMs')::numeric AS l FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '24 hours') x),
+    ${range ? `'periodStats',(SELECT jsonb_build_object('checks',coalesce(sum(d.checks),0),'successRate',CASE WHEN count(*)=count(d.passed) THEN 100.0*sum(d.passed)/nullif(sum(d.checks),0) END,'latencyStats',CASE WHEN sum(d.checks)>0 THEN jsonb_build_object('mean',sum(d.total_latency)/sum(d.checks),'sd',NULL,'checks',sum(d.checks)) END) FROM ship_live_health_latency_daily d WHERE d.probe_id=p.id AND d.day >= ($2::timestamptz AT TIME ZONE 'UTC')::date AND d.day < ($3::timestamptz AT TIME ZONE 'UTC')::date),` : ""}
     'checks',(SELECT count(*) FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '24 hours'),
     'rate',(SELECT round(100.0*avg(CASE WHEN (c.result->>'ok')::boolean THEN 1 ELSE 0 END),6) FROM ship_live_health_checks c WHERE c.probe_id=p.id AND c.checked_at>now()-interval '24 hours')
     ) ORDER BY p.config->>'name',p.id) FROM ship_live_health_probes p WHERE p.service_id=s.id),'[]'::jsonb) AS probes,
-    coalesce((SELECT jsonb_agg(jsonb_build_object('id',i.id,'probeId',i.probe_id,'probeName',p.config->>'name','openedAt',i.opened_at,'resolvedAt',i.resolved_at,'reason',i.reason) ORDER BY i.opened_at DESC) FROM (SELECT * FROM ship_live_health_incidents WHERE service_id=s.id AND (resolved_at IS NULL OR opened_at>now()-interval '30 days' OR resolved_at>now()-interval '30 days') ORDER BY opened_at DESC LIMIT ${HEALTH_INCIDENT_LIMIT}) i JOIN ship_live_health_probes p ON p.id=i.probe_id),'[]'::jsonb) AS incidents,
+    coalesce((SELECT jsonb_agg(jsonb_build_object('id',i.id,'probeId',i.probe_id,'probeName',p.config->>'name','openedAt',i.opened_at,'resolvedAt',i.resolved_at,'reason',i.reason) ORDER BY i.opened_at DESC) FROM (SELECT * FROM ship_live_health_incidents WHERE service_id=s.id AND ${range ? "(opened_at < $3::timestamptz AND (resolved_at IS NULL OR resolved_at > $2::timestamptz))" : "(resolved_at IS NULL OR opened_at>now()-interval '30 days' OR resolved_at>now()-interval '30 days')"} ORDER BY opened_at DESC LIMIT ${HEALTH_INCIDENT_LIMIT}) i JOIN ship_live_health_probes p ON p.id=i.probe_id),'[]'::jsonb) AS incidents,
     coalesce((SELECT jsonb_agg(jsonb_build_object('id',m.id,'serviceId',m.service_id,'startsAt',m.starts_at,'endsAt',m.ends_at,'note',m.note) ORDER BY m.starts_at) FROM ship_live_health_maintenance m WHERE m.workspace_id=s.workspace_id AND (m.service_id IS NULL OR m.service_id=s.id) AND m.ends_at>now()),'[]'::jsonb) AS maintenance
     FROM ship_live_health_services s WHERE s.workspace_id=$1 ORDER BY s.display_order,s.created_at,s.id`,
-      [workspaceId],
+      range ? [workspaceId, range.start, range.end] : [workspaceId],
     );
+    const coverage = range
+      ? {
+          earliestStoredDate: (
+            await this.pool.query<{ earliest: string | null }>(
+              `SELECT min(d.day)::text AS earliest FROM ship_live_health_latency_daily d JOIN ship_live_health_probes p ON p.id=d.probe_id WHERE p.workspace_id=$1`,
+              [workspaceId],
+            )
+          ).rows[0].earliest,
+          // prune keeps today and the prior 90 UTC days (inclusive).
+          retentionDays: 91,
+          incidentsPerServiceLimit: HEALTH_INCIDENT_LIMIT,
+          recentChecksPerProbeLimit: 120,
+        }
+      : undefined;
     const now = Date.now();
     return {
+      ...(range ? { range, coverage } : {}),
       updatedAt: new Date(now).toISOString(),
       services: result.rows.map((service) => {
         const probes = service.probes.map((p) => {
@@ -390,6 +412,7 @@ export class HealthStore {
               last && p.last_result
                 ? { ...p.last_result, checkedAt: last, status: p.state }
                 : null,
+            ...(range ? { periodStats: p.periodStats } : {}),
             checks24h: Number(p.checks),
             successRate24h: p.rate === null ? null : Number(p.rate),
             history: p.history,

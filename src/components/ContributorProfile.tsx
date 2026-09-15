@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { ExternalLink } from "lucide-react";
+import type { PulseRange } from "../../shared/pulse";
 import type { ActivityEvent } from "../../shared/types";
 import { EVENT_META } from "../lib/activity";
 import { getContributorProfile, XP_HISTORY_DAYS } from "../lib/contributor";
@@ -18,18 +19,20 @@ export function ContributorProfile({
   events,
   login,
   now,
+  range,
   demo = false,
   displayName = (value) => value,
 }: {
   events: ActivityEvent[];
   login: string;
   now: number;
+  range?: PulseRange;
   demo?: boolean;
   displayName?: (login: string) => string;
 }) {
   const profile = useMemo(
-    () => getContributorProfile(events, login, now),
-    [events, login, now],
+    () => getContributorProfile(events, login, now, range),
+    [events, login, now, range],
   );
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [allRecent, setAllRecent] = useState(false);
@@ -69,20 +72,26 @@ export function ContributorProfile({
           <div className="profile-badges">
             <span className="profile-badge">
               {profile.rank === null ? (
-                "No activity this week"
+                range ? (
+                  "No activity in this period"
+                ) : (
+                  "No activity this week"
+                )
               ) : (
                 <>
-                  <strong>#{profile.rank}</strong> this week
+                  <strong>#{profile.rank}</strong>{" "}
+                  {range ? "this period" : "this week"}
                 </>
               )}
             </span>
             {profile.firstSeen && (
               <span className="profile-badge">
-                Since{" "}
+                {range ? "First in period" : "Since"}{" "}
                 {new Date(profile.firstSeen).toLocaleDateString(undefined, {
                   month: "short",
                   day: "numeric",
                   year: "numeric",
+                  timeZone: "UTC",
                 })}
               </span>
             )}
@@ -100,35 +109,61 @@ export function ContributorProfile({
         )}
       </div>
 
+      {range && (
+        <p className="profile-footnote">
+          {range.from} — {range.to} · UTC
+        </p>
+      )}
       <dl className="profile-stats">
         <div className="profile-stat">
-          <dt>Weekly XP</dt>
-          <dd>{profile.weeklyXp.toLocaleString()}</dd>
+          <dt>{range ? "Period rank" : "Weekly XP"}</dt>
+          <dd>
+            {range
+              ? profile.rank === null
+                ? "—"
+                : `#${profile.rank}`
+              : profile.weeklyXp.toLocaleString()}
+          </dd>
         </div>
         <div className="profile-stat">
-          <dt>XP · 30 days</dt>
+          <dt>{range ? "XP · period" : "XP · 30 days"}</dt>
           <dd>{profile.xp30.toLocaleString()}</dd>
         </div>
         <div className="profile-stat">
-          <dt>Contributions · 30 days</dt>
+          <dt>
+            {range ? "Contributions · period" : "Contributions · 30 days"}
+          </dt>
           <dd>{profile.contributions30.toLocaleString()}</dd>
         </div>
         <div className="profile-stat">
-          <dt>Active days · 30 days</dt>
+          <dt>{range ? "Active days · period" : "Active days · 30 days"}</dt>
           <dd>
             {profile.activeDays30}
-            <small>/ {XP_HISTORY_DAYS}</small>
+            <small>
+              / {range ? profile.xpHistory.length : XP_HISTORY_DAYS}
+            </small>
           </dd>
         </div>
       </dl>
 
       <div className="profile-charts">
-        <ActivityHeatmap cells={profile.heatmap} />
+        {range ? (
+          <DailyBars
+            title="Contributions in this period"
+            days={profile.xpHistory}
+            metric="count"
+            total={profile.contributions30}
+            range={range}
+          />
+        ) : (
+          <ActivityHeatmap cells={profile.heatmap} />
+        )}
         <DailyBars
           title="XP history"
           days={profile.xpHistory}
           metric="xp"
           total={profile.xp30}
+          range={range}
         />
       </div>
 
@@ -136,7 +171,7 @@ export function ContributorProfile({
         <section className="profile-card" aria-labelledby="profile-breakdown">
           <div className="profile-card-heading">
             <h3 id="profile-breakdown">Breakdown</h3>
-            <span>30 days</span>
+            <span>{range ? "Selected period" : "30 days"}</span>
           </div>
           {profile.byType.length ? (
             <ul className="profile-breakdown">
@@ -153,13 +188,19 @@ export function ContributorProfile({
               })}
             </ul>
           ) : (
-            <p className="profile-empty">No activity in the last 30 days.</p>
+            <p className="profile-empty">
+              {range
+                ? "No stored activity in this period."
+                : "No activity in the last 30 days."}
+            </p>
           )}
         </section>
 
         <section className="profile-card" aria-labelledby="profile-recent">
           <div className="profile-card-heading">
-            <h3 id="profile-recent">Recent activity</h3>
+            <h3 id="profile-recent">
+              {range ? "Activity in this period" : "Recent activity"}
+            </h3>
             <span>Newest first</span>
           </div>
           {profile.recent.length ? (
@@ -229,8 +270,11 @@ export function ContributorProfile({
         </details>
       )}
       <p className="profile-footnote">
-        Based on activity this workspace has received, credited like the weekly
-        board; history can be partial. Days are UTC.
+        Based on stored activity{" "}
+        {range
+          ? "in the selected period, credited like the period leaderboard"
+          : "this workspace has received, credited like the weekly board"}
+        ; history can be partial. Days are UTC.
       </p>
     </div>
   );

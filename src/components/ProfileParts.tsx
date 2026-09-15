@@ -9,6 +9,7 @@ import {
   Rocket,
   Siren,
 } from "lucide-react";
+import type { PulseRange } from "../../shared/pulse";
 import type { ActivityType } from "../../shared/types";
 import { HEATMAP_WEEKS, type ContributorDay } from "../lib/contributor";
 import "../contributor-profile.css";
@@ -183,11 +184,13 @@ export function DailyBars({
   days,
   metric,
   total,
+  range,
 }: {
   title: string;
   days: ContributorDay[];
   metric: "xp" | "count";
   total: number;
+  range?: PulseRange;
 }) {
   const id = useId();
   const [index, setIndex] = useState<number | null>(null);
@@ -225,8 +228,9 @@ export function DailyBars({
           <span className="xp-grid" style={{ top: "50%" }} />
           <div
             className={`xp-bars ${active ? "has-active" : ""}`}
+            style={range && days.length > 60 ? { gap: 0 } : undefined}
             role="group"
-            aria-label={`Daily ${what} over the last ${days.length} days. Use arrow keys to explore days.`}
+            aria-label={`Daily ${what} ${range ? `from ${range.from} to ${range.to}` : `over the last ${days.length} days`}. Use arrow keys to explore days.`}
             aria-describedby={`${id}-readout`}
             tabIndex={0}
             onKeyDown={explore}
@@ -259,7 +263,7 @@ export function DailyBars({
               timeZone: "UTC",
             })}
           </span>
-          <span>Today</span>
+          <span>{range ? dayLabel(range.to) : "Today"}</span>
         </div>
       </div>
       <p className="profile-readout" id={`${id}-readout`} aria-live="polite">
@@ -277,13 +281,17 @@ export function DailyBars({
           )
         ) : metric === "xp" ? (
           <>
-            <strong>{total.toLocaleString()} XP</strong> in the last{" "}
-            {days.length} days
+            <strong>{total.toLocaleString()} XP</strong>{" "}
+            {range
+              ? "in the selected period"
+              : `in the last ${days.length} days`}
           </>
         ) : (
           <>
-            <strong>{plural(total, "contribution")}</strong> in the last{" "}
-            {days.length} days
+            <strong>{plural(total, "contribution")}</strong>{" "}
+            {range
+              ? "in the selected period"
+              : `in the last ${days.length} days`}
           </>
         )}
       </p>

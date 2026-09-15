@@ -1,3 +1,5 @@
+import type { PulseRange } from "../../shared/pulse";
+import { inPeriod } from "./period";
 import type { ActivityEvent, ActivityType } from "../../shared/types";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -145,8 +147,16 @@ function eligibleEvents(
   });
 }
 
-function weeklyEvents(events: ActivityEvent[], now: number): ActivityEvent[] {
-  return eligibleEvents(events, now, getWeekStart(now).getTime());
+function weeklyEvents(
+  events: ActivityEvent[],
+  now: number,
+  range?: PulseRange,
+): ActivityEvent[] {
+  return range
+    ? eligibleEvents(events, now).filter((event) =>
+        inPeriod(event.occurredAt, range, now),
+      )
+    : eligibleEvents(events, now, getWeekStart(now).getTime());
 }
 
 /** Base XP before weekly limits: pushes earn per new commit, merges by target branch. */
@@ -227,8 +237,9 @@ export function getCreditedEvents(
 export function getMetrics(
   events: ActivityEvent[],
   now = Date.now(),
+  range?: PulseRange,
 ): ActivityMetrics {
-  const weekly = weeklyEvents(events, now);
+  const weekly = weeklyEvents(events, now, range);
   return {
     merges: weekly.filter((event) => event.type === "merge").length,
     reviews: weekly.filter((event) => event.type === "review").length,
@@ -244,9 +255,12 @@ export function getMetrics(
 export function getLeaderboard(
   events: ActivityEvent[],
   now = Date.now(),
+  range?: PulseRange,
 ): LeaderboardEntry[] {
   const people = new Map<string, LeaderboardEntry>();
-  for (const { event, points } of withCredit(weeklyEvents(events, now))) {
+  for (const { event, points } of withCredit(
+    weeklyEvents(events, now, range),
+  )) {
     const key = event.actor.login.toLowerCase();
     const entry = people.get(key) ?? {
       login: event.actor.login,
