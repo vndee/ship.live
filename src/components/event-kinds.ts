@@ -7,6 +7,7 @@ import {
   MessageSquare,
   NotebookPen,
   Rocket,
+  Siren,
 } from "lucide-react";
 import type { ActivityEvent } from "../../shared/types";
 
@@ -20,6 +21,7 @@ export const EVENT_ICONS: Record<Kind, ElementType> = {
   release: Rocket,
   pr: GitPullRequest,
   note: NotebookPen,
+  alert: Siren,
 };
 
 export const EVENT_VERBS: Record<Kind, string> = {
@@ -30,4 +32,5 @@ export const EVENT_VERBS: Record<Kind, string> = {
   release: "released",
   pr: "opened",
   note: "shipped",
+  alert: "sent an alert",
 };

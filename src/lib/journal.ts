@@ -61,6 +61,7 @@ const VERBS: Record<Exclude<ActivityEvent["type"], "note">, string> = {
   issue: "Closed",
   release: "Released",
   pr: "Opened",
+  alert: "Alert",
 };
 const line = (value: string) => value.replace(/\s*\n\s*/g, " ").trim();
 const time = (value: string) => `${value.slice(11, 16)} UTC`;

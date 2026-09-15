@@ -531,6 +531,9 @@ h1 {
 .event-icon.release {
   color: var(--accent);
 }
+.event-icon.alert {
+  color: var(--danger);
+}
 .event-actor {
   min-width: 0;
   color: var(--muted);
@@ -998,6 +1001,10 @@ h1 {
   /* A thin, themed scrollbar instead of the platform's boxed one. */
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
+}
+/* Editors with side-by-side panes, such as a webhook's template and preview. */
+.modal.modal-wide {
+  width: min(980px, calc(100% - 32px));
 }
 .modal::-webkit-scrollbar {
   width: 10px;
@@ -1890,6 +1897,52 @@ textarea:focus-visible {
 .workspace-choice > svg {
   color: var(--muted);
 }
+.workspace-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.workspace-row .workspace-choice {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+.workspace-github svg {
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+.workspace-rename-form {
+  display: grid;
+  gap: 8px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.workspace-rename-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.workspace-rename-form input {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--background);
+  font: inherit;
+}
+.workspace-rename-form .field-hint,
+.workspace-rename-form .form-error {
+  margin: 0;
+}
+.workspace-rename-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
 .installation-list {
   display: grid;
   gap: 16px;
@@ -1906,6 +1959,34 @@ textarea:focus-visible {
   align-items: center;
   gap: 10px;
   min-width: 0;
+}
+.installation-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  cursor: pointer;
+}
+.installation-pick input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.installation-pick:has(input:disabled) {
+  cursor: default;
+}
+.connection-save {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+.connection-save small {
+  color: var(--muted);
+  font-size: 12px;
 }
 .installation-choice strong,
 .installation-choice small {

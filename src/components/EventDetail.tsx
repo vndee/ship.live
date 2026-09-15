@@ -1,4 +1,10 @@
-import { ExternalLink, FolderGit2, LockKeyhole, Trash2 } from "lucide-react";
+import {
+  ExternalLink,
+  FolderGit2,
+  Inbox,
+  LockKeyhole,
+  Trash2,
+} from "lucide-react";
 import type { ActivityEvent } from "../../shared/types";
 import { basePoints, EVENT_META } from "../lib/activity";
 import { safeUrl } from "../lib/format";
@@ -34,7 +40,11 @@ export function EventDetail({
       </div>
       <h3 className="detail-title">{event.title}</h3>
       <p className="detail-repo">
-        <FolderGit2 size={15} />
+        {event.type === "alert" ? (
+          <Inbox size={15} />
+        ) : (
+          <FolderGit2 size={15} />
+        )}
         {event.type === "note" ? "Private journal" : event.repo}
         {event.number ? ` #${event.number}` : ""}
         {event.type === "merge" && event.branch ? ` into ${event.branch}` : ""}
@@ -49,7 +59,13 @@ export function EventDetail({
         </p>
       )}
       {event.body && <p className="note-body">{event.body}</p>}
-      {!personal && event.type !== "note" && (
+      {event.type === "alert" && (
+        <p className="field-hint">
+          Received by an inbound webhook. Alerts earn no XP and never count
+          toward the leaderboard.
+        </p>
+      )}
+      {!personal && event.type !== "note" && event.type !== "alert" && (
         <p className="field-hint">
           Base recognition: {basePoints(event)} XP
           {event.type === "push" && event.commits !== undefined
@@ -70,14 +86,17 @@ export function EventDetail({
           target="_blank"
           rel="noreferrer"
         >
-          View on GitHub <ExternalLink size={15} />
+          {event.type === "alert" ? "Open link" : "View on GitHub"}{" "}
+          <ExternalLink size={15} />
         </a>
       ) : (
         event.type !== "note" && (
           <p className="field-hint">
             {demo
               ? "This is fictional sample activity."
-              : "No GitHub link was supplied for this event."}
+              : event.type === "alert"
+                ? "This alert's mapping supplied no link."
+                : "No GitHub link was supplied for this event."}
           </p>
         )
       )}

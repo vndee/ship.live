@@ -5,6 +5,7 @@ import { validateHeaders } from "./health-probe.js";
 import { parseJsonPath } from "./json-path.js";
 import { publicHttpUrl } from "./outbound.js";
 import { SecretBox } from "./secret-box.js";
+import type { ActivityEvent } from "../shared/types.js";
 import {
   compileTemplate,
   TemplateError,
@@ -896,6 +897,37 @@ export class WebhookStore {
         ? this.box.open(row.secret_encrypted, `inbound:${row.id}:secret`)
         : undefined,
     };
+  }
+
+  /** A team's recent inbound alerts, newest first, as Live activity shows them. */
+  async alerts(workspaceId: string, limit = 100): Promise<ActivityEvent[]> {
+    const { rows } = await this.pool.query<{
+      id: string;
+      type: string;
+      created_at: Date;
+      payload: {
+        occurredAt?: string;
+        summary?: string;
+        url?: string;
+        data?: { endpoint?: { name?: string }; body?: string };
+      };
+    }>(
+      // The type condition matches migration 019's partial index.
+      `SELECT id, type, created_at, payload FROM ship_live_webhook_events
+       WHERE workspace_id=$1 AND type LIKE 'inbound.%'
+       ORDER BY created_at DESC, id LIMIT $2`,
+      [workspaceId, limit],
+    );
+    return rows.map(({ id, type, created_at, payload }) => ({
+      id: `alert:${id}`,
+      type: "alert",
+      actor: { login: payload.data?.endpoint?.name || "Inbound webhook" },
+      repo: type,
+      title: payload.summary ?? "",
+      ...(payload.url ? { url: payload.url } : {}),
+      ...(payload.data?.body ? { body: payload.data.body } : {}),
+      occurredAt: iso(payload.occurredAt ?? created_at)!,
+    }));
   }
 
   /** Keeps the latest 50 receipts per endpoint for its log. */

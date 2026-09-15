@@ -31,7 +31,13 @@ export function AppHeader({
   onSettings: () => void;
   onToggleWall: () => void;
 }) {
-  const team = !feed.demo && feed.workspace?.kind === "team";
+  // Teams, and a journal's owner, have every page.
+  const team =
+    !feed.demo &&
+    Boolean(
+      feed.workspace &&
+      (feed.workspace.kind === "team" || feed.workspace.owner),
+    );
   const pages = (
     [
       ["pulse", "Pulse"],
@@ -49,7 +55,17 @@ export function AppHeader({
           ship<span>.live</span>
         </span>
       </RouteLink>
-      <button className="organization-switch" onClick={onConnect}>
+      <button
+        className="organization-switch"
+        onClick={onConnect}
+        title={
+          !feed.demo &&
+          feed.workspace?.githubAccount &&
+          feed.workspace.githubAccount !== feed.organization
+            ? `On GitHub: ${feed.workspace.githubAccount}`
+            : undefined
+        }
+      >
         {!feed.demo && <LockKeyhole size={12} />}
         <span>{feed.demo ? "Acme Team" : feed.organization}</span>
         <ChevronDown size={13} />

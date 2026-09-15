@@ -98,6 +98,7 @@ export function LiveLeaderboard({
   onRules,
   onSelect,
   onAllContributors,
+  personal = false,
   status = "Live",
   loading = false,
 }: {
@@ -111,6 +112,8 @@ export function LiveLeaderboard({
   onSelect?: (login: string) => void;
   /** Opens the full contributor table. */
   onAllContributors?: () => void;
+  /** A journal's dashboard: the owner and everyone active in its sources. */
+  personal?: boolean;
   status?: string;
   loading?: boolean;
 }) {
@@ -166,15 +169,19 @@ export function LiveLeaderboard({
   return (
     <section
       className={`live-leaderboard ${animate ? "has-motion" : ""}`}
-      aria-label="Live team XP leaderboard"
+      aria-label={personal ? "Live XP leaderboard" : "Live team XP leaderboard"}
     >
       <div className="leaderboard-heading">
         <div>
           <div className="leaderboard-title">
             <Trophy size={20} />
-            <h2>Team leaderboard</h2>
+            <h2>{personal ? "Leaderboard" : "Team leaderboard"}</h2>
           </div>
-          <p>Good work adds up. Every contribution moves the team.</p>
+          <p>
+            {personal
+              ? "Your week across every source, alongside everyone active in them."
+              : "Good work adds up. Every contribution moves the team."}
+          </p>
         </div>
         {status && (
           <span
@@ -191,7 +198,7 @@ export function LiveLeaderboard({
           <strong>
             <AnimatedNumber value={metrics.xp} moving={animate} />
           </strong>
-          <span>team XP</span>
+          <span>{personal ? "XP" : "team XP"}</span>
         </div>
         <div>
           <Users size={15} />
@@ -307,8 +314,9 @@ export function LiveLeaderboard({
               : "A new week, ready to ship."}
           </h3>
           <p>
-            Merge a pull request, review a teammate’s work, or publish a release
-            to earn team XP.
+            {personal
+              ? "Merge a pull request, review someone’s work, or publish a release to earn XP."
+              : "Merge a pull request, review a teammate’s work, or publish a release to earn team XP."}
           </p>
         </div>
       )}

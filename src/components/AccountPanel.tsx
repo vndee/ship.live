@@ -7,11 +7,12 @@ import {
   LoaderCircle,
   LockKeyhole,
   LogOut,
+  Pencil,
   Plus,
   RefreshCw,
   Users,
 } from "lucide-react";
-import type { InstallationChoice } from "../../shared/workspaces";
+import type { InstallationChoice, Workspace } from "../../shared/workspaces";
 import type { FeedController } from "../hooks/useFeed";
 
 function installationUrl(value: string) {
@@ -27,6 +28,83 @@ function installationUrl(value: string) {
   }
 }
 
+/** Names a workspace; GitHub's name for it stays as its secondary identity. */
+function WorkspaceRename({
+  workspace,
+  onSave,
+  onCancel,
+}: {
+  workspace: Workspace;
+  onSave: (name: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const fallback = workspace.defaultName ?? workspace.name;
+  const [value, setValue] = useState(
+    workspace.defaultName ? workspace.name : "",
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function save(name: string) {
+    setBusy(true);
+    setError("");
+    try {
+      await onSave(name);
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not rename the workspace. Try again.",
+      );
+      setBusy(false);
+    }
+  }
+  return (
+    <form
+      className="workspace-rename-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save(value.trim());
+      }}
+    >
+      <label>
+        {workspace.kind === "personal" ? "Journal name" : "Team name"}
+        <input
+          aria-label="Workspace name"
+          autoFocus
+          value={value}
+          maxLength={80}
+          placeholder={fallback}
+          onChange={(event) => setValue(event.target.value)}
+        />
+      </label>
+      <small className="field-hint">
+        {workspace.kind === "team"
+          ? `Everyone in this team sees it. On GitHub it stays ${workspace.githubAccount ?? fallback}.`
+          : "Only you see it."}{" "}
+        Leave it empty to use “{fallback}”.
+      </small>
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="workspace-rename-actions">
+        <button
+          type="button"
+          className="text-button"
+          disabled={busy}
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button type="submit" className="button primary" disabled={busy}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export function AccountPanel({
   feed,
   onClose,
@@ -39,6 +117,34 @@ export function AccountPanel({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const connectedIds = feed.workspaces.flatMap((workspace) =>
+    workspace.installationId ? [workspace.installationId] : [],
+  );
+  const connectedKey = [...connectedIds].sort((a, b) => a - b).join(",");
+  // Ticked installations; saved changes reset them to what is connected.
+  const [picked, setPicked] = useState(() => new Set(connectedIds));
+  useEffect(
+    () => setPicked(new Set(connectedIds)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [connectedKey],
+  );
+  const toConnect = choices
+    .filter(
+      (choice) => picked.has(choice.id) && !connectedIds.includes(choice.id),
+    )
+    .map((choice) => choice.id);
+  const toLeave = choices.filter(
+    (choice) => !picked.has(choice.id) && connectedIds.includes(choice.id),
+  );
+  function toggle(id: number) {
+    setPicked((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   async function loadInstallations() {
     setBusy("Refreshing GitHub access…");
@@ -110,6 +216,25 @@ export function AccountPanel({
   }
   const user = feed.session.user;
   const operationPending = feed.operation?.status === "pending";
+  function saveConnections() {
+    if (
+      toLeave.length &&
+      !window.confirm(
+        `Leave ${toLeave.map((choice) => choice.account).join(", ")}? Its activity stays with the team, and you can connect it again at any time.`,
+      )
+    )
+      return;
+    void act(
+      toConnect.length
+        ? "Connecting and importing recent activity…"
+        : "Saving connections…",
+      () =>
+        feed.saveConnections(
+          toConnect,
+          toLeave.map((choice) => choice.id),
+        ),
+    );
+  }
   return (
     <>
       {feed.sessionError && (
@@ -211,36 +336,66 @@ export function AccountPanel({
           <section className="settings-section">
             <h3>Your workspaces</h3>
             <div className="workspace-choices">
-              {feed.workspaces.map((workspace) => (
-                <button
-                  key={workspace.id}
-                  className="workspace-choice"
-                  disabled={operationPending}
-                  onClick={() => {
-                    feed.selectWorkspace(workspace);
-                    onClose();
-                  }}
-                >
-                  {workspace.kind === "personal" ? (
-                    <BookOpen size={18} />
-                  ) : (
-                    <Users size={18} />
-                  )}
-                  <span>
-                    <strong>{workspace.name}</strong>
-                    <small>
-                      {workspace.kind === "personal"
-                        ? "Personal journal · only you"
-                        : "Team · members with repository access"}
-                    </small>
-                  </span>
-                  {workspace.id === feed.workspace?.id ? (
-                    <Check size={15} />
-                  ) : (
-                    <LockKeyhole size={13} />
-                  )}
-                </button>
-              ))}
+              {feed.workspaces.map((workspace) =>
+                renaming === workspace.id ? (
+                  <WorkspaceRename
+                    key={workspace.id}
+                    workspace={workspace}
+                    onCancel={() => setRenaming(null)}
+                    onSave={async (name) => {
+                      await feed.renameWorkspace(workspace.id, name);
+                      setRenaming(null);
+                    }}
+                  />
+                ) : (
+                  <div className="workspace-row" key={workspace.id}>
+                    <button
+                      className="workspace-choice"
+                      disabled={operationPending}
+                      onClick={() => {
+                        feed.selectWorkspace(workspace);
+                        onClose();
+                      }}
+                    >
+                      {workspace.kind === "personal" ? (
+                        <BookOpen size={18} />
+                      ) : (
+                        <Users size={18} />
+                      )}
+                      <span>
+                        <strong>{workspace.name}</strong>
+                        <small>
+                          {/* GitHub's name stays visible once it is renamed. */}
+                          {workspace.githubAccount &&
+                            workspace.githubAccount !== workspace.name && (
+                              <span className="workspace-github">
+                                <Github size={11} aria-hidden="true" />
+                                {workspace.githubAccount} ·{" "}
+                              </span>
+                            )}
+                          {workspace.kind === "personal"
+                            ? "Personal journal · only you"
+                            : "Team · members with repository access"}
+                        </small>
+                      </span>
+                      {workspace.id === feed.workspace?.id ? (
+                        <Check size={15} />
+                      ) : (
+                        <LockKeyhole size={13} />
+                      )}
+                    </button>
+                    <button
+                      className="icon-button workspace-rename"
+                      aria-label={`Rename ${workspace.name}`}
+                      title="Rename"
+                      disabled={operationPending}
+                      onClick={() => setRenaming(workspace.id)}
+                    >
+                      <Pencil size={14} />
+                    </button>
+                  </div>
+                ),
+              )}
               {!feed.workspaces.length && (
                 <p className="field-hint">
                   Your journal is being prepared.{" "}
@@ -275,6 +430,13 @@ export function AccountPanel({
               </button>
             ) : (
               <>
+                {choices.length > 0 && (
+                  <p className="field-hint">
+                    Tick the accounts and organizations to connect. Unticking
+                    one leaves it; its team keeps its activity, and you can tick
+                    it again at any time.
+                  </p>
+                )}
                 <div className="installation-list">
                   {choices.map((choice) => {
                     const connected = feed.workspaces.find(
@@ -282,7 +444,18 @@ export function AccountPanel({
                     );
                     return (
                       <div className="installation-choice" key={choice.id}>
-                        <div>
+                        <label className="installation-pick">
+                          <input
+                            type="checkbox"
+                            aria-label={`Connect ${choice.account}`}
+                            checked={picked.has(choice.id)}
+                            disabled={
+                              Boolean(busy) ||
+                              operationPending ||
+                              !choice.connectable
+                            }
+                            onChange={() => toggle(choice.id)}
+                          />
                           {choice.kind === "Organization" ? (
                             <Users size={16} />
                           ) : (
@@ -298,26 +471,24 @@ export function AccountPanel({
                               {choice.repositories.length === 1
                                 ? "repository"
                                 : "repositories"}
+                              {choice.connectable
+                                ? ""
+                                : " · only its owner can connect it"}
                             </small>
                           </span>
-                        </div>
-                        <button
-                          className="button secondary"
-                          disabled={Boolean(busy) || operationPending}
-                          onClick={() => {
-                            if (connected) {
+                        </label>
+                        {connected && (
+                          <button
+                            className="text-button"
+                            disabled={Boolean(busy) || operationPending}
+                            onClick={() => {
                               feed.selectWorkspace(connected);
                               onClose();
-                            } else
-                              void act(
-                                "Connecting and importing recent activity…",
-                                () => feed.connectInstallation(choice.id),
-                                true,
-                              );
-                          }}
-                        >
-                          {connected ? "Open" : "Connect"}
-                        </button>
+                            }}
+                          >
+                            Open
+                          </button>
+                        )}
                         {choice.repositories.length > 0 && (
                           <details>
                             <summary>Repository access</summary>
@@ -337,6 +508,32 @@ export function AccountPanel({
                     );
                   })}
                 </div>
+                {choices.length > 0 && (
+                  <div className="connection-save">
+                    <button
+                      className="button primary"
+                      disabled={
+                        Boolean(busy) ||
+                        operationPending ||
+                        !(toConnect.length || toLeave.length)
+                      }
+                      onClick={saveConnections}
+                    >
+                      Save connections
+                    </button>
+                    <small>
+                      {toConnect.length || toLeave.length
+                        ? [
+                            toConnect.length &&
+                              `${toConnect.length} to connect`,
+                            toLeave.length && `${toLeave.length} to leave`,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")
+                        : "No changes"}
+                    </small>
+                  </div>
+                )}
                 {loaded && !choices.length && (
                   <p className="field-hint">
                     No accessible installations yet. Install the app on your

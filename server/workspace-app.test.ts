@@ -21,6 +21,13 @@ import { HealthStore } from "./health-store.js";
 import { WorkspaceStore } from "./workspace-store.js";
 import { WallStore } from "./wall-store.js";
 import { SecretBox } from "./secret-box.js";
+import {
+  recordInstallationEvent,
+  recordWorkspaceEvent,
+} from "./webhook-outbox.js";
+import { activityOutboxEvent } from "./webhook-events.js";
+import { WEBHOOK_PRESETS } from "../shared/webhooks.js";
+import { WebhookStore } from "./webhook-store.js";
 
 const APP_URL = "http://localhost:3000";
 const SECRET = "synthetic-workspace-webhook-secret";
@@ -169,8 +176,11 @@ function upstream() {
       }));
       return Response.json({ total_count: repositories.length, repositories });
     }
-    if (url.pathname === `/app/installations/${team.id}`)
-      return Response.json(install(team));
+    const appInstallation = /^\/app\/installations\/(\d+)$/.exec(url.pathname);
+    const known = [team, otherTeam, ...[...accessible.values()].flat()].find(
+      (item) => item.id === Number(appInstallation?.[1]),
+    );
+    if (known) return Response.json(install(known));
     if (url.pathname.endsWith("/access_tokens"))
       return Response.json({
         token: "installation-token",
@@ -281,6 +291,7 @@ async function withApp(
       github: provider.github,
       webhookSecret: SECRET,
       secrets: new SecretBox("11".repeat(32)),
+      webhooks: new WebhookStore(replica.pool, new SecretBox("11".repeat(32))),
     }).listen(0, "127.0.0.1");
     await once(server, "listening");
     const address = server.address();
@@ -981,7 +992,12 @@ test("workspace discovery follows synced access and journals keep synced activit
       title: "An offline reflection",
       body: "Still private",
     });
-    await store.merge("installation-71", [event("synced-before-outage", 101)], {
+    // A journal shows only its owner's activity by default.
+    const own = (id: string) => ({
+      ...event(id, 101),
+      actor: { login: "builder-1" },
+    });
+    await store.merge("installation-71", [own("synced-before-outage")], {
       restricted: true,
     });
     const live = await stream(
@@ -990,11 +1006,10 @@ test("workspace discovery follows synced access and journals keep synced activit
     try {
       await live.frame("connected");
       provider.unavailable();
-      await store.merge(
-        "installation-71",
-        [event("new-event-during-outage", 101)],
-        { restricted: true, deliveryId: randomUUID() },
-      );
+      await store.merge("installation-71", [own("new-event-during-outage")], {
+        restricted: true,
+        deliveryId: randomUUID(),
+      });
       assert.match(await live.frame("activity"), /new-event-during-outage/);
       const feed = await (
         await request(`/api/workspaces/${journal.id}/feed`)
@@ -2005,10 +2020,15 @@ test("team health UI routes enforce access and CSRF, validate public probes and 
       controller.abort();
       await reader.cancel().catch(() => {});
     }
+    // A journal has its own Service Health, for its owner only.
     const personal = await workspaces.ensurePersonal(users[0]);
     assert.equal(
       (await request(`/api/workspaces/${personal.id}/health`)).status,
-      403,
+      200,
+    );
+    assert.equal(
+      (await request(`/api/workspaces/${personal.id}/health`, users[1])).status,
+      404,
     );
     assert.equal(
       (await mutate(`/services/${service.id}`, "DELETE")).status,
@@ -2369,5 +2389,391 @@ test("members set their workspace's Pulse heading, and shared links show it", as
     const cleared = await (await patch({ title: "", subtitle: " " })).json();
     assert.equal(cleared.workspace.pulseTitle, undefined);
     assert.equal(cleared.workspace.pulseSubtitle, undefined);
+  });
+});
+
+test("rotating a share can keep its expiry, but not once it has expired", async (t) => {
+  await withApp(t, async ({ store, workspaces, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const path = `/api/workspaces/${workspace.id}/share`;
+    const post = (url: string, body: unknown) =>
+      request(url, users[0], { method: "POST", body: JSON.stringify(body) });
+    const first = await (await post(path, { expiresIn: 604800 })).json();
+    // Creating needs a lifetime; only a rotation can keep one.
+    assert.equal((await post(path, { keepExpiry: true })).status, 400);
+    const rotated = await post(`${path}/rotate`, { keepExpiry: true });
+    assert.equal(rotated.status, 200);
+    const second = await rotated.json();
+    assert.notEqual(second.token, first.token);
+    assert.ok(
+      Math.abs(Date.parse(second.expiresAt) - Date.parse(first.expiresAt)) <
+        5_000,
+      "the new link expires when the old one would have",
+    );
+    assert.equal(
+      (
+        await request("/api/shared/feed", null, {
+          headers: { "x-dashboard-share": first.token },
+        })
+      ).status,
+      410,
+    );
+    await store.pool.query(
+      "UPDATE ship_live_dashboard_shares SET expires_at=now()-interval '1 second'",
+    );
+    const expired = await post(`${path}/rotate`, { keepExpiry: true });
+    assert.equal(expired.status, 409);
+    assert.match((await expired.json()).error, /Choose a lifetime/);
+  });
+});
+
+test("a team's feed adds its inbound alerts to repository activity", async (t) => {
+  await withApp(t, async ({ store, workspaces, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    await store.merge("installation-70", [event("alpha", 101)], {
+      restricted: true,
+    });
+    await recordWorkspaceEvent(store.pool, workspace.id, {
+      type: "inbound.grafana",
+      dedupeKey: "inbound:grafana:1",
+      occurredAt: new Date().toISOString(),
+      summary: "API latency is alerting",
+      data: { endpoint: { name: "Grafana" }, body: "p95 above 800 ms" },
+    });
+    const feed = (await (
+      await request(`/api/workspaces/${workspace.id}/feed`)
+    ).json()) as FeedResponse;
+    assert.deepEqual(
+      feed.events.map((item) => [item.type, item.title]),
+      [
+        ["alert", "API latency is alerting"],
+        ["merge", feed.events[1]?.title],
+      ],
+    );
+    assert.equal(feed.events[0].actor.login, "Grafana");
+    assert.equal(feed.events[1].id, "alpha");
+  });
+});
+
+test("a journal shows its owner's activity from every connected installation, and its sources are configurable", async (t) => {
+  await withApp(t, async ({ store, workspaces, users, request }) => {
+    await connect(workspaces, users[0], 1);
+    await connect(workspaces, users[0], 1, otherTeam, [
+      { id: 111, name: "other-team/app", private: true },
+    ]);
+    const by = (id: string, repositoryId: number, login = "Builder-1") => ({
+      ...event(id, repositoryId),
+      actor: { login },
+    });
+    await store.merge(
+      "installation-70",
+      [by("mine-70", 101), by("theirs-70", 101, "someone")],
+      { restricted: true },
+    );
+    await store.merge("installation-71", [by("mine-71", 111)], {
+      restricted: true,
+    });
+    const listed = (await (await request("/api/workspaces")).json())
+      .workspaces as Array<{ id: string; kind: string; sources?: unknown }>;
+    const journal = listed.find((item) => item.kind === "personal")!;
+    assert.deepEqual(journal.sources, {
+      installationIds: null,
+      mineOnly: true,
+    });
+    const ids = async () =>
+      (
+        (await (
+          await request(`/api/workspaces/${journal.id}/feed`)
+        ).json()) as FeedResponse
+      ).events
+        .map((item) => item.id)
+        .sort();
+    // Every connected installation, and only the owner's own activity.
+    assert.deepEqual(await ids(), ["mine-70", "mine-71"]);
+    const save = (body: unknown, user = users[0]) =>
+      request(`/api/workspaces/${journal.id}/sources`, user, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      });
+    assert.equal(
+      (await save({ installationIds: [70], mineOnly: false })).status,
+      200,
+    );
+    assert.deepEqual(await ids(), ["mine-70", "theirs-70"]);
+    assert.equal(
+      (await save({ installationIds: [999], mineOnly: true })).status,
+      400,
+    );
+    assert.equal((await save({ installationIds: null })).status, 400);
+    assert.equal(
+      (await save({ installationIds: null, mineOnly: true }, users[1])).status,
+      404,
+    );
+    // Live updates arrive from each source.
+    assert.equal(
+      (await save({ installationIds: null, mineOnly: true })).status,
+      200,
+    );
+    const live = await stream(
+      await request(`/api/workspaces/${journal.id}/events`),
+    );
+    try {
+      await live.frame("connected");
+      await store.merge("installation-71", [by("live-71", 111)], {
+        restricted: true,
+        deliveryId: randomUUID(),
+      });
+      assert.match(await live.frame("activity"), /live-71/);
+    } finally {
+      await live.close();
+    }
+  });
+});
+
+test("choosing installations connects the ticked ones in one GitHub read and leaves the rest", async (t) => {
+  await withApp(t, async ({ workspaces, users, provider, request }) => {
+    await workspaces.saveGrant(
+      users[0].id,
+      { id: 1, login: "builder-a" },
+      { accessToken: "token-a", expiresAt: Date.now() + 3600000 },
+    );
+    provider.accessible.set("token-a", [team, otherTeam]);
+    provider.github.backfill = async (_installation, repositories) => ({
+      synced: 0,
+      scanned: repositories.length,
+      resumed: 0,
+      failed: 0,
+      skipped: 0,
+    });
+    const save = (body: unknown) =>
+      request("/api/github/installations", users[0], {
+        method: "PUT",
+        body: JSON.stringify(body),
+      });
+    const listings = () =>
+      provider.calls.filter((call) => call.startsWith("/user/installations:"))
+        .length;
+    const teams = async () =>
+      (
+        (await (await request("/api/workspaces")).json()).workspaces as Array<{
+          kind: string;
+          installationId?: number;
+        }>
+      )
+        .filter((item) => item.kind === "team")
+        .map((item) => item.installationId)
+        .sort();
+    const before = listings();
+    const saved = await save({ connect: [70, 71], disconnect: [] });
+    assert.equal(saved.status, 200);
+    assert.deepEqual((await saved.json()).installationIds, [70, 71]);
+    assert.equal(listings() - before, 1);
+    assert.deepEqual(await teams(), [70, 71]);
+    const left = await save({ connect: [], disconnect: [71] });
+    assert.equal(left.status, 200);
+    assert.deepEqual((await left.json()).installationIds, [70]);
+    assert.deepEqual(await teams(), [70]);
+    assert.equal((await save({ connect: [70], disconnect: [70] })).status, 400);
+    assert.equal((await save({ connect: [999], disconnect: [] })).status, 403);
+  });
+});
+
+test("a journal is a full workspace: combined wall signals, its own Service Health, and webhook events from its sources", async (t) => {
+  await withApp(t, async ({ store, workspaces, users, request }) => {
+    await connect(workspaces, users[0], 1);
+    await connect(workspaces, users[0], 1, otherTeam, [
+      { id: 111, name: "other-team/app", private: true },
+    ]);
+    const listed = (await (await request("/api/workspaces")).json())
+      .workspaces as Array<{ id: string; kind: string }>;
+    const journal = listed.find((item) => item.kind === "personal")!;
+    const base = `/api/workspaces/${journal.id}`;
+
+    // Wall signals from both sources, with only the owner's pull requests.
+    const wall = new WallStore(store.pool);
+    const pull = (number: number, author: string) => ({
+      kind: "pull_request" as const,
+      observedAt: "2026-09-10T12:00:00Z",
+      value: {
+        number,
+        title: `PR ${number}`,
+        url: `https://github.com/x/y/pull/${number}`,
+        author,
+        headSha: String(number).repeat(40),
+        state: "open" as const,
+        draft: false,
+        createdAt: "2026-09-10T11:00:00Z",
+        updatedAt: "2026-09-10T12:00:00Z",
+      },
+    });
+    const review = (id: number, pullRequestNumber: number) => ({
+      kind: "review" as const,
+      observedAt: "2026-09-10T12:00:00Z",
+      value: {
+        id,
+        pullRequestNumber,
+        reviewer: "someone",
+        decision: "approved" as const,
+        submittedAt: "2026-09-10T12:00:00Z",
+      },
+    });
+    const check = (id: string, headSha: string) => ({
+      kind: "pipeline" as const,
+      observedAt: "2026-09-10T12:00:00Z",
+      value: {
+        id,
+        name: "CI",
+        provider: "github-actions",
+        headSha,
+        status: "passing" as const,
+        updatedAt: "2026-09-10T12:00:00Z",
+      },
+    });
+    await wall.apply(70, 101, "team/alpha", randomUUID(), [
+      pull(1, "Builder-1"),
+      pull(2, "someone"),
+      review(11, 1),
+      review(12, 2),
+      check("check:mine", "1".repeat(40)),
+      check("check:theirs", "2".repeat(40)),
+      check("check:main", "f".repeat(40)),
+    ]);
+    await wall.apply(71, 111, "other-team/app", randomUUID(), [
+      pull(3, "builder-1"),
+    ]);
+    const signals = await (await request(`${base}/wall`)).json();
+    assert.deepEqual(
+      signals.repositories
+        .map(
+          (repository: {
+            repository: string;
+            pullRequests: { number: number }[];
+          }) => [
+            repository.repository,
+            repository.pullRequests.map((item) => item.number),
+          ],
+        )
+        .sort(),
+      [
+        ["other-team/app", [3]],
+        ["team/alpha", [1]],
+      ],
+    );
+    // Reviews on the owner's pull requests stay; checks on others' do not.
+    const alpha = signals.repositories.find(
+      (repository: { repository: string }) =>
+        repository.repository === "team/alpha",
+    );
+    assert.deepEqual(
+      alpha.reviews.map((item: { id: number }) => item.id),
+      [11],
+    );
+    assert.deepEqual(
+      alpha.pipelines.map((item: { id: string }) => item.id).sort(),
+      ["check:main", "check:mine"],
+    );
+
+    // Service Health belongs to the journal and only its owner.
+    const service = await request(`${base}/health/services`, users[0], {
+      method: "POST",
+      body: JSON.stringify({ name: "Side project" }),
+    });
+    assert.equal(service.status, 201);
+    const health = await (await request(`${base}/health`)).json();
+    assert.deepEqual(
+      health.services.map((item: { name: string }) => item.name),
+      ["Side project"],
+    );
+    assert.equal((await request(`${base}/health`, users[1])).status, 404);
+
+    // Its webhooks receive its sources' activity, only the owner's by default.
+    const hook = await request(`${base}/webhooks`, users[0], {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Mine",
+        preset: "slack",
+        url: "https://hooks.slack.com/services/T/B/x",
+        template: WEBHOOK_PRESETS.slack.template,
+        events: ["activity.merge"],
+      }),
+    });
+    assert.equal(hook.status, 201);
+    for (const [id, login] of [
+      ["mine", "builder-1"],
+      ["theirs", "someone"],
+    ])
+      await recordInstallationEvent(
+        store.pool,
+        71,
+        activityOutboxEvent({ ...event(id, 111), actor: { login } })!,
+      );
+    const stored = await store.pool.query<{ dedupe_key: string }>(
+      "SELECT dedupe_key FROM ship_live_webhook_events WHERE workspace_id=$1 ORDER BY dedupe_key",
+      [journal.id],
+    );
+    assert.deepEqual(
+      stored.rows.map((row) => row.dedupe_key),
+      ["activity:mine"],
+    );
+  });
+});
+
+test("members rename a team workspace and a journal's owner renames the journal, while GitHub's names stay", async (t) => {
+  await withApp(t, async ({ workspaces, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    await connect(workspaces, users[1], 2);
+    const rename = (id: string, name: string, user = users[0]) =>
+      request(`/api/workspaces/${id}/name`, user, {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      });
+    const listed = async (user = users[0]) =>
+      (await (await request("/api/workspaces", user)).json())
+        .workspaces as Array<{
+        id: string;
+        kind: string;
+        name: string;
+        defaultName?: string;
+        githubAccount?: string;
+      }>;
+    const renamed = await rename(workspace.id, "  Platform   crew ");
+    assert.equal(renamed.status, 200);
+    const { name, defaultName, githubAccount } = (await renamed.json())
+      .workspace;
+    assert.deepEqual(
+      { name, defaultName, githubAccount },
+      { name: "Platform crew", defaultName: "team", githubAccount: "team" },
+    );
+    // Every member sees it, in the list and the feed.
+    assert.equal(
+      (await listed(users[1])).find((item) => item.id === workspace.id)?.name,
+      "Platform crew",
+    );
+    assert.equal(
+      (
+        await (
+          await request(`/api/workspaces/${workspace.id}/feed`, users[1])
+        ).json()
+      ).organization,
+      "Platform crew",
+    );
+    // Reconnecting the installation keeps the name.
+    await connect(workspaces, users[0], 1);
+    const kept = (await listed()).find((item) => item.id === workspace.id);
+    assert.equal(kept?.name, "Platform crew");
+    assert.equal(kept?.githubAccount, "team");
+    // A journal is renamed only by its owner.
+    const journal = (await listed()).find((item) => item.kind === "personal")!;
+    assert.equal((await rename(journal.id, "Ship log")).status, 200);
+    assert.equal((await rename(journal.id, "Mine", users[1])).status, 404);
+    assert.equal((await rename(journal.id, "x".repeat(81))).status, 400);
+    assert.equal(
+      (await listed()).find((item) => item.id === journal.id)?.name,
+      "Ship log",
+    );
+    // An empty name restores the default.
+    const reset = (await (await rename(workspace.id, "")).json()).workspace;
+    assert.equal(reset.name, "team");
+    assert.equal(reset.defaultName, undefined);
   });
 });

@@ -32,6 +32,7 @@ test("SQL aggregates full authorized history and stable keyset pages", async (t)
     events.push(
       { ...events[0], id: "bot", actor: { login: "renovate" } },
       { ...events[0], id: "note", type: "note" },
+      { ...events[0], id: "alert", type: "alert" },
       { ...events[0], id: "private", repositoryId: 102, repo: "team/b" },
       { ...events[0], id: "future", occurredAt: "2026-09-15T13:00:00Z" },
       { ...events[0], id: "before", occurredAt: "2026-09-08T23:59:59.999Z" },

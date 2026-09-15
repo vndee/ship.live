@@ -110,6 +110,7 @@ export function aggregatePulse(
     const time = Date.parse(event.occurredAt);
     if (
       event.type === "note" ||
+      event.type === "alert" ||
       !login ||
       /\[bot\]$|-bot$/.test(login) ||
       ["dependabot", "renovate", "github-actions"].includes(login) ||

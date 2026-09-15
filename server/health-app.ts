@@ -25,24 +25,15 @@ export function healthRouter({
   const health = new HealthStore(store.pool);
   const base = "/api/workspaces/:id/health";
   let streams = 0;
+  // Team members, and a journal's owner, manage its services.
   async function access(principal: Principal, id: string) {
-    const current = await viewer(principal, id);
-    if (current.workspace.kind !== "team")
-      throw new AuthError(
-        403,
-        "Service health is available in team workspaces.",
-      );
+    await viewer(principal, id);
   }
   router.get(base, async (req, res) => {
     const principal = await auth.authenticate(req, res);
     // Check local membership before reading, then fresh upstream access before
     // releasing private configuration. The database read can overlap revocation.
-    const workspace = await workspaces.get(principal.user.id, req.params.id);
-    if (workspace.kind !== "team")
-      throw new AuthError(
-        403,
-        "Service health is available in team workspaces.",
-      );
+    await workspaces.get(principal.user.id, req.params.id);
     const snapshot = await health.snapshot(req.params.id);
     await access(principal, req.params.id);
     res.json(snapshot);

@@ -31,6 +31,8 @@ export function HealthSharePanel({
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [duration, setDuration] = useState(86400);
+  // Rotating an active link keeps its expiry unless another lifetime is chosen.
+  const [keep, setKeep] = useState(true);
   const [now, setNow] = useState(Date.now());
   const [copied, setCopied] = useState(false);
   async function request<T>(
@@ -90,6 +92,7 @@ export function HealthSharePanel({
   const noExpiration = Boolean(
     share && !expired && isEffectivelyNoExpiration(share.expiresAt, now),
   );
+  const keeping = Boolean(share && !expired && keep);
   // A link just created, or the active link the server can show again.
   const token = link && share?.id === link.id ? link.token : share?.token;
   const url =
@@ -115,7 +118,7 @@ export function HealthSharePanel({
           controller,
           action === "rotate" ? "/rotate" : "",
           "POST",
-          { expiresIn: duration },
+          keeping ? { keepExpiry: true } : { expiresIn: duration },
         );
         if (controller.signal.aborted) return;
         setShare(created);
@@ -230,11 +233,29 @@ export function HealthSharePanel({
               once to get a link you can copy.
             </p>
           ) : null}
+          {share && !expired && (
+            <label className="share-keep">
+              <input
+                type="checkbox"
+                checked={keep}
+                disabled={busy}
+                onChange={(event) => setKeep(event.target.checked)}
+              />
+              <span>
+                Keep the current expiry
+                <small>
+                  {noExpiration
+                    ? "No expiration"
+                    : new Date(share.expiresAt).toLocaleString()}
+                </small>
+              </span>
+            </label>
+          )}
           <ExpirationPicker
             label={share && !expired ? "New link lifetime" : "Link lifetime"}
             ariaLabel="Health link expiration"
             value={duration}
-            disabled={busy}
+            disabled={busy || keeping}
             onChange={setDuration}
           />
           <div className="share-actions">

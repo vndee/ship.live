@@ -336,3 +336,21 @@ test("repository activity counts this week's merges and reviews, most active fir
     ],
   );
 });
+
+test("what changed counts work, not inbound alerts", () => {
+  const summary = getWhatChanged(
+    [
+      {
+        id: "alert",
+        type: "alert",
+        actor: { login: "Grafana" },
+        repo: "inbound.grafana",
+        title: "API latency is alerting",
+        occurredAt: new Date(now - 60_000).toISOString(),
+      },
+    ],
+    now,
+  );
+  assert.equal(summary.hour.total, 0);
+  assert.equal(summary.day.contributors, 0);
+});

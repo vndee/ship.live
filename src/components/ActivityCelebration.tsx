@@ -7,6 +7,7 @@ import {
   MessageSquare,
   NotebookPen,
   Rocket,
+  Siren,
   Trophy,
 } from "lucide-react";
 import { EVENT_META } from "../lib/activity";
@@ -20,6 +21,7 @@ const icons = {
   pr: GitPullRequest,
   push: GitCommitHorizontal,
   note: NotebookPen,
+  alert: Siren,
 };
 
 function Confetti({ intensity }: { intensity: "ship" | "milestone" }) {

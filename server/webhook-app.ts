@@ -11,6 +11,7 @@ import type { Workspace } from "../shared/workspaces.js";
 import { AuthError, type AuthService, type Principal } from "./auth.js";
 import type { Repo } from "./github-app.js";
 import { publicHttpUrl, sendOutbound } from "./outbound.js";
+import { ACTIVITY_CHANNEL } from "./postgres-notifications.js";
 import { verifyWebhookSignature } from "./security.js";
 import { recordWorkspaceEvent } from "./webhook-outbox.js";
 import type { WebhookStore } from "./webhook-store.js";
@@ -21,7 +22,7 @@ type Viewer = (
   id: string,
 ) => Promise<{ workspace: Workspace; repositories: Repo[] }>;
 
-/** Team members manage a workspace's outbound and inbound webhooks. */
+/** Team members, and a journal's owner, manage its outbound and inbound webhooks. */
 export function webhookRouter({
   auth,
   webhooks,
@@ -36,18 +37,14 @@ export function webhookRouter({
   const router = Router();
   const base = "/api/workspaces/:id/webhooks";
   const inbound = "/api/workspaces/:id/inbound";
-  async function team(principal: Principal, id: string) {
-    const current = await viewer(principal, id);
-    if (current.workspace.kind !== "team")
-      throw new AuthError(403, "Webhooks are available in team workspaces.");
-    return current;
-  }
+  // The viewer check admits team members and only a journal's owner.
+  const member = (principal: Principal, id: string) => viewer(principal, id);
   const endpoint = (path?: string) =>
     path ? new URL(path, auth.config.appUrl).href : undefined;
 
   router.get(base, async (request, response) => {
     const principal = await auth.authenticate(request, response);
-    await team(principal, request.params.id);
+    await member(principal, request.params.id);
     const settings = await webhooks.settings(request.params.id);
     await auth.assertActive(principal);
     const body: WebhookSettings = {
@@ -59,7 +56,7 @@ export function webhookRouter({
   // Saving pins the saver's current repositories to the webhook.
   router.post(base, async (request, response) => {
     const principal = await auth.requireMutation(request, response);
-    const current = await team(principal, request.params.id);
+    const current = await member(principal, request.params.id);
     const saved = await webhooks.create(
       request.params.id,
       principal.user.id,
@@ -71,7 +68,7 @@ export function webhookRouter({
   });
   router.put(`${base}/:webhookId`, async (request, response) => {
     const principal = await auth.requireMutation(request, response);
-    const current = await team(principal, request.params.id);
+    const current = await member(principal, request.params.id);
     const saved = await webhooks.update(
       request.params.id,
       request.params.webhookId,
@@ -84,13 +81,13 @@ export function webhookRouter({
   });
   router.delete(`${base}/:webhookId`, async (request, response) => {
     const principal = await auth.requireMutation(request, response);
-    await team(principal, request.params.id);
+    await member(principal, request.params.id);
     await webhooks.remove(request.params.id, request.params.webhookId);
     response.sendStatus(204);
   });
   router.get(`${base}/:webhookId/deliveries`, async (request, response) => {
     const principal = await auth.authenticate(request, response);
-    await team(principal, request.params.id);
+    await member(principal, request.params.id);
     const deliveries = await webhooks.deliveries(
       request.params.id,
       request.params.webhookId,
@@ -102,7 +99,7 @@ export function webhookRouter({
     `${base}/:webhookId/deliveries/:deliveryId/redeliver`,
     async (request, response) => {
       const principal = await auth.requireMutation(request, response);
-      await team(principal, request.params.id);
+      await member(principal, request.params.id);
       await webhooks.redeliver(
         request.params.id,
         request.params.webhookId,
@@ -114,7 +111,7 @@ export function webhookRouter({
   /** Sends a sample event with the saved settings, ignoring filters and cooldown. */
   router.post(`${base}/:webhookId/test`, async (request, response) => {
     const principal = await auth.requireMutation(request, response);
-    const current = await team(principal, request.params.id);
+    const current = await member(principal, request.params.id);
     const target = await webhooks.targetById(
       request.params.id,
       request.params.webhookId,
@@ -165,7 +162,7 @@ export function webhookRouter({
 
   router.post(inbound, async (request, response) => {
     const principal = await auth.requireMutation(request, response);
-    await team(principal, request.params.id);
+    await member(principal, request.params.id);
     const saved = await webhooks.createInbound(
       request.params.id,
       principal.user.id,
@@ -176,7 +173,7 @@ export function webhookRouter({
   });
   router.put(`${inbound}/:hookId`, async (request, response) => {
     const principal = await auth.requireMutation(request, response);
-    await team(principal, request.params.id);
+    await member(principal, request.params.id);
     const saved = await webhooks.updateInbound(
       request.params.id,
       request.params.hookId,
@@ -187,7 +184,7 @@ export function webhookRouter({
   });
   router.post(`${inbound}/:hookId/rotate`, async (request, response) => {
     const principal = await auth.requireMutation(request, response);
-    await team(principal, request.params.id);
+    await member(principal, request.params.id);
     const saved = await webhooks.rotateInbound(
       request.params.id,
       request.params.hookId,
@@ -197,7 +194,7 @@ export function webhookRouter({
   });
   router.delete(`${inbound}/:hookId`, async (request, response) => {
     const principal = await auth.requireMutation(request, response);
-    await team(principal, request.params.id);
+    await member(principal, request.params.id);
     await webhooks.removeInbound(request.params.id, request.params.hookId);
     response.sendStatus(204);
   });
@@ -284,6 +281,14 @@ export function inboundReceiver({
         },
       });
       await webhooks.receipt(hook.id, true, title, null);
+      // Open Live activity views refetch and show the alert.
+      await pool.query("SELECT pg_notify($1,$2)", [
+        ACTIVITY_CHANNEL,
+        JSON.stringify({
+          organization: `workspace-${hook.workspaceId}`,
+          eventId: "refresh",
+        }),
+      ]);
       response.status(202).json({ accepted: true });
     },
   );

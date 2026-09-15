@@ -64,6 +64,7 @@ test("range filtering precedes duplicate suppression and preserves contribution 
       event,
       event,
       { ...event, id: "note", type: "note" },
+      { ...event, id: "alert", type: "alert" },
       { ...event, id: "future", occurredAt: "2026-09-15T13:00:00Z" },
       { ...event, id: "end", occurredAt: range.end },
     ],

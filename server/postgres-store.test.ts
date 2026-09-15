@@ -5,6 +5,11 @@ import test, { type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { Pool } from "pg";
 import type { ActivityEvent } from "../shared/types.js";
+import {
+  MAX_SUPPORTED_SCHEMA_VERSION,
+  SCHEMA_VERSION,
+  assertSupportedSchema,
+} from "./migrations.js";
 import { PostgresEventStore } from "./postgres-store.js";
 import { createTestDatabase } from "./test-database.js";
 
@@ -53,6 +58,19 @@ async function eventually(check: () => Promise<boolean>, message: string) {
   assert.fail(message);
 }
 
+test("the immediately next additive schema remains rollback-compatible", () => {
+  assert.equal(SCHEMA_VERSION, 21);
+  assert.equal(MAX_SUPPORTED_SCHEMA_VERSION, 22);
+  assert.doesNotThrow(() => assertSupportedSchema([1, 21, 22]));
+});
+
+test("schemas beyond the declared rollback window are rejected", () => {
+  assert.throws(
+    () => assertSupportedSchema([1, 23]),
+    /newer ship\.live schema/,
+  );
+});
+
 test("PostgreSQL migrations serialize concurrent startup and preserve connection URL options", async (t) => {
   await withDatabase(t, async ({ url, database, open }) => {
     await database.query("CREATE SCHEMA isolated_store");
@@ -85,6 +103,9 @@ test("PostgreSQL migrations serialize concurrent startup and preserve connection
       { version: 16 },
       { version: 17 },
       { version: 18 },
+      { version: 19 },
+      { version: 20 },
+      { version: 21 },
     ]);
     await stores[0].merge("team", [event]);
     assert.deepEqual(await stores[1].list("team"), [event]);

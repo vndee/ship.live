@@ -63,8 +63,13 @@ function workspaceShareRouter(
       `${base}${rotate ? "/rotate" : ""}`,
       async (request, response) => {
         const principal = await auth.requireMutation(request, response);
+        // A rotation may keep the current link's expiry instead of a new lifetime.
+        const keepExpiry = rotate && request.body?.keepExpiry === true;
         const expiresIn: unknown = request.body?.expiresIn;
-        if (!SHARE_DURATIONS.some((duration) => duration.seconds === expiresIn))
+        if (
+          !keepExpiry &&
+          !SHARE_DURATIONS.some((duration) => duration.seconds === expiresIn)
+        )
           throw new AuthError(400, "Choose a valid link expiration.");
         const workspace = await workspaces.get(
           principal.user.id,
@@ -82,12 +87,25 @@ function workspaceShareRouter(
             403,
             "Connect accessible team repositories before sharing.",
           );
+        let lifetime = expiresIn as number;
+        if (keepExpiry) {
+          const active = await shares.current(principal.user.id, workspace.id);
+          const remaining = active
+            ? Math.round((Date.parse(active.expiresAt) - Date.now()) / 1000)
+            : 0;
+          if (remaining <= 0)
+            throw new AuthError(
+              409,
+              "Your link has expired. Choose a lifetime for the new one.",
+            );
+          lifetime = remaining;
+        }
         const link = await shares.create(
           principal.user.id,
           current.workspace,
           connection.generation,
           current.repositories.map((repo) => repo.id),
-          expiresIn as number,
+          lifetime,
           rotate,
         );
         await auth.assertActive(principal);
@@ -197,11 +215,15 @@ function workspaceShareRouter(
       response.json(result);
       return;
     }
-    const events = await workspaces.feed(
-      initial.share.creator_user_id,
-      workspace,
-      initial.repositories.map((repo) => repo.id),
-    );
+    // A link reads only its pinned installation.
+    const events = (
+      await workspaces.feed(initial.share.creator_user_id, workspace, [
+        {
+          installationId: Number(initial.share.installation_id),
+          repositoryIds: initial.repositories.map((repo) => repo.id),
+        },
+      ])
+    ).map(({ event }) => event);
     const wallSnapshot = await wall.snapshot(
       Number(initial.share.installation_id),
       initial.repositories.map((repo) => repo.id),

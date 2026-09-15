@@ -8,6 +8,7 @@ import type {
 } from "../../shared/shares";
 import type {
   InstallationChoice,
+  PersonalSources,
   ShipNoteInput,
   SyncRun,
   Workspace,
@@ -403,6 +404,22 @@ export function useFeed() {
     const current = generation.current;
     let retry: ReturnType<typeof setTimeout> | undefined;
     let pendingRefresh: ReturnType<typeof setTimeout> | undefined;
+    // A rename or a membership change by someone else reaches this stream as a
+    // refresh frame. Reread the workspaces it names at most every 10 seconds,
+    // holding the last frame of a busy window rather than dropping it.
+    let metadataAt = 0;
+    let pendingMetadata: ReturnType<typeof setTimeout> | undefined;
+    const scheduleMetadata = () => {
+      if (pendingMetadata) return;
+      pendingMetadata = setTimeout(
+        () => {
+          pendingMetadata = undefined;
+          metadataAt = Date.now();
+          void refreshWorkspaces();
+        },
+        Math.max(0, 10_000 - (Date.now() - metadataAt)),
+      );
+    };
     const scheduleRefresh = () => {
       clearTimeout(pendingRefresh);
       pendingRefresh = setTimeout(() => void refresh(), 100);
@@ -451,6 +468,7 @@ export function useFeed() {
               return;
             }
             if (name === "activity" || name === "refresh") scheduleRefresh();
+            if (name === "refresh") scheduleMetadata();
             if (name === "wall")
               window.dispatchEvent(new Event("ship-live-wall"));
           }
@@ -470,6 +488,7 @@ export function useFeed() {
       controller.abort();
       clearTimeout(retry);
       clearTimeout(pendingRefresh);
+      clearTimeout(pendingMetadata);
     };
   }, [
     demo,
@@ -481,6 +500,7 @@ export function useFeed() {
     clearPrivate,
     loadSession,
     refresh,
+    refreshWorkspaces,
   ]);
 
   const mutate = useCallback(
@@ -672,7 +692,8 @@ export function useFeed() {
   const syncRunning = syncRun?.status === "running";
   useEffect(() => {
     setSyncRun(null);
-    if (demo || !workspace?.installationId) return;
+    // A journal can sync its sources without an installation of its own.
+    if (demo || !workspace) return;
     const id = workspace.id;
     let cancelled = false;
     void request<{ run: SyncRun | null }>(
@@ -752,6 +773,49 @@ export function useFeed() {
     });
     await refreshWorkspaces();
   }
+  /** Gives a workspace its own name; an empty name restores the default. */
+  async function renameWorkspace(id: string, name: string) {
+    const { workspace: saved } = await mutate<{ workspace: Workspace }>(
+      `/api/workspaces/${encodeURIComponent(id)}/name`,
+      { name },
+      "PATCH",
+    );
+    // Show the saved name even if the workspace list read that follows fails.
+    const replace = (item: Workspace) => (item.id === saved.id ? saved : item);
+    setWorkspaceList((current) => ({
+      ...current,
+      workspaces: current.workspaces.map(replace),
+    }));
+    authorizedWorkspaces.current = authorizedWorkspaces.current.map(replace);
+    if (currentWorkspace.current?.id === saved.id) {
+      currentWorkspace.current = saved;
+      setWorkspace(saved);
+    }
+    await refreshWorkspaces();
+  }
+  /** Connects the ticked installations and leaves the unticked ones. */
+  async function saveConnections(connect: number[], disconnect: number[]) {
+    await mutate(
+      "/api/github/installations",
+      { connect, disconnect },
+      "PUT",
+      180_000,
+    );
+    await refreshWorkspaces();
+  }
+  /** Chooses which connected installations feed the personal dashboard. */
+  async function updateSources(sources: PersonalSources) {
+    const active = currentWorkspace.current;
+    if (!active || active.kind !== "personal")
+      throw new Error("Choose your personal dashboard first.");
+    await mutate(
+      `/api/workspaces/${encodeURIComponent(active.id)}/sources`,
+      sources,
+      "PATCH",
+    );
+    await refreshWorkspaces();
+    await refresh();
+  }
   const retry = () => {
     if (operationPending.current) return;
     dispatchOperation({ type: "reset", sequence: ++operationSequence.current });
@@ -824,6 +888,9 @@ export function useFeed() {
     installations,
     refreshInstallations,
     connectInstallation,
+    saveConnections,
+    updateSources,
+    renameWorkspace,
     disconnectGithub,
     sync,
     syncRun,
@@ -833,10 +900,11 @@ export function useFeed() {
       request<{ share: DashboardShare | null }>(
         `/api/workspaces/${encodeURIComponent(workspace!.id)}/share`,
       ),
-    createShare: (expiresIn: number, rotate: boolean) =>
+    /** Rotating can keep the current link's expiry instead of a new lifetime. */
+    createShare: (expiresIn: number, rotate: boolean, keepExpiry = false) =>
       mutate<CreatedDashboardShare>(
         `/api/workspaces/${encodeURIComponent(workspace!.id)}/share${rotate ? "/rotate" : ""}`,
-        { expiresIn },
+        rotate && keepExpiry ? { keepExpiry: true } : { expiresIn },
       ),
     revokeShare: () =>
       mutate<void>(

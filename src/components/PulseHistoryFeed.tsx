@@ -46,6 +46,7 @@ function HistoryPage({
     .filter(
       (event) =>
         event.type !== "note" &&
+        event.type !== "alert" &&
         isHumanActor(event.actor.login) &&
         (!repo || event.repo === repo) &&
         Date.parse(event.occurredAt) <= cutoff,

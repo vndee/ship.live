@@ -163,6 +163,7 @@ export function EngineeringWall({
   onOpenHealth,
   onSelectPerson,
   onOpenTeam,
+  personal = false,
   onSelectRepository,
   repositoryNote,
   displayName = (login) => login,
@@ -188,6 +189,8 @@ export function EngineeringWall({
   onSelectPerson?: (login: string) => void;
   /** Opens the full contributor table from the leaderboard. */
   onOpenTeam?: () => void;
+  /** A journal's own dashboard, rather than a team's. */
+  personal?: boolean;
   /** Opens a repository's activity from Overview. */
   onSelectRepository?: (repository: string) => void;
   /** Explains where repository activity comes from. */
@@ -654,7 +657,11 @@ export function EngineeringWall({
           <>
             <SceneHeader
               title="Service health"
-              description="Availability from the probes configured by the team."
+              description={
+                personal
+                  ? "Availability from the probes you configured."
+                  : "Availability from the probes configured by the team."
+              }
             >
               {tally(
                 health.services.map((service) => service.status),
@@ -740,6 +747,7 @@ export function EngineeringWall({
             onRules={onRules}
             onSelect={onSelectPerson}
             onAllContributors={onOpenTeam}
+            personal={personal}
             status={status}
           />
         )}

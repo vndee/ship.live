@@ -157,3 +157,27 @@
     justify-self: end;
   }
 }
+
+/* Rotating an active link can keep its expiry instead of a new lifetime. */
+.share-keep {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.share-keep input {
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+}
+.share-keep span {
+  display: grid;
+  gap: 2px;
+}
+.share-keep small {
+  color: var(--muted);
+  font-size: 12px;
+}

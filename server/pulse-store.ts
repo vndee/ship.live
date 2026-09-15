@@ -22,7 +22,7 @@ const whitespace = [
   .join(" || ");
 const actor = `lower(btrim(event #>> '{actor,login}', ${whitespace}))`;
 const eligible = `organization = $1 AND event->>'repositoryId' = ANY($2::text[])
- AND event->>'type' <> 'note' AND ${actor} <> ''
+ AND event->>'type' NOT IN ('note','alert') AND ${actor} <> ''
  AND ${actor} !~ '(\\[bot\\]|-bot)$' AND ${actor} NOT IN ('dependabot','renovate','github-actions')`;
 const counts = `count(*)::int AS count, count(*) FILTER (WHERE event->>'type'='merge')::int AS merges, count(*) FILTER (WHERE event->>'type'='review')::int AS reviews, count(*) FILTER (WHERE event->>'type'='release')::int AS releases`;
 export function pulseQuery(query: Record<string, unknown>, now = Date.now()) {

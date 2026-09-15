@@ -1,6 +1,6 @@
 # Webhooks
 
-Team workspaces send events to other services and receive events from them. Any team member can manage a workspace's webhooks on the **Webhooks** page.
+Team workspaces and personal journals send events to other services and receive events from them. Any team member, or a journal's owner, can manage a workspace's webhooks on the **Webhooks** page. A journal's webhooks receive events from its sources; with **Only my activity** on, activity events are only the owner's.
 
 - **Outbound webhooks** post activity, CI and deployment changes, Service Health incidents, inbound alerts, and a weekly digest to Slack, Discord, Microsoft Teams, Google Chat, Lark / Feishu, or any HTTPS endpoint. Every body is a template.
 - **Inbound webhooks** accept JSON from Grafana, Sentry, a CI system, or anything else that can POST, map it to a title, details, and link, and pass it on through outbound webhooks.
@@ -151,11 +151,13 @@ Requests must be JSON, up to 256 KiB. The mapping's text templates read the body
 | Link        | `{{payload.url}}`; kept only when it renders an `https` URL          |
 | Delivery ID | `{{payload.id}}`; requests with the same ID count once               |
 
-A request whose title renders empty is rejected with 422. Each accepted request becomes an `inbound.<slug>` event with the title as its summary, the details in `data.body`, and the payload in `data.payload` when it is under 16 KiB. The page lists each endpoint's recent requests, accepted or not.
+A request whose title renders empty is rejected with 422. Each accepted request becomes an `inbound.<slug>` event with the title as its summary, the details in `data.body`, and the payload in `data.payload` when it is under 16 KiB. Open an endpoint on the Webhooks page to see its mapping and its recent requests, **Accepted** or **Rejected**.
+
+Accepted requests also appear in the team's Live activity as alerts, as they arrive: named after the endpoint, with the title, details, and link. Filter them with the **Alert** activity type. Alerts earn no XP and never count toward the leaderboard, contributions, milestones, or celebrations, and shared links don't show them. Like other webhook events, they are kept for 30 days, whether or not an outbound webhook listens.
 
 ## Weekly digest
 
-After Monday 09:00 UTC, each team workspace with a webhook listening to `digest.weekly` gets one digest for the previous week. Its `data` has the week's totals (merges, reviews, releases, contributors, XP by the leaderboard's rules), the top five contributors, the busiest repositories, and each service's uptime and incident count. A webhook added after Monday's send time starts the following week.
+After Monday 09:00 UTC, each workspace with a webhook listening to `digest.weekly` gets one digest for the previous week. Its `data` has the week's totals (merges, reviews, releases, contributors, XP by the leaderboard's rules), the top five contributors, the busiest repositories, and each service's uptime and incident count. A webhook added after Monday's send time starts the following week.
 
 ## Limits
 

@@ -71,6 +71,7 @@ export function getViewCounts(events: ActivityEvent[]): {
     releases: events.filter((event) => event.type === "release").length,
     contributors: new Set(
       events
+        .filter((event) => event.type !== "alert")
         .map((event) => event.actor.login.trim().toLowerCase())
         .filter(Boolean),
     ).size,

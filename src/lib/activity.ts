@@ -60,6 +60,12 @@ export const EVENT_META: Record<
     points: 5,
     color: "sky",
   },
+  alert: {
+    label: "Alert",
+    verb: "raised an alert",
+    points: 0,
+    color: "rose",
+  },
 };
 
 export interface ActivityMetrics {
@@ -125,6 +131,8 @@ function eligibleEvents(
   return events.filter((event) => {
     const timestamp = Date.parse(event.occurredAt);
     if (
+      // Inbound alerts come from services: they are never anyone's work.
+      event.type === "alert" ||
       !isHumanActor(event.actor.login) ||
       !Number.isFinite(timestamp) ||
       timestamp < since ||

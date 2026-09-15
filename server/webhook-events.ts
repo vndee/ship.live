@@ -13,16 +13,21 @@ export interface OutboxEvent {
   summary: string;
   url?: string;
   data: Record<string, unknown>;
+  /** Who did it, for journals that keep only their owner's activity. */
+  actor?: string;
 }
 
 const plural = (count: number, word: string) =>
   `${count} ${word}${count === 1 ? "" : "s"}`;
 
-/** Activity as it is credited: notes stay private and never leave. */
+/**
+ * Activity as it is credited: notes stay private and never leave, and alerts
+ * are already inbound.<slug> events.
+ */
 export function activityOutboxEvent(
   event: ActivityEvent,
 ): OutboxEvent | undefined {
-  if (event.type === "note") return undefined;
+  if (event.type === "note" || event.type === "alert") return undefined;
   const who = event.actor.login;
   const number = event.number ? `#${event.number} ` : "";
   const summary = {
@@ -36,6 +41,7 @@ export function activityOutboxEvent(
   return {
     type: `activity.${event.type}`,
     dedupeKey: `activity:${event.id}`,
+    actor: event.actor.login,
     repositoryId: event.repositoryId,
     occurredAt: event.occurredAt,
     summary,
