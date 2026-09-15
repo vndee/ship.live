@@ -9,6 +9,9 @@ type Kind = ActivityEvent["type"];
 /** Everything a URL can say about the private app. */
 export interface Route {
   page: Page;
+  pulsePeriod?: "today" | "7d" | "30d" | "month" | "custom";
+  from?: string;
+  to?: string;
   /** Live feed filters; other pages drop them. */
   repo?: string;
   kind?: Kind;
@@ -82,6 +85,18 @@ export function parseRoute(pathname: string, search: string): Route {
     const period = oneOf(PERIODS, params.get("period"));
     if (period && period !== "24h") route.period = period;
   }
+  if (page === "pulse") {
+    const preset = oneOf(
+      ["today", "7d", "30d", "month", "custom"] as const,
+      params.get("period"),
+    );
+    if (preset && preset !== "7d") route.pulsePeriod = preset;
+  }
+  if ((page === "pulse" && route.pulsePeriod === "custom") || page === "feed") {
+    // Preserve invalid input for the range UI to explain; never silently widen it.
+    if (params.has("from")) route.from = params.get("from")!.slice(0, 32);
+    if (params.has("to")) route.to = params.get("to")!.slice(0, 32);
+  }
   const person = params.get("person");
   if (person && LOGIN.test(person)) route.person = person;
   const repository = params.get("repository");
@@ -98,6 +113,15 @@ export function routeHref(route: Route): string {
     if (route.query) params.set("q", route.query);
     if (route.period && route.period !== "24h")
       params.set("period", route.period);
+  }
+  if (route.page === "pulse" && route.pulsePeriod && route.pulsePeriod !== "7d")
+    params.set("period", route.pulsePeriod);
+  if (
+    (route.page === "pulse" && route.pulsePeriod === "custom") ||
+    route.page === "feed"
+  ) {
+    if (route.from !== undefined) params.set("from", route.from);
+    if (route.to !== undefined) params.set("to", route.to);
   }
   if (route.person) params.set("person", route.person);
   if (route.repository) params.set("repository", route.repository);

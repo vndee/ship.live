@@ -167,7 +167,9 @@ export function EngineeringWall({
   repositoryNote,
   displayName = (login) => login,
   preferencesKey,
+  overview,
 }: {
+  overview?: ReactNode;
   snapshot: EngineeringWallSnapshot;
   health?: HealthSnapshot;
   events: ActivityEvent[];
@@ -522,17 +524,21 @@ export function EngineeringWall({
                 </small>
               </div>
             </div>
-            <DashboardPulse
-              events={events}
-              now={now}
-              onMilestones={onMilestones}
-            />
-            <RepositoryList
-              events={events}
-              now={now}
-              note={repositoryNote}
-              onSelect={onSelectRepository}
-            />
+            {overview ?? (
+              <>
+                <DashboardPulse
+                  events={events}
+                  now={now}
+                  onMilestones={onMilestones}
+                />
+                <RepositoryList
+                  events={events}
+                  now={now}
+                  note={repositoryNote}
+                  onSelect={onSelectRepository}
+                />
+              </>
+            )}
           </>
         )}
         {scene === "review" && (

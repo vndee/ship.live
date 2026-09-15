@@ -1,3 +1,6 @@
+import { PulseOverview } from "./PulseOverview";
+import { PulseHistoryFeed } from "./PulseHistoryFeed";
+import { setPulseLocation, usePulseLocation } from "../hooks/usePulse";
 import { useEffect, useState } from "react";
 import {
   Clock3,
@@ -26,6 +29,7 @@ const noEvents: ActivityEvent[] = [];
 export function SharedDashboard() {
   const [token, setToken] = useState(() => window.location.hash.slice(1));
   const feed = useSharedFeed(token);
+  const pulseLocation = usePulseLocation();
   const [now, setNow] = useState(Date.now());
   const [moving, setMoving] = useState(
     () => !matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -144,22 +148,58 @@ export function SharedDashboard() {
           </div>
         ) : (
           <div className="dashboard-layout">
-            <EngineeringWall
-              key={token}
-              snapshot={feed.data.wall}
-              events={feed.data.events}
-              now={now}
-              demo={false}
-              moving={moving}
-              autoplayDefault={wall && moving}
-              preferencesKey="shared-dashboard"
-              loading={feed.loading}
-              onToggleMotion={() => setMoving((value) => !value)}
-              onRules={() => undefined}
-              onMilestones={() => undefined}
-              onSelectPerson={setProfileLogin}
-              status={feed.connected ? "Live" : "Reconnecting"}
-            />
+            {pulseLocation.history ? (
+              <PulseHistoryFeed
+                source={{
+                  shareToken: token,
+                  demo: false,
+                  events: feed.data.events,
+                  revision: feed.data.updatedAt,
+                  enabled: !feed.error,
+                }}
+                from={pulseLocation.selection.from}
+                to={pulseLocation.selection.to}
+                repo={pulseLocation.repo}
+                now={now}
+                onBack={() => setPulseLocation(pulseLocation.selection)}
+              />
+            ) : (
+              <EngineeringWall
+                overview={
+                  <PulseOverview
+                    source={{
+                      shareToken: token,
+                      demo: false,
+                      events: feed.data.events,
+                      revision: feed.data.updatedAt,
+                      enabled: !feed.error,
+                    }}
+                    now={now}
+                    onHistory={(from, to, repo) =>
+                      setPulseLocation(
+                        { period: "custom", from, to },
+                        true,
+                        repo,
+                      )
+                    }
+                  />
+                }
+                key={token}
+                snapshot={feed.data.wall}
+                events={feed.data.events}
+                now={now}
+                demo={false}
+                moving={moving}
+                autoplayDefault={wall && moving}
+                preferencesKey="shared-dashboard"
+                loading={feed.loading}
+                onToggleMotion={() => setMoving((value) => !value)}
+                onRules={() => undefined}
+                onMilestones={() => undefined}
+                onSelectPerson={setProfileLogin}
+                status={feed.connected ? "Live" : "Reconnecting"}
+              />
+            )}
             <aside className="dashboard-sidebar">
               <section className="activity-feed">
                 <div className="section-heading">
