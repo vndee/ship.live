@@ -30,6 +30,101 @@ class FixtureAuth extends AuthService {
   }
   override async assertActive() {}
 }
+test("oversized review context blocks only its PR and leaves neighbors actionable", async (t) => {
+  const url = await createTestDatabase(t);
+  if (!url) return;
+  const store = await PostgresEventStore.open(url);
+  try {
+    const { ReviewFollowthroughStore } =
+      await import("./review-followthrough-store.js");
+    const reviews = new ReviewFollowthroughStore(store.pool);
+    const wall = new WallStore(store.pool);
+    const at = "2026-09-10T00:00:00Z";
+    for (const number of [7, 8, 9])
+      await wall.apply(10, 101, "team/api", randomUUID(), [
+        {
+          kind: "pull_request",
+          observedAt: at,
+          value: {
+            number,
+            title: `PR ${number}`,
+            url: `https://github.com/team/api/pull/${number}`,
+            author: "alice",
+            headSha: `head-${number}`,
+            state: "open",
+            draft: false,
+            createdAt: at,
+            updatedAt: at,
+          },
+        },
+      ]);
+    await wall.apply(
+      10,
+      101,
+      "team/api",
+      randomUUID(),
+      Array.from({ length: 101 }, (_, id) => ({
+        kind: "review" as const,
+        observedAt: at,
+        value: {
+          id,
+          pullRequestNumber: 7,
+          reviewer: `reviewer-${id}`,
+          decision: "approved" as const,
+          submittedAt: at,
+        },
+      })),
+    );
+    await wall.apply(
+      10,
+      101,
+      "team/api",
+      randomUUID(),
+      Array.from({ length: 101 }, (_, id) => ({
+        kind: "pipeline" as const,
+        observedAt: at,
+        value: {
+          id: String(id),
+          name: `check-${id}`,
+          provider: "ci",
+          headSha: "head-8",
+          status: "passing" as const,
+          updatedAt: at,
+        },
+      })),
+    );
+    const scope = {
+      sources: [{ installationId: 10, repositories: [{ id: 101 }] }],
+    };
+    const targets = [7, 8, 9].map((number) => ({ repositoryId: 101, number }));
+    const items = await reviews.current(scope, targets);
+    assert.deepEqual(
+      items.map((item) => item.number),
+      [9],
+      "Only the oversized PRs must be omitted from the batch",
+    );
+    const own = await reviews.current(scope, [targets[2]]);
+    assert.equal(items[0].fingerprint, own[0].fingerprint);
+    assert.equal(items[0].actionable, true);
+    const user = randomUUID(),
+      workspace = randomUUID();
+    await store.pool.query(
+      "INSERT INTO ship_live_auth_users(id,name) VALUES($1,'Alice')",
+      [user],
+    );
+    await store.pool.query(
+      "INSERT INTO ship_live_workspaces(id,name,kind,installation_id) VALUES($1,'Team','team',10)",
+      [workspace],
+    );
+    await reviews.mutate(workspace, user, items[0], "claim", undefined, scope);
+    assert.equal(
+      (await reviews.states(workspace, user, items))[0].claim?.userId,
+      user,
+    );
+  } finally {
+    await store.close();
+  }
+});
 test("review API shares atomic claims only within current repo scope, keeps snoozes personal and invalidates obsolete state", async (t) => {
   const mod = await import("./review-followthrough.js").catch(() => null);
   assert.ok(

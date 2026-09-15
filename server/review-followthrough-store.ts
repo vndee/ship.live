@@ -64,7 +64,11 @@ export class ReviewFollowthroughStore {
             r.repository.reviews.length > 100 ||
             r.repository.pipelines.length > 100,
         )
-        .map((r) => r.repository.repositoryId),
+        .flatMap((r) =>
+          r.repository.pullRequests.map(
+            (pull) => `${r.repository.repositoryId}:${pull.number}`,
+          ),
+        ),
     );
     const merged = combineWallSnapshots(
       rows.rows.map((r) => ({
@@ -77,7 +81,8 @@ export class ReviewFollowthroughStore {
       const repo = merged.repositories.find(
         (r) => r.repositoryId === target.repositoryId,
       );
-      if (!repo || blocked.has(repo.repositoryId)) continue;
+      if (!repo || blocked.has(`${repo.repositoryId}:${target.number}`))
+        continue;
       const item = reviewFollowthrough(repo, target.number);
       if (!item) continue;
       const sources = rows.rows
