@@ -32,7 +32,10 @@ before(async () => {
     define: { "process.env.NODE_ENV": '"development"' },
   });
   bundle = built.outputFiles[0].text;
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({
+    headless: true,
+    executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH,
+  });
 });
 after(async () => browser?.close());
 
@@ -162,18 +165,58 @@ test("unknown paths and malformed parameters show Pulse", async (t) => {
   assert.equal(await page.locator("dialog.modal").count(), 0);
 });
 
-test("a repository's details open over Pulse and lead to its feed", async (t) => {
+test("a repository in Overview opens its feed with the same calendar range", async (t) => {
   const page = await open(t, "/");
+  const button = page
+    .getByRole("button", { name: /^View activity for / })
+    .first();
+  const repo = (await button.getAttribute("aria-label")).replace(
+    "View activity for ",
+    "",
+  );
+  await button.click();
+  const url = new URL(page.url());
+  assert.equal(url.pathname, "/feed");
+  assert.equal(url.searchParams.get("repo"), repo);
+  assert.match(url.searchParams.get("from"), /^\d{4}-\d{2}-\d{2}$/);
+  assert.match(url.searchParams.get("to"), /^\d{4}-\d{2}-\d{2}$/);
   await page
-    .getByRole("button", { name: /^Open details for / })
-    .first()
-    .click();
-  await page.waitForSelector("dialog.modal[open] .repository-profile");
-  assert.match(location(page), /^\/\?repository=[\w.%-]+$/);
+    .getByRole("heading", { name: "Activity in selected period" })
+    .waitFor();
+});
+
+test("Overview calendar presets persist, custom dates apply explicitly, and drill-down keeps dates", async (t) => {
+  const page = await open(t, "/");
+  await page.getByLabel("Overview period").selectOption("30d");
+  assert.equal(location(page), "/?period=30d");
   await page
-    .locator("dialog.modal")
-    .getByRole("button", { name: "View all activity" })
+    .getByRole("heading", { name: "Activity in this period", exact: true })
+    .waitFor();
+  await page.getByLabel("Overview period").selectOption("custom");
+  await page.getByLabel("From date").fill("2026-09-01");
+  await page.getByLabel("To date").fill("2026-09-10");
+  assert.equal(location(page), "/?period=30d");
+  await page.getByRole("button", { name: "Apply dates" }).click();
+  assert.equal(location(page), "/?period=custom&from=2026-09-01&to=2026-09-10");
+  await page
+    .getByRole("button", { name: "View activity in this period" })
     .click();
-  await page.waitForFunction(() => !document.querySelector("dialog.modal"));
-  assert.match(location(page), /^\/feed\?repo=.+&period=30d$/);
+  assert.equal(location(page), "/feed?from=2026-09-01&to=2026-09-10");
+  await page
+    .getByRole("heading", { name: "Activity in selected period" })
+    .waitFor();
+  await page.goBack();
+  assert.equal(await page.getByLabel("Overview period").inputValue(), "custom");
+  await page.goBack();
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[aria-label="Overview period"]')?.value === "30d",
+  );
+  assert.equal(await page.getByLabel("Overview period").inputValue(), "30d");
+});
+
+test("Overview explains invalid custom links without silently showing default totals", async (t) => {
+  const page = await open(t, "/?period=custom&from=2026-02-30&to=2026-03-01");
+  await page.locator("[data-pulse-error]").waitFor();
+  assert.equal(await page.locator("[data-pulse-total]").count(), 0);
 });

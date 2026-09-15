@@ -1,0 +1,214 @@
+.pulse-range-picker {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+}
+.pulse-range-picker label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.pulse-range-picker input,
+.pulse-range-picker select {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-height: 36px;
+  font: inherit;
+}
+.pulse-timezone {
+  color: var(--muted);
+  font-size: 11px;
+  padding-bottom: 10px;
+}
+.pulse-range-error {
+  flex-basis: 100%;
+  color: var(--danger);
+}
+.pulse-period-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  margin-top: 10px;
+}
+.pulse-period-heading h2,
+.pulse-weekly-goal h2 {
+  font-size: 14px;
+  font-weight: 500;
+}
+.pulse-period-heading p {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 6px;
+}
+.pulse-period-heading button {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.pulse-range-totals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 24px 0 18px;
+  gap: 15px;
+}
+.pulse-range-totals > div {
+  display: grid;
+  gap: 7px;
+}
+.pulse-range-totals strong {
+  font-size: 28px;
+  letter-spacing: -1px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.pulse-range-totals span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.pulse-range-chart {
+  display: flex;
+  gap: 4px;
+  height: 130px;
+  margin: 0 0 24px;
+}
+.pulse-range-bucket {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.pulse-range-column {
+  display: flex;
+  align-items: end;
+  height: 100px;
+  border-bottom: 1px solid var(--line-strong);
+}
+.pulse-range-column > span {
+  display: block;
+  width: 100%;
+  min-height: 2px;
+  background: var(--accent);
+  opacity: 0.7;
+  border-radius: 3px 3px 0 0;
+}
+.pulse-range-bucket:hover .pulse-range-column > span {
+  opacity: 1;
+}
+.pulse-bucket-label {
+  display: block;
+  font-size: 10px;
+  white-space: nowrap;
+  margin-top: 8px;
+}
+.pulse-coverage {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  margin-top: 14px;
+}
+.pulse-weekly-goal {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+  margin-top: 18px;
+}
+.pulse-weekly-goal > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pulse-weekly-goal p {
+  font-size: 13px;
+  margin: 8px 0;
+}
+.pulse-weekly-goal small {
+  color: var(--muted);
+}
+.pulse-range-state {
+  padding: 22px 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.pulse-range-state button {
+  margin-left: 12px;
+}
+.pulse-history {
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.pulse-history h2 {
+  font-size: 18px;
+}
+.pulse-history .event-row {
+  padding: 15px 0;
+}
+.pulse-history .event-topline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.pulse-history .event-title {
+  display: block;
+  color: var(--text);
+  margin: 8px 0;
+  font-size: 14px;
+}
+@media (max-width: 600px) {
+  .pulse-period-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+  .pulse-range-totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pulse-range-picker label {
+    flex: 1;
+    min-width: 120px;
+  }
+  .pulse-range-picker input,
+  .pulse-range-picker select {
+    width: 100%;
+  }
+  .pulse-bucket-label {
+    font-size: 8px;
+  }
+  .pulse-history {
+    padding: 16px;
+  }
+}
+
+.pulse-overview {
+  padding: 0 24px 20px;
+}
+.pulse-overview .repository-section {
+  margin-left: -24px;
+  margin-right: -24px;
+}
+@media (max-width: 600px) {
+  .pulse-overview {
+    padding: 0 16px 18px;
+  }
+  .pulse-overview .repository-section {
+    margin-left: -16px;
+    margin-right: -16px;
+  }
+  .pulse-range-bucket:nth-child(even):not(:last-child) .pulse-bucket-label {
+    visibility: hidden;
+  }
+}

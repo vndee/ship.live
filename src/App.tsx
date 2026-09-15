@@ -1,3 +1,5 @@
+import { PulseOverview } from "./components/PulseOverview";
+import { PulseHistoryFeed } from "./components/PulseHistoryFeed";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -170,6 +172,18 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
   const [toast, setToast] = useState("");
   const [limit, setLimit] = useState(30);
   const [now, setNow] = useState(Date.now());
+  const historicalFeed =
+    onFeed && (route.from !== undefined || route.to !== undefined);
+  const pulseSource = {
+    workspaceId: feed.workspace?.id,
+    scopeKey: feed.scopeKey,
+    demo: feed.demo,
+    events: feed.events,
+    revision: feed.updatedAt,
+    enabled:
+      feed.demo ||
+      (Boolean(feed.session.user) && Boolean(feed.workspace) && !feed.error),
+  };
   const searchRef = useRef<HTMLInputElement>(null);
   const metrics = useMemo(
     () => getMetrics(feed.events, now),
@@ -551,7 +565,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                   {page === "health" ? "Share service health" : "Share Pulse"}
                 </button>
               )}
-            {onFeed && (
+            {onFeed && !historicalFeed && (
               <>
                 <label className="search-box">
                   <Search size={15} />
@@ -668,6 +682,18 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
         {page === "pulse" && (
           <div className="dashboard-layout">
             <EngineeringWall
+              overview={
+                personal ? undefined : (
+                  <PulseOverview
+                    source={pulseSource}
+                    now={now}
+                    onHistory={(from, to, repo) =>
+                      navigate({ page: "feed", from, to, repo })
+                    }
+                    onMilestones={() => navigate({ page: "milestones" })}
+                  />
+                )
+              }
               snapshot={feed.demo ? demoSignals().snapshot : engineering.data}
               health={feed.demo ? demoSignals().health : engineering.health}
               events={feed.events}
@@ -707,7 +733,24 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             </aside>
           </div>
         )}
-        {onFeed && (
+        {historicalFeed && (
+          <PulseHistoryFeed
+            source={pulseSource}
+            from={route.from}
+            to={route.to}
+            repo={repo}
+            now={now}
+            onBack={() =>
+              navigate({
+                page: "pulse",
+                pulsePeriod: "custom",
+                from: route.from,
+                to: route.to,
+              })
+            }
+          />
+        )}
+        {onFeed && !historicalFeed && (
           <>
             <div className="feed-page">
               <ActivityFeed {...feedProps} full />

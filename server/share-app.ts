@@ -1,3 +1,4 @@
+import { PulseStore, pulseQuery, samePulseScope } from "./pulse-store.js";
 import { HealthStore } from "./health-store.js";
 import type { SharedHealthSnapshot } from "../shared/health.js";
 import { Router } from "express";
@@ -135,6 +136,46 @@ function workspaceShareRouter(
     return { share: current, repositories: visible };
   }
 
+  if (kind === "dashboard") {
+    const pulse = new PulseStore(store.pool);
+    for (const endpoint of ["overview", "activity"] as const) {
+      router.get(`/api/shared/pulse/${endpoint}`, async (request, response) => {
+        const token = request.get(tokenHeader);
+        const initial = await authorize(token);
+        const now = Date.now();
+        const { range, repo, cursor } = pulseQuery(request.query, now);
+        const scope = {
+          installationId: Number(initial.share.installation_id),
+          repositoryIds: initial.repositories.map((item) => item.id),
+        };
+        const result =
+          endpoint === "overview"
+            ? await pulse.overview(
+                scope.installationId,
+                scope.repositoryIds,
+                range,
+                now,
+              )
+            : await pulse.activity(
+                scope.installationId,
+                scope.repositoryIds,
+                range,
+                repo,
+                cursor,
+                now,
+              );
+        const current = await authorize(token);
+        if (
+          !samePulseScope(scope, {
+            installationId: Number(current.share.installation_id),
+            repositoryIds: current.repositories.map((item) => item.id),
+          })
+        )
+          throw unavailableShare();
+        response.json(result);
+      });
+    }
+  }
   router.get(publicPath, async (request, response) => {
     const token = request.get(tokenHeader);
     const initial = await authorize(token);

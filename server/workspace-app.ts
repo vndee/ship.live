@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { PulseStore, pulseQuery, samePulseScope } from "./pulse-store.js";
 import express, {
   type ErrorRequestHandler,
   type Express,
@@ -130,6 +131,7 @@ export function createWorkspaceApp({
     throw new Error("TRUST_PROXY_HOPS must be an integer from 0 to 5.");
   const app = express();
   const wall = new WallStore(store.pool);
+  const pulse = new PulseStore(store.pool);
   app.disable("x-powered-by");
   if (trustProxyHops > 0) app.set("trust proxy", trustProxyHops);
   app.use((request, response, next) => {
@@ -1126,6 +1128,46 @@ export function createWorkspaceApp({
     );
     response.sendStatus(204);
   });
+  for (const endpoint of ["overview", "activity"] as const) {
+    app.get(
+      `/api/workspaces/:id/pulse/${endpoint}`,
+      async (request, response) => {
+        const principal = await auth.authenticate(request, response);
+        const initial = await viewer(principal, request.params.id, true);
+        const now = Date.now();
+        const { range, repo, cursor } = pulseQuery(request.query, now);
+        const scope = {
+          installationId: initial.workspace.installationId,
+          repositoryIds: initial.repositories.map((item) => item.id),
+        };
+        const result =
+          endpoint === "overview"
+            ? await pulse.overview(
+                scope.installationId,
+                scope.repositoryIds,
+                range,
+                now,
+              )
+            : await pulse.activity(
+                scope.installationId,
+                scope.repositoryIds,
+                range,
+                repo,
+                cursor,
+                now,
+              );
+        const current = await viewer(principal, initial.workspace.id, true);
+        if (
+          !samePulseScope(scope, {
+            installationId: current.workspace.installationId,
+            repositoryIds: current.repositories.map((item) => item.id),
+          })
+        )
+          throw accessDenied();
+        response.json(result);
+      },
+    );
+  }
   app.get("/api/workspaces/:id/feed", async (request, response) => {
     const principal = await auth.authenticate(request, response);
     // authenticate just verified this session. Each viewer read still verifies

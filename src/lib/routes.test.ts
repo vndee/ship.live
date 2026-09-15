@@ -105,3 +105,49 @@ test("a repository's details open over any page and survive the URL", () => {
       { page: "pulse" },
     );
 });
+
+test("Pulse presets and custom calendar dates round trip without changing rolling feed URLs", () => {
+  assert.equal(
+    routeHref({ page: "pulse", pulsePeriod: "30d" }),
+    "/?period=30d",
+  );
+  assert.equal(routeHref({ page: "pulse", pulsePeriod: "7d" }), "/");
+  const route: Route = {
+    page: "pulse",
+    pulsePeriod: "custom",
+    from: "2026-09-01",
+    to: "2026-09-10",
+  };
+  const url = new URL(routeHref(route), "http://ship.test");
+  assert.deepEqual(parseRoute(url.pathname, url.search), route);
+  assert.deepEqual(
+    parseRoute("/feed", "?from=2026-09-01&to=2026-09-10&repo=acme%2Fapi"),
+    { page: "feed", repo: "acme/api", from: "2026-09-01", to: "2026-09-10" },
+  );
+  assert.equal(routeHref({ page: "feed", period: "7d" }), "/feed?period=7d");
+});
+
+test("calendar range fields are retained for validation but never leak to other pages", () => {
+  assert.deepEqual(
+    parseRoute("/", "?period=custom&from=2026-02-30&to=2026-03-01"),
+    {
+      page: "pulse",
+      pulsePeriod: "custom",
+      from: "2026-02-30",
+      to: "2026-03-01",
+    },
+  );
+  assert.deepEqual(
+    parseRoute("/team", "?from=2026-09-01&to=2026-09-10&period=month"),
+    { page: "team" },
+  );
+  assert.equal(
+    routeHref({
+      page: "team",
+      from: "2026-09-01",
+      to: "2026-09-10",
+      pulsePeriod: "month",
+    }),
+    "/team",
+  );
+});
