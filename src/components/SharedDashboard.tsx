@@ -40,7 +40,7 @@ export function SharedDashboard() {
   const liveEffects = useActivityCelebration(feed.data?.events || noEvents, {
     scope: token,
     ready: Boolean(feed.data) && !feed.error,
-    enabled: celebrations,
+    enabled: celebrations && !pulseLocation.history,
   });
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 15000);
