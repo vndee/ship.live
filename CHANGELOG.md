@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.3 — 2026-09-15
+
 - Keep historical Pulse periods stable until manual refresh, and retain the current dashboard while live data refreshes. Source and permission changes still invalidate cached data; failed reads hide unverified results.
 - Show page-wide activity coverage: earliest stored contribution, recorded source import time, repository import coverage, and warnings for selected dates before stored history or retention. Import times describe the start of successful imports; complete historical coverage is never implied.
 - Enrich the existing weekly webhook digest with shipped highlights, confirmed cross-author reviewers, current PRs needing help, and the closest unfinished weekly milestone. Calculate full retained totals in PostgreSQL with bounded results in the worker, preserve custom templates, and add links to authorized workspaces with the matching Pulse period and tab.
