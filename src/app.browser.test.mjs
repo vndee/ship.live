@@ -187,12 +187,16 @@ test("a repository in Overview opens its feed with the same calendar range", asy
 
 test("Overview calendar presets persist, custom dates apply explicitly, and drill-down keeps dates", async (t) => {
   const page = await open(t, "/");
-  await page.getByLabel("Overview period").selectOption("30d");
+  await page.getByRole("button", { name: /^Period:/ }).click();
+  await page.getByRole("option", { name: "Last 30 days" }).click();
   assert.equal(location(page), "/?period=30d");
   await page
     .getByRole("heading", { name: "Activity in this period", exact: true })
     .waitFor();
-  await page.getByLabel("Overview period").selectOption("custom");
+  await page.getByRole("button", { name: /^Period:/ }).focus();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
   await page.getByLabel("From date").fill("2026-09-01");
   await page.getByLabel("To date").fill("2026-09-10");
   assert.equal(location(page), "/?period=30d");
@@ -206,13 +210,9 @@ test("Overview calendar presets persist, custom dates apply explicitly, and dril
     .getByRole("heading", { name: "Activity in selected period" })
     .waitFor();
   await page.goBack();
-  assert.equal(await page.getByLabel("Overview period").inputValue(), "custom");
+  await page.getByRole("button", { name: "Period: Custom dates" }).waitFor();
   await page.goBack();
-  await page.waitForFunction(
-    () =>
-      document.querySelector('[aria-label="Overview period"]')?.value === "30d",
-  );
-  assert.equal(await page.getByLabel("Overview period").inputValue(), "30d");
+  await page.getByRole("button", { name: "Period: Last 30 days" }).waitFor();
 });
 
 test("Overview explains invalid custom links without silently showing default totals", async (t) => {

@@ -126,7 +126,7 @@ test("shared historical views stay silent on SSE updates and resume only for new
   assert.equal(await page.locator(".celebration-confetti").count(), 0);
   assert.equal(await page.locator(".activity-new").count(), 0);
   await page.getByRole("button", { name: "Back to Overview" }).click();
-  await page.getByLabel("Overview period").waitFor();
+  await page.getByRole("button", { name: /^Period:/ }).waitFor();
   assert.equal(await page.locator(".activity-celebration").count(), 0);
   await page.evaluate(() => window.addLiveEvent("arrived-after-return"));
   await page

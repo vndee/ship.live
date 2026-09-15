@@ -1,5 +1,16 @@
 import { useEffect, useState } from "react";
 import { resolvePulseRange, type PulseSelection } from "../../shared/pulse";
+import { Picker, type PickerOption } from "./Picker";
+
+const periods: readonly PickerOption<NonNullable<PulseSelection["period"]>>[] =
+  [
+    { value: "today", label: "Today" },
+    { value: "7d", label: "Last 7 days" },
+    { value: "30d", label: "Last 30 days" },
+    { value: "month", label: "This month" },
+    { value: "custom", label: "Custom dates" },
+  ];
+
 export function PulseRangePicker({
   selection,
   now,
@@ -36,15 +47,12 @@ export function PulseRangePicker({
         }
       }}
     >
-      <label>
-        Period{" "}
-        <select
-          aria-label="Overview period"
+      <div className="pulse-range-controls">
+        <Picker
+          label="Period"
           value={preset}
-          onChange={(event) => {
-            const value = event.target.value as NonNullable<
-              PulseSelection["period"]
-            >;
+          options={periods}
+          onChange={(value) => {
             setPreset(value);
             setError("");
             if (value === "custom") {
@@ -57,22 +65,18 @@ export function PulseRangePicker({
               }
             } else onChange({ period: value });
           }}
-        >
-          <option value="today">Today</option>
-          <option value="7d">Last 7 days</option>
-          <option value="30d">Last 30 days</option>
-          <option value="month">This month</option>
-          <option value="custom">Custom dates</option>
-        </select>
-      </label>
+        />
+        <span className="pulse-timezone">Dates in UTC</span>
+      </div>
       {preset === "custom" && (
-        <>
+        <div className="pulse-custom-dates">
           <label>
             From{" "}
             <input
               aria-label="From date"
               type="date"
               required
+              aria-describedby="pulse-date-guidance"
               value={from}
               max={new Date(now).toISOString().slice(0, 10)}
               onChange={(e) => setFrom(e.target.value)}
@@ -84,6 +88,7 @@ export function PulseRangePicker({
               aria-label="To date"
               type="date"
               required
+              aria-describedby="pulse-date-guidance"
               value={to}
               max={new Date(now).toISOString().slice(0, 10)}
               onChange={(e) => setTo(e.target.value)}
@@ -92,9 +97,11 @@ export function PulseRangePicker({
           <button className="button secondary" type="submit">
             Apply dates
           </button>
-        </>
+          <p id="pulse-date-guidance" className="pulse-date-guidance">
+            Choose up to 366 days. Both dates are included.
+          </p>
+        </div>
       )}
-      <span className="pulse-timezone">UTC · up to 366 days</span>
       {error && (
         <p className="pulse-range-error" role="alert">
           {error}

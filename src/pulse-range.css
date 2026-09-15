@@ -1,10 +1,44 @@
 .pulse-range-picker {
-  display: flex;
-  align-items: end;
-  gap: 12px;
-  flex-wrap: wrap;
+  display: grid;
+  gap: 14px;
   padding: 18px 0;
   border-top: 1px solid var(--line);
+}
+.pulse-range-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pulse-range-controls .picker-trigger {
+  min-width: 164px;
+  height: 38px;
+  background: var(--surface);
+}
+.pulse-range-controls .picker-menu {
+  left: 0;
+  right: auto;
+  min-width: 200px;
+  background: var(--surface);
+}
+.pulse-range-controls .picker-menu button {
+  min-height: 38px;
+}
+.pulse-range-controls .picker-menu button:last-child {
+  margin-top: 4px;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 6px 6px;
+}
+.pulse-custom-dates {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px 12px;
+  max-width: 560px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-inset);
 }
 .pulse-range-picker label {
   display: grid;
@@ -12,23 +46,38 @@
   color: var(--muted);
   font-size: 12px;
 }
-.pulse-range-picker input,
-.pulse-range-picker select {
+.pulse-range-picker input {
+  width: 100%;
+  min-width: 0;
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--line-strong);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 8px 10px;
-  min-height: 36px;
+  min-height: 38px;
   font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.pulse-custom-dates .button {
+  min-height: 38px;
+  height: 38px;
+  padding: 0 12px;
 }
 .pulse-timezone {
   color: var(--muted);
   font-size: 11px;
-  padding-bottom: 10px;
+  white-space: nowrap;
+}
+.pulse-date-guidance {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
 }
 .pulse-range-error {
-  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
   color: var(--danger);
 }
 .pulse-period-heading {
@@ -177,12 +226,14 @@
   .pulse-range-totals {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .pulse-range-picker label {
-    flex: 1;
-    min-width: 120px;
+  .pulse-range-controls {
+    flex-wrap: wrap;
   }
-  .pulse-range-picker input,
-  .pulse-range-picker select {
+  .pulse-custom-dates {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .pulse-custom-dates .button {
+    grid-column: 1 / -1;
     width: 100%;
   }
   .pulse-bucket-label {
@@ -190,6 +241,12 @@
   }
   .pulse-history {
     padding: 16px;
+  }
+}
+
+@media (max-width: 420px) {
+  .pulse-custom-dates {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
