@@ -4,16 +4,18 @@ import { isTag } from "./journal";
 import type { ActivityEvent } from "../../shared/types";
 
 export type Page =
-  "pulse" | "feed" | "team" | "milestones" | "health" | "webhooks";
+  "pulse" | "feed" | "team" | "milestones" | "health" | "webhooks" | "recap";
 export type Period = "24h" | "7d" | "30d";
-type Kind = ActivityEvent["type"];
+type Kind = ActivityEvent["type"] | "contribution";
 
 /** Everything a URL can say about the private app. */
 export interface Route {
   page: Page;
   /** An explicit workspace must match the authenticated workspace list. */
   workspace?: string;
+  week?: string;
   scene?: WallScene;
+  environment?: string;
   pulsePeriod?: "today" | "7d" | "30d" | "month" | "custom";
   from?: string;
   to?: string;
@@ -37,6 +39,7 @@ const PATHS: Record<Page, string> = {
   milestones: "/milestones",
   health: "/health",
   webhooks: "/webhooks",
+  recap: "/recap",
 };
 export const PAGE_TITLES: Record<Page, string> = {
   pulse: "Pulse",
@@ -45,6 +48,7 @@ export const PAGE_TITLES: Record<Page, string> = {
   milestones: "Milestones",
   health: "Service Health",
   webhooks: "Webhooks",
+  recap: "Weekly recap",
 };
 const KINDS: readonly Kind[] = [
   "merge",
@@ -55,6 +59,7 @@ const KINDS: readonly Kind[] = [
   "pr",
   "note",
   "alert",
+  "contribution",
 ];
 const PERIODS: readonly Period[] = ["24h", "7d", "30d"];
 // owner/name as GitHub allows it, or a bare name for sources without an owner.
@@ -77,9 +82,18 @@ export function parseRoute(pathname: string, search: string): Route {
   const route: Route = { page };
   // Keep even empty or malformed values explicit: authorization fails closed.
   if (params.has("workspace")) route.workspace = params.get("workspace")!;
+  if (page === "recap" && params.has("week"))
+    route.week = params.get("week")!.slice(0, 32);
   if (page === "pulse") {
     const scene = oneOf(ALL_SCENES, params.get("scene"));
     if (scene) route.scene = scene;
+    const environment = params.get("env");
+    if (
+      environment &&
+      environment.length <= 200 &&
+      !/[\u0000-\u001f\u007f]/.test(environment)
+    )
+      route.environment = environment;
   }
   if (page === "feed") {
     const repo = params.get("repo")?.trim();
@@ -117,7 +131,11 @@ export function parseRoute(pathname: string, search: string): Route {
 export function routeHref(route: Route): string {
   const params = new URLSearchParams();
   if (route.workspace !== undefined) params.set("workspace", route.workspace);
+  if (route.page === "recap" && route.week !== undefined)
+    params.set("week", route.week);
   if (route.page === "pulse" && route.scene) params.set("scene", route.scene);
+  if (route.page === "pulse" && route.environment)
+    params.set("env", route.environment);
   if (route.page === "feed") {
     if (route.repo) params.set("repo", route.repo);
     if (route.kind) params.set("type", route.kind);

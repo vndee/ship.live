@@ -91,3 +91,68 @@ test("rejects year zero consistently with PostgreSQL calendar dates", () => {
     /valid calendar dates/,
   );
 });
+
+test("comparison uses preceding equal UTC calendar range and counts unique human participants", () => {
+  const range = resolvePulseRange(
+    { period: "custom", from: "2026-09-01", to: "2026-09-03" },
+    now,
+  );
+  const event = {
+    id: "current",
+    type: "merge" as const,
+    actor: { login: " Alice " },
+    repo: "team/a",
+    title: "Merge",
+    occurredAt: "2026-09-01T00:00:00Z",
+  };
+  const result = aggregatePulse(
+    [
+      event,
+      { ...event, id: "review", type: "review", actor: { login: "alice" } },
+      {
+        ...event,
+        id: "previous",
+        type: "release",
+        actor: { login: "bob" },
+        occurredAt: "2026-08-29T00:00:00Z",
+      },
+      {
+        ...event,
+        id: "last-previous",
+        actor: { login: "carol" },
+        occurredAt: "2026-08-31T23:59:59Z",
+      },
+      { ...event, id: "too-early", occurredAt: "2026-08-28T23:59:59Z" },
+      { ...event, id: "bot", actor: { login: "renovate" } },
+    ],
+    range,
+    now,
+  );
+  assert.ok(result.comparison, "both periods must be returned");
+  assert.equal(result.comparison.previous.range.from, "2026-08-29");
+  assert.equal(result.comparison.previous.range.to, "2026-08-31");
+  assert.deepEqual(result.comparison.previous.totals, {
+    count: 2,
+    merges: 1,
+    releases: 1,
+    reviews: 0,
+  });
+  assert.equal(result.comparison.previous.participants, 2);
+  assert.equal(result.comparison.currentParticipants, 1);
+  assert.equal(result.comparison.currentIncomplete, false);
+  assert.deepEqual(result.comparison.previous.coverage, result.coverage);
+});
+
+test("today comparison marks the current period incomplete and preserves empty previous totals", () => {
+  const result = aggregatePulse(
+    [],
+    resolvePulseRange({ period: "today" }, now),
+    now,
+  );
+  assert.ok(result.comparison);
+  assert.equal(result.comparison.previous.range.from, "2026-09-14");
+  assert.equal(result.comparison.previous.range.to, "2026-09-14");
+  assert.equal(result.comparison.previous.totals.count, 0);
+  assert.equal(result.comparison.previous.participants, 0);
+  assert.equal(result.comparison.currentIncomplete, true);
+});

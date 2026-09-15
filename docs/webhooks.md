@@ -17,7 +17,7 @@ Webhooks store URLs, header values, and secrets encrypted with `TOKEN_ENCRYPTION
 | `incident.opened`, `incident.resolved`                            | A probe goes down, and when it is healthy again.                               |
 | `health.degraded`, `health.down`, `health.recovered`              | Any probe state change.                                                        |
 | `inbound.<slug>`                                                  | An inbound webhook receives a request. Subscribe to `inbound` for all of them. |
-| `digest.weekly`                                                   | Monday after 09:00 UTC, for the previous Monday–Sunday.                        |
+| `digest.weekly`                                                   | At the workspace schedule; defaults to Monday 09:00 UTC.                       |
 
 Each event is stored once. A redelivered GitHub webhook, a replayed check, or an inbound retry with the same ID does not send twice.
 
@@ -157,7 +157,7 @@ Accepted requests also appear in the team's Live activity as alerts, as they arr
 
 ## Weekly digest
 
-After Monday 09:00 UTC, each workspace with a webhook listening to `digest.weekly` gets one digest for the previous Monday–Sunday in UTC. A webhook added after Monday's send time starts the following week.
+At its configured send time (Monday 09:00 UTC by default), each workspace with a webhook listening to `digest.weekly` gets one digest for the most recent completed Monday–Sunday in UTC. A webhook added after that scheduled send time starts with a later eligible week. Set the local day, time and timezone in **Weekly recap**.
 
 The original `data` fields remain: `weekStart`, `weekEnd`, `totals` (merges, reviews, releases, contributors, XP by the leaderboard's rules), `topContributors`, `repositories`, and `services` (uptime and incidents). The digest also includes:
 
@@ -184,3 +184,9 @@ Built-in Slack, Discord, Teams, Google Chat, and Lark templates show the digest 
 | Custom headers                  | 20, 8 KiB in total                 |
 | Delivery and inbound log        | 30 days; inbound keeps 50 requests |
 | Incident history                | 1 year                             |
+
+## Weekly recap and local delivery time
+
+Open **Weekly recap** to browse completed UTC Monday–Sunday weeks and export a Markdown summary. The summary is calculated from the current viewer's authorized sources; highlights are bounded and missing imported history may lower totals. PRs needing help reflect the latest stored status, not the historical week. Reflections are private to the signed-in account, workspace and week, and are not sent through webhooks.
+
+The recap's schedule controls the workspace's existing enabled `digest.weekly` webhooks. Choose a weekday, `HH:mm` time and IANA timezone such as `Asia/Ho_Chi_Minh`. The default is Monday 09:00 UTC. The reporting week is the most recent completed UTC week at the scheduled sending instant; early Monday local times in positive offsets may still be Sunday UTC. During daylight-saving gaps the local sending time moves forward, and repeated times use the later offset. Each reporting week is queued at most once per workspace. Changing the schedule does not resend an already queued week.

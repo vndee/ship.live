@@ -1,0 +1,82 @@
+.pulse-comparison {
+  margin: 24px 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-inset);
+}
+.pulse-comparison-heading h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.pulse-comparison-heading p,
+.pulse-comparison-definition,
+.pulse-comparison-coverage {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.pulse-comparison-incomplete {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--accent);
+}
+.pulse-comparison table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  table-layout: fixed;
+}
+.pulse-comparison th,
+.pulse-comparison td {
+  padding: 12px 6px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+  vertical-align: middle;
+}
+.pulse-comparison th:first-child {
+  width: 31%;
+  text-align: left;
+  padding-left: 0;
+  overflow-wrap: anywhere;
+}
+.pulse-comparison th:last-child {
+  width: 16%;
+}
+.pulse-comparison thead th {
+  font-weight: 600;
+}
+.pulse-comparison th small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.pulse-comparison td button {
+  min-height: 36px;
+  justify-content: flex-end;
+  font-size: 16px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.pulse-comparison-delta {
+  font-variant-numeric: tabular-nums;
+}
+.pulse-comparison-coverage p {
+  margin: 7px 0 0;
+}
+@media (max-width: 480px) {
+  .pulse-comparison {
+    padding: 12px;
+  }
+  .pulse-comparison th,
+  .pulse-comparison td {
+    padding-right: 3px;
+    padding-left: 3px;
+  }
+  .pulse-comparison table {
+    font-size: 11px;
+  }
+}

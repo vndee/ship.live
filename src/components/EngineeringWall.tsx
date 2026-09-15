@@ -13,6 +13,9 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { ReviewFollowthrough } from "./ReviewFollowthrough";
+import { useReviewFollowthrough } from "../hooks/useReviewFollowthrough";
+import type { ReviewContext } from "../../shared/review-followthrough";
 import type { PulseRange } from "../../shared/pulse";
 import type { ActivityEvent } from "../../shared/types.js";
 import type { EngineeringWallSnapshot } from "../../shared/wall.js";
@@ -176,8 +179,14 @@ export function EngineeringWall({
   scopeLoading = false,
   onRetry,
   requestedScene,
+  reviewContext,
   onSceneChange,
+  environment,
+  onEnvironmentChange,
 }: {
+  reviewContext?: ReviewContext;
+  environment?: string;
+  onEnvironmentChange?: (environment: string) => void;
   requestedScene?: WallScene;
   onSceneChange?: (scene: WallScene) => void;
   range?: PulseRange | null;
@@ -280,6 +289,37 @@ export function EngineeringWall({
     () => getReviewRadar(snapshot, now, range ?? undefined),
     [snapshot, now, range],
   );
+  const reviewTargets = radar.slice(0, 50).flatMap((item) => {
+    const repo = snapshot.repositories.find(
+      (repo) => repo.repository === item.repository,
+    );
+    return repo
+      ? [{ repositoryId: repo.repositoryId, number: item.number }]
+      : [];
+  });
+  const privateReview =
+    !demo && reviewContext && ready && scene === "review"
+      ? reviewContext
+      : undefined;
+  const followthrough = useReviewFollowthrough(privateReview, reviewTargets);
+  const followItem = (item: ReviewRadarItem) => {
+    const repo = snapshot.repositories.find(
+      (repo) => repo.repository === item.repository,
+    );
+    return followthrough.items.find(
+      (current) =>
+        current.repositoryId === repo?.repositoryId &&
+        current.number === item.number,
+    );
+  };
+  const visibleRadar = radar
+    .slice(0, privateReview ? 50 : radar.length)
+    .sort((a, b) => {
+      const snoozed = (item: ReviewRadarItem) =>
+        Number(Date.parse(followItem(item)?.snoozedUntil ?? "") > Date.now());
+      return snoozed(a) - snoozed(b);
+    });
+
   const releases = useMemo(
     () => getReleasePulse(snapshot, range ?? undefined, now),
     [snapshot, range, now],
@@ -644,22 +684,29 @@ export function EngineeringWall({
               title="Review radar"
               description={
                 scoped
-                  ? "Currently open pull requests with activity in this period. Checks and reviews use the same dates."
+                  ? "Currently open pull requests with activity in this period. Follow-through uses current status."
                   : "Open pull requests, most urgent first."
               }
             >
-              {tally(
-                radar.map((item) => item.state),
-                ["failing", "ready", "running", "waiting"] as const,
-              ).map(([state, count]) => (
-                <Chip tone={radarStates[state].tone} key={state}>
-                  {count} {radarStates[state].chip}
-                </Chip>
-              ))}
+              {!privateReview &&
+                tally(
+                  radar.map((item) => item.state),
+                  ["failing", "ready", "running", "waiting"] as const,
+                ).map(([state, count]) => (
+                  <Chip tone={radarStates[state].tone} key={state}>
+                    {count} {radarStates[state].chip}
+                  </Chip>
+                ))}
             </SceneHeader>
+            {privateReview && radar.length > 50 && (
+              <p>
+                Showing follow-through for the first 50 pull requests. Narrow
+                repositories to see more.
+              </p>
+            )}
             {radar.length ? (
               <ul className="scene-list">
-                {radar.map((item) => {
+                {visibleRadar.map((item) => {
                   const author = displayName(item.author);
                   return (
                     <li key={`${item.repository}:${item.number}`}>
@@ -678,13 +725,32 @@ export function EngineeringWall({
                             {author} · {shortAge(item.ageMs)}
                           </small>
                         </span>
-                        <span
-                          className={`state-pill tone-${radarStates[item.state].tone}`}
-                        >
-                          <i aria-hidden="true" />
-                          {radarStates[item.state].label}
-                        </span>
+                        {!privateReview && (
+                          <span
+                            className={`state-pill tone-${radarStates[item.state].tone}`}
+                          >
+                            <i aria-hidden="true" />
+                            {radarStates[item.state].label}
+                          </span>
+                        )}
                       </SceneRow>
+                      {privateReview && (
+                        <ReviewFollowthrough
+                          item={followItem(item)}
+                          loading={followthrough.loading}
+                          error={followthrough.error}
+                          pending={followthrough.pending}
+                          historical={historical}
+                          userId={privateReview.userId}
+                          onAction={(action, hours) =>
+                            void followthrough.act(
+                              followItem(item),
+                              action,
+                              hours,
+                            )
+                          }
+                        />
+                      )}
                     </li>
                   );
                 })}
@@ -770,6 +836,8 @@ export function EngineeringWall({
         )}
         {ready && scene === "delivery" && (
           <DeliveryScene
+            requestedEnvironment={environment}
+            onEnvironmentChange={onEnvironmentChange}
             snapshot={snapshot}
             health={health}
             now={now}

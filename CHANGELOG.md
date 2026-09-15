@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add Review Radar follow-through: current reasons and age, atomic teammate claims, and personal four-hour snoozes. Current head/state changes invalidate obsolete actions; historical and shared views remain read-only.
+- Compare Overview merges, releases, reviews and participating contributors with the equal-length preceding UTC period. Both periods link to type-filtered activity; incomplete periods and retained-history limits remain explicit.
+- Save up to 30 private named views per account, synchronized across browsers. Preserve workspace, Delivery environment and supported URL filters, distinguish rolling periods from fixed dates, and rename, replace or delete views.
+- Add weekly recaps with authorized shipped highlights, helpful reviewers, current PRs needing help, private reflections and Markdown export. Choose a workspace digest day, local time and timezone; UTC Monday–Sunday reporting and the default Monday 09:00 UTC schedule remain explicit.
+- Upgrade note: additive migration 022 stores review follow-through, saved views, private recap reflections and digest schedules.
+
 ## 0.2.3 — 2026-09-15
 
 - Keep historical Pulse periods stable until manual refresh, and retain the current dashboard while live data refreshes. Source and permission changes still invalidate cached data; failed reads hide unverified results.

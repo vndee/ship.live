@@ -58,6 +58,7 @@ test("SQL aggregates full authorized history and stable keyset pages", async (t)
       syncedRepositories: 0,
       totalRepositories: 1,
     };
+    expected.comparison!.previous.coverage = expected.coverage;
     assert.deepEqual(result, expected);
     assert.equal(result.totals.count, 2106);
     const scope = {
@@ -161,6 +162,7 @@ test("SQL aggregates full authorized history and stable keyset pages", async (t)
       now,
     );
     weeklyExpected.coverage.sourceSync = expected.coverage.sourceSync;
+    weeklyExpected.comparison!.previous.coverage = weeklyExpected.coverage;
     assert.deepEqual(
       await pulse.overview(70, [101], weeklyRange, now),
       weeklyExpected,
@@ -327,6 +329,205 @@ test("coverage counts only selected repository imports and keeps personal histor
       syncedRepositories: 0,
       totalRepositories: 0,
     });
+  } finally {
+    await store.close();
+  }
+});
+
+test("comparison aggregates full previous history with the same repository and author scope", async (t) => {
+  const url = await createTestDatabase(t);
+  if (!url) return;
+  const store = await PostgresEventStore.open(url);
+  try {
+    const now = Date.parse("2026-09-15T12:00:00Z");
+    const range = resolvePulseRange({ period: "today" }, now);
+    const events: ActivityEvent[] = Array.from({ length: 2105 }, (_, i) => ({
+      id: `previous-${i}`,
+      type: "merge",
+      actor: { login: i % 2 ? "alice" : "Alice" },
+      repo: "team/a",
+      repositoryId: 101,
+      title: "Previous merge",
+      occurredAt: "2026-09-14T10:00:00Z",
+    }));
+    events.push(
+      { ...events[0], id: "current", type: "review", occurredAt: range.start },
+      {
+        ...events[0],
+        id: "private",
+        repositoryId: 102,
+        actor: { login: "secret" },
+      },
+      { ...events[0], id: "bob", actor: { login: "bob" } },
+      { ...events[0], id: "too-early", occurredAt: "2026-09-13T23:59:59Z" },
+    );
+    await store.merge("installation-70", events, { restricted: true });
+    await store.merge("installation-71", [events[0]], { restricted: true });
+    const result = await new PulseStore(store.pool).overview(
+      undefined,
+      [],
+      range,
+      now,
+      {
+        sources: [
+          { installationId: 70, repositoryIds: [101] },
+          { installationId: 71, repositoryIds: [101] },
+        ],
+        author: "alice",
+      },
+    );
+    assert.equal(result.comparison?.previous.totals.merges, 2105);
+    assert.equal(result.comparison?.previous.participants, 1);
+    assert.equal(result.comparison?.currentParticipants, 1);
+    assert.equal(result.comparison?.currentIncomplete, true);
+    assert.deepEqual(result.comparison?.previous.coverage, result.coverage);
+    assert.equal(result.totals.reviews, 1);
+  } finally {
+    await store.close();
+  }
+});
+
+test("activity kind filters before pagination and binds cursors to that kind", async (t) => {
+  const url = await createTestDatabase(t);
+  if (!url) return;
+  const store = await PostgresEventStore.open(url);
+  try {
+    const now = Date.parse("2026-09-15T12:00:00Z");
+    const range = resolvePulseRange({ period: "today" }, now);
+    const events: ActivityEvent[] = Array.from({ length: 205 }, (_, i) => ({
+      id: `kind-${String(i).padStart(4, "0")}`,
+      type: i % 2 ? "merge" : "review",
+      actor: { login: "alice" },
+      repo: "team/a",
+      repositoryId: 101,
+      title: "Contribution",
+      occurredAt: "2026-09-15T10:00:00Z",
+    }));
+    await store.merge("installation-70", events, { restricted: true });
+    const pulse = new PulseStore(store.pool);
+    const first = await pulse.activity(
+      70,
+      [101],
+      range,
+      undefined,
+      undefined,
+      now,
+      undefined,
+      "review",
+    );
+    assert.equal(first.events.length, 100);
+    assert.ok(first.events.every((event) => event.type === "review"));
+    assert.ok(first.nextCursor);
+    const second = await pulse.activity(
+      70,
+      [101],
+      range,
+      undefined,
+      first.nextCursor,
+      now,
+      undefined,
+      "review",
+    );
+    assert.equal(second.events.length, 3);
+    assert.ok(second.events.every((event) => event.type === "review"));
+    await assert.rejects(
+      pulse.activity(
+        70,
+        [101],
+        range,
+        undefined,
+        first.nextCursor,
+        now,
+        undefined,
+        "merge",
+      ),
+      /cursor/i,
+    );
+    await assert.rejects(
+      pulse.activity(70, [101], range, undefined, first.nextCursor, now),
+      /cursor/i,
+    );
+  } finally {
+    await store.close();
+  }
+});
+
+test("pulse query accepts only supported contribution kinds", async () => {
+  const { pulseQuery } = await import("./pulse-store.js");
+  assert.equal(pulseQuery({ kind: "review" }).kind, "review");
+  assert.equal(pulseQuery({ kind: "contribution" }).kind, "contribution");
+  for (const kind of ["note", "bad", ["merge"], ""])
+    assert.throws(() => pulseQuery({ kind }), /kind/);
+});
+
+test("participant contribution drilldown excludes personal notes without removing generic journal history", async (t) => {
+  const url = await createTestDatabase(t);
+  if (!url) return;
+  const store = await PostgresEventStore.open(url);
+  try {
+    const now = Date.parse("2026-09-15T12:00:00Z");
+    const range = resolvePulseRange({ period: "today" }, now);
+    const user = (
+      await store.pool.query(
+        "INSERT INTO ship_live_auth_users(id,name) VALUES(gen_random_uuid(),'Alice') RETURNING id",
+      )
+    ).rows[0].id;
+    const workspace = (
+      await store.pool.query(
+        "INSERT INTO ship_live_workspaces(id,name,kind,owner_user_id) VALUES(gen_random_uuid(),'Journal','personal',$1) RETURNING id",
+        [user],
+      )
+    ).rows[0].id;
+    await store.pool.query(
+      "INSERT INTO ship_live_notes(id,workspace_id,user_id,title,body,created_at) VALUES(gen_random_uuid(),$1,$2,'Private note','', $3)",
+      [workspace, user, range.start],
+    );
+    await store.merge(
+      "installation-70",
+      [
+        {
+          id: "push",
+          type: "push",
+          actor: { login: "alice" },
+          repo: "team/a",
+          repositoryId: 101,
+          title: "Push",
+          occurredAt: range.start,
+        },
+      ],
+      { restricted: true },
+    );
+    const scope = {
+      sources: [{ installationId: 70, repositoryIds: [101] }],
+      noteUserId: user,
+      workspaceId: workspace,
+      ownerLogin: "alice",
+    };
+    const pulse = new PulseStore(store.pool);
+    const generic = await pulse.activity(
+      undefined,
+      [],
+      range,
+      undefined,
+      undefined,
+      now,
+      scope,
+    );
+    assert.equal(generic.events.length, 2);
+    const contributions = await pulse.activity(
+      undefined,
+      [],
+      range,
+      undefined,
+      undefined,
+      now,
+      scope,
+      "contribution",
+    );
+    assert.deepEqual(
+      contributions.events.map((event) => event.type),
+      ["push"],
+    );
   } finally {
     await store.close();
   }

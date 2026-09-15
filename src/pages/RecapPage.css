@@ -1,0 +1,247 @@
+.recap-page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 40px 28px 80px;
+  color: var(--text);
+}
+.recap-page__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+.recap-eyebrow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--accent);
+}
+.recap-page h1 {
+  font-size: 32px;
+  letter-spacing: -0.04em;
+  margin: 10px 0;
+}
+.recap-page p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+.recap-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.recap-week {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.recap-week label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+.recap-page button,
+.recap-export {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: inherit;
+  border-radius: 8px;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.recap-page button:hover,
+.recap-export:hover {
+  border-color: var(--accent);
+}
+.recap-page button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.recap-page input,
+.recap-page select,
+.recap-page textarea {
+  background: var(--surface-inset);
+  border: 1px solid var(--line);
+  color: inherit;
+  border-radius: 7px;
+  padding: 10px;
+  font: inherit;
+  font-size: 13px;
+  color-scheme: inherit;
+}
+.recap-page input:focus,
+.recap-page select:focus,
+.recap-page textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.recap-basis {
+  font-size: 12px;
+}
+.recap-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin-top: 22px;
+  overflow: hidden;
+}
+.recap-metrics > div {
+  padding: 24px;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.recap-metrics > div:last-child {
+  border: 0;
+}
+.recap-metrics strong {
+  font-size: 30px;
+  letter-spacing: -0.04em;
+}
+.recap-metrics span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.recap-coverage {
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 14px 0 24px;
+}
+.recap-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 18px;
+}
+.recap-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 24px;
+}
+.recap-card h2 {
+  font-size: 18px;
+  letter-spacing: -0.025em;
+  margin: 0 0 12px;
+}
+.recap-card p {
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+.recap-card--wide {
+  grid-column: 1/-1;
+}
+.recap-card ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.recap-card li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+.recap-card li:first-child {
+  border-top: 0;
+}
+.recap-card small,
+.recap-card li span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.recap-card a {
+  color: inherit;
+  text-underline-offset: 4px;
+  text-decoration-color: var(--accent);
+}
+.recap-reflection,
+.recap-schedule {
+  margin-top: 18px;
+}
+.recap-reflection label,
+.recap-schedule label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+}
+.recap-reflection textarea {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 10px 0;
+  resize: vertical;
+  line-height: 1.7;
+}
+.recap-form-footer {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 12px;
+}
+.recap-form-footer small {
+  margin-left: auto;
+}
+.recap-schedule-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.5fr;
+  gap: 16px;
+  margin: 20px 0;
+}
+.recap-schedule .recap-coverage {
+  margin: 12px 0 18px;
+}
+@media (max-width: 650px) {
+  .recap-page {
+    padding: 26px 16px 60px;
+  }
+  .recap-page h1 {
+    font-size: 27px;
+  }
+  .recap-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .recap-week label {
+    font-size: 12px;
+    gap: 6px;
+  }
+  .recap-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .recap-metrics > div {
+    padding: 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .recap-grid {
+    grid-template-columns: 1fr;
+  }
+  .recap-schedule-fields {
+    grid-template-columns: 1fr;
+  }
+  .recap-card {
+    padding: 20px;
+  }
+  .recap-form-footer {
+    flex-wrap: wrap;
+  }
+}
+
+.recap-page .recap-export-hint {
+  font-size: 12px;
+  margin: 6px 0 0;
+}

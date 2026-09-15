@@ -845,3 +845,108 @@ test("bounded help shortlist retains dashboard repository punctuation ordering o
     );
   });
 });
+
+test("workspace schedules use local day and minute, retain UTC week basis and creation-time delivery guards", async (t) => {
+  await withWorkspace(t, async ({ pool, workspace, user }) => {
+    await listen(pool, workspace, user);
+    await pool.query("UPDATE ship_live_webhooks SET created_at='2026-08-01'");
+    await pool.query(
+      "INSERT INTO ship_live_digest_schedules(workspace_id,weekday,local_time,timezone) VALUES($1,2,'16:30','Asia/Ho_Chi_Minh')",
+      [workspace],
+    );
+    assert.equal(
+      await scheduleDigests(pool, Date.parse("2026-09-08T09:29:59Z")),
+      0,
+    );
+    assert.equal(
+      await scheduleDigests(pool, Date.parse("2026-09-08T09:30:00Z")),
+      1,
+    );
+    assert.equal(
+      await scheduleDigests(pool, Date.parse("2026-09-08T10:00:00Z")),
+      0,
+    );
+    const { rows } = await pool.query(
+      "SELECT payload->>'occurredAt' AS at,payload->'data' AS data FROM ship_live_webhook_events",
+    );
+    assert.deepEqual(rows, [
+      {
+        at: "2026-09-08T09:30:00.000Z",
+        data: { weekStart: "2026-08-31", weekEnd: "2026-09-06" },
+      },
+    ]);
+  });
+});
+
+test("DST spring gap moves the scheduled time forward and fall overlap sends once at the later occurrence", async (t) => {
+  await withWorkspace(t, async ({ pool, workspace, user }) => {
+    await listen(pool, workspace, user);
+    await pool.query("UPDATE ship_live_webhooks SET created_at='2026-01-01'");
+    await pool.query(
+      "INSERT INTO ship_live_digest_schedules(workspace_id,weekday,local_time,timezone) VALUES($1,0,'02:30','America/New_York')",
+      [workspace],
+    );
+    assert.equal(
+      await scheduleDigests(pool, Date.parse("2026-03-08T07:29:59Z")),
+      0,
+    );
+    assert.equal(
+      await scheduleDigests(pool, Date.parse("2026-03-08T07:30:00Z")),
+      1,
+    );
+    await pool.query(
+      "UPDATE ship_live_digest_schedules SET local_time='01:30'",
+    );
+    assert.equal(
+      await scheduleDigests(pool, Date.parse("2026-11-01T05:30:00Z")),
+      0,
+    );
+    assert.equal(
+      await scheduleDigests(pool, Date.parse("2026-11-01T06:30:00Z")),
+      1,
+    );
+    assert.equal(
+      await scheduleDigests(pool, Date.parse("2026-11-01T07:30:00Z")),
+      0,
+    );
+  });
+});
+
+test("a local Monday before UTC Monday sends only a completed UTC week and remains idempotent across UTC midnight", async (t) => {
+  await withWorkspace(t, async ({ pool, workspace, user }) => {
+    await listen(pool, workspace, user);
+    await pool.query("UPDATE ship_live_webhooks SET created_at='2026-08-01'");
+    await pool.query(
+      "INSERT INTO ship_live_digest_schedules(workspace_id,weekday,local_time,timezone) VALUES($1,1,'00:30','Pacific/Kiritimati')",
+      [workspace],
+    );
+    assert.equal(
+      await scheduleDigests(pool, Date.parse("2026-09-13T10:30:00Z")),
+      1,
+    );
+    assert.equal(
+      await scheduleDigests(pool, Date.parse("2026-09-14T00:00:00Z")),
+      0,
+    );
+    let result = await pool.query(
+      "SELECT payload->'data' AS data FROM ship_live_webhook_events",
+    );
+    assert.deepEqual(result.rows, [
+      { data: { weekStart: "2026-08-31", weekEnd: "2026-09-06" } },
+    ]);
+    assert.equal(
+      await scheduleDigests(pool, Date.parse("2026-09-20T10:30:00Z")),
+      1,
+    );
+    result = await pool.query(
+      "SELECT payload->'data' AS data FROM ship_live_webhook_events ORDER BY created_at",
+    );
+    assert.deepEqual(
+      result.rows.map((row) => row.data),
+      [
+        { weekStart: "2026-08-31", weekEnd: "2026-09-06" },
+        { weekStart: "2026-09-07", weekEnd: "2026-09-13" },
+      ],
+    );
+  });
+});

@@ -12,7 +12,7 @@ import { RouteLink } from "./RouteLink";
 import { ThemeToggle } from "./ThemeToggle";
 
 // Pages with their own status. Every other page is part of Pulse.
-const OWN_PAGES = new Set<Page>(["health", "webhooks"]);
+const OWN_PAGES = new Set<Page>(["health", "webhooks", "recap"]);
 
 export function AppHeader({
   feed,
@@ -43,6 +43,7 @@ export function AppHeader({
       ["pulse", "Pulse"],
       ["health", "Service Health"],
       ["webhooks", "Webhooks"],
+      ["recap", "Weekly recap"],
     ] as const
   ).filter(
     ([id]) => id === "pulse" || (id === "health" ? feed.demo || team : team),
@@ -74,7 +75,10 @@ export function AppHeader({
         {pages.map(([id, label]) => (
           <RouteLink
             key={id}
-            to={{ page: id }}
+            to={{
+              page: id,
+              workspace: feed.demo ? undefined : feed.workspace?.id,
+            }}
             // Pages opened from Pulse (feed, team, milestones) keep Pulse current.
             aria-current={
               (id === "pulse" ? !OWN_PAGES.has(page) : page === id)

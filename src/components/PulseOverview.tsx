@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { ArrowUpRight, Flag, FolderGit2 } from "lucide-react";
-import type { PulseSelection } from "../../shared/pulse";
+import type { PulseSelection, PulseActivityKind } from "../../shared/pulse";
 import { getDashboardPulse } from "../lib/dashboardPulse";
 import {
   usePulseLocation,
@@ -8,6 +8,7 @@ import {
   usePulseOverview,
   type PulseSource,
 } from "../hooks/usePulse";
+import { PulseComparison } from "./PulseComparison";
 import { PulseCoverage } from "./PulseCoverage";
 import { PulseRangePicker } from "./PulseRangePicker";
 import "../pulse-range.css";
@@ -20,7 +21,12 @@ export function PulseOverview({
 }: {
   source: PulseSource;
   now: number;
-  onHistory: (from: string, to: string, repo?: string) => void;
+  onHistory: (
+    from: string,
+    to: string,
+    repo?: string,
+    kind?: PulseActivityKind,
+  ) => void;
   onMilestones?: () => void;
   result?: ReturnType<typeof usePulseOverview>;
 }) {
@@ -93,6 +99,11 @@ export function PulseOverview({
               </div>
             ))}
           </div>
+          <PulseComparison
+            data={data}
+            demo={source.demo}
+            onHistory={onHistory}
+          />
           <div
             className="pulse-range-chart"
             aria-label={`${data.range.granularity === "day" ? "Daily" : "Weekly"} contributions`}

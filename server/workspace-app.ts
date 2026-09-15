@@ -1,3 +1,6 @@
+import { recapRouter } from "./recap-app.js";
+import { reviewFollowthroughRouter } from "./review-followthrough.js";
+import { savedViewsRouter } from "./saved-views.js";
 import { HealthStore } from "./health-store.js";
 import type { PulseDashboard } from "../shared/pulse-dashboard.js";
 import { randomUUID } from "node:crypto";
@@ -809,6 +812,9 @@ export function createWorkspaceApp({
     }),
   );
   app.use(healthRouter({ auth, store, workspaces, viewer }));
+  app.use(savedViewsRouter({ auth, store, viewer }));
+  app.use(recapRouter({ auth, store, viewer }));
+  app.use(reviewFollowthroughRouter({ auth, store, viewer }));
   if (webhooks) app.use(webhookRouter({ auth, webhooks, viewer }));
   app.use(
     healthShareRouter({
@@ -1156,7 +1162,7 @@ export function createWorkspaceApp({
         const principal = await auth.authenticate(request, response);
         const initial = await viewer(principal, request.params.id, true);
         const now = Date.now();
-        const { range, repo, cursor } = pulseQuery(request.query, now);
+        const { range, repo, cursor, kind } = pulseQuery(request.query, now);
         const scope = pulseScope(initial, principal.user.id);
         let result;
         if (endpoint === "dashboard") {
@@ -1234,6 +1240,7 @@ export function createWorkspaceApp({
                   cursor,
                   now,
                   scope,
+                  kind,
                 );
         // Every source, owner identity and author restriction must still match;
         // one revoked source invalidates the entire aggregate, never a partial view.

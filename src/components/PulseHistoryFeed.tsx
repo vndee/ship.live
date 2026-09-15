@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { resolvePulseRange, type PulseActivityPage } from "../../shared/pulse";
+import {
+  resolvePulseRange,
+  type PulseActivityKind,
+  type PulseActivityPage,
+} from "../../shared/pulse";
 import { isHumanActor } from "../lib/activity";
 import { fetchPulse, pulseEndpoint, type PulseSource } from "../hooks/usePulse";
 import type { ActivityEvent } from "../../shared/types";
@@ -9,12 +13,13 @@ export function PulseHistoryFeed(props: {
   from?: string;
   to?: string;
   repo?: string;
+  kind?: PulseActivityKind;
   now: number;
   onBack: () => void;
 }) {
-  const { source, from, to, repo } = props;
+  const { source, from, to, repo, kind } = props;
   // Remount on scope/range changes so an older request cannot append to a new view.
-  const key = `${source.scopeKey}:${source.workspaceId}:${source.shareToken}:${source.enabled}:${from}:${to}:${repo}`;
+  const key = `${source.scopeKey}:${source.workspaceId}:${source.shareToken}:${source.enabled}:${from}:${to}:${repo}:${kind}`;
   return <HistoryPage key={key} {...props} />;
 }
 function HistoryPage({
@@ -22,6 +27,7 @@ function HistoryPage({
   from,
   to,
   repo,
+  kind,
   now,
   onBack,
 }: {
@@ -29,6 +35,7 @@ function HistoryPage({
   from?: string;
   to?: string;
   repo?: string;
+  kind?: PulseActivityKind;
   now: number;
   onBack: () => void;
 }) {
@@ -49,6 +56,7 @@ function HistoryPage({
         event.type !== "alert" &&
         isHumanActor(event.actor.login) &&
         (!repo || event.repo === repo) &&
+        (!kind || kind === "contribution" || event.type === kind) &&
         Date.parse(event.occurredAt) <= cutoff,
     )
     .sort(
@@ -88,6 +96,7 @@ function HistoryPage({
           to: range.to,
         });
         if (repo) params.set("repo", repo);
+        if (kind) params.set("kind", kind);
         if (cursor) params.set("cursor", cursor);
         page = await fetchPulse<PulseActivityPage>(
           source,
@@ -131,6 +140,7 @@ function HistoryPage({
       to: to || "",
     });
     if (repo) params.set("repo", repo);
+    if (kind) params.set("kind", kind);
     // The server binds this cursor to the complete authorized repository scope.
     // Revalidating it preserves pages and scroll while detecting access changes.
     if (cursor) params.set("cursor", cursor);
@@ -169,6 +179,7 @@ function HistoryPage({
           <h2>Activity in selected period</h2>
           <p>
             {from} — {to} · UTC{repo ? ` · ${repo}` : ""}
+            {kind ? ` · ${kind}s` : ""}
           </p>
         </div>
       </div>

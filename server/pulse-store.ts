@@ -9,6 +9,7 @@ import {
   type PulseOverview,
   type PulseActivityPage,
   type PulseCounts,
+  type PulseActivityKind,
 } from "../shared/pulse.js";
 import { AuthError } from "./auth.js";
 import { retentionFromEnv } from "./runtime-config.js";
@@ -38,7 +39,14 @@ export function pulseQuery(query: Record<string, unknown>, now = Date.now()) {
     return value as string | undefined;
   };
   try {
+    const kind = read("kind");
+    if (
+      kind !== undefined &&
+      !["merge", "review", "release", "contribution"].includes(kind)
+    )
+      throw new Error("Invalid kind.");
     return {
+      kind: kind as PulseActivityKind | undefined,
       range: resolvePulseRange(
         {
           period: read("period") as PulseSelection["period"],
@@ -235,6 +243,7 @@ export class PulseStore {
       syncedRepositories: 0,
       totalRepositories: 0,
     };
+    result.comparison!.previous.coverage = result.coverage;
     if (!scope.sources.some((s) => s.repositoryIds.length)) return result;
     const params = [
       ...scopeParams(scope),
@@ -242,17 +251,20 @@ export class PulseStore {
       range.end,
       new Date(now).toISOString(),
     ];
-    // GROUPING SETS returns total, bucket, and repository summaries in one scan.
+    params.push(result.comparison!.previous.range.start);
+    // Aggregate both periods from the same authorized, deduplicated history.
     const rows = await this.pool.query<
       PulseCounts & {
+        period: "current" | "previous";
+        participants: number;
         bucket: string | null;
         repo: string | null;
         is_bucket: number;
         is_repo: number;
       }
     >(
-      `WITH events AS (${scopedEvents}), scoped AS (SELECT event, to_char(date_trunc('${range.granularity}', occurred_at AT TIME ZONE 'UTC'),'YYYY-MM-DD') AS bucket, event->>'repo' AS repo FROM events WHERE occurred_at >= $3::timestamptz AND occurred_at < $4::timestamptz AND occurred_at <= $5::timestamptz)
-   SELECT bucket,repo,grouping(bucket) AS is_bucket,grouping(repo) AS is_repo,${counts} FROM scoped GROUP BY GROUPING SETS ((),(bucket),(repo))`,
+      `WITH events AS (${scopedEvents}), scoped AS (SELECT event, CASE WHEN occurred_at >= $3::timestamptz THEN 'current' ELSE 'previous' END AS period, to_char(date_trunc('${range.granularity}', occurred_at AT TIME ZONE 'UTC'),'YYYY-MM-DD') AS bucket, event->>'repo' AS repo FROM events WHERE occurred_at >= $6::timestamptz AND occurred_at < $4::timestamptz AND occurred_at <= $5::timestamptz)
+   SELECT period,bucket,repo,grouping(bucket) AS is_bucket,grouping(repo) AS is_repo,${counts}, count(DISTINCT ${actor})::int AS participants FROM scoped GROUP BY GROUPING SETS ((period),(period,bucket),(period,repo))`,
       params,
     );
     for (const row of rows.rows) {
@@ -262,8 +274,17 @@ export class PulseStore {
         reviews: row.reviews,
         releases: row.releases,
       };
-      if (row.is_bucket === 1 && row.is_repo === 1) result.totals = values;
-      else if (row.is_repo === 0 && row.repo !== null)
+      if (row.period === "previous") {
+        if (row.is_bucket === 1 && row.is_repo === 1) {
+          result.comparison!.previous.totals = values;
+          result.comparison!.previous.participants = row.participants;
+        }
+        continue;
+      }
+      if (row.is_bucket === 1 && row.is_repo === 1) {
+        result.totals = values;
+        result.comparison!.currentParticipants = row.participants;
+      } else if (row.is_repo === 0 && row.repo !== null)
         result.repositories.push({ repo: row.repo, ...values });
       else if (row.bucket) {
         const key = row.bucket < range.from ? range.from : row.bucket;
@@ -311,6 +332,7 @@ export class PulseStore {
     cursor?: string,
     now = Date.now(),
     selectedScope?: PulseScope,
+    kind?: PulseActivityKind,
   ): Promise<PulseActivityPage> {
     const scope = readScope(installation, repositoryIds, selectedScope);
     const binding = createHash("sha256")
@@ -320,6 +342,7 @@ export class PulseStore {
           range.start,
           range.end,
           repo ?? null,
+          kind ?? null,
         ]),
       )
       .digest("hex");
@@ -379,6 +402,7 @@ export class PulseStore {
    SELECT event - 'body' AS event, to_char(occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at,event_id FROM activity
    WHERE occurred_at >= $3::timestamptz AND occurred_at < $4::timestamptz AND occurred_at <= $5::timestamptz
    AND ($6::text IS NULL OR event->>'repo'=$6)
+   AND ($12::text IS NULL OR event->>'type'=$12 OR ($12='contribution' AND event->>'type' NOT IN ('note','alert')))
    AND ($7::timestamptz IS NULL OR (occurred_at,event_id) < ($7::timestamptz,$8::text))
    ORDER BY occurred_at DESC,event_id DESC LIMIT 101`,
       [
@@ -392,6 +416,7 @@ export class PulseStore {
         scope.noteUserId ?? null,
         scope.workspaceId ?? null,
         scope.ownerLogin ?? null,
+        kind ?? null,
       ],
     );
     const page = rows.rows.slice(0, 100);

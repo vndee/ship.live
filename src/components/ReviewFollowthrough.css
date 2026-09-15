@@ -1,0 +1,44 @@
+.review-followthrough {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 0 18px 15px 62px;
+  color: var(--text-secondary, #9b9da8);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.review-followthrough-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.review-followthrough-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.review-followthrough button {
+  font: inherit;
+  color: inherit;
+  border: 1px solid var(--border, #41434e);
+  background: transparent;
+  border-radius: 6px;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+.review-followthrough button:hover {
+  color: var(--text-primary, #fff);
+  border-color: currentColor;
+}
+.review-followthrough button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.review-followthrough [role="alert"] {
+  color: var(--danger, #ef7787);
+}
+@media (max-width: 600px) {
+  .review-followthrough {
+    padding-left: 16px;
+  }
+}

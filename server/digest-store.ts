@@ -62,6 +62,7 @@ export async function readDigestSummary(
   pool: Pool,
   scope: {
     installations: number[];
+    sources?: { installationId: number; repositoryIds: number[] }[];
     repositoryIds: number[];
     author?: string;
     start: string;
@@ -73,6 +74,9 @@ export async function readDigestSummary(
     `WITH canonical AS MATERIALIZED (
       SELECT DISTINCT ON (event_id) event,event_id,occurred_at FROM ship_live_events
       WHERE organization=ANY($1::text[]) AND (event->>'repositoryId')::bigint=ANY($2::bigint[])
+        AND ($13::jsonb IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements($13::jsonb) source
+          WHERE organization='installation-' || (source->>'installationId')
+          AND source->'repositoryIds' @> jsonb_build_array((event->>'repositoryId')::bigint)))
         AND ($3::text IS NULL OR lower(event #>> '{actor,login}')=$3)
         AND event->>'type' NOT IN ('note','alert') AND ${actor} <> ''
         AND ${actor} !~ '(\\[bot\\]|-bot)$' AND ${actor} NOT IN ('dependabot','renovate','github-actions')
@@ -114,6 +118,9 @@ export async function readDigestSummary(
       SELECT DISTINCT ON(repository_id,kind,signal_key) repository_id,repository,kind,signal_key,value
       FROM ship_live_wall_signals WHERE installation_id=ANY($10::bigint[]) AND repository_id=ANY($2::bigint[])
         AND kind IN ('pull_request','review','pipeline')
+        AND ($13::jsonb IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements($13::jsonb) source
+          WHERE installation_id=(source->>'installationId')::bigint
+          AND source->'repositoryIds' @> jsonb_build_array(repository_id)))
       ORDER BY repository_id,kind,signal_key,
         (CASE WHEN kind='review' THEN value->>'submittedAt' ELSE value->>'updatedAt' END)::timestamptz DESC,
         installation_id
@@ -191,6 +198,7 @@ export async function readDigestSummary(
       scope.installations,
       repositoryAlphabet,
       repositoryWeights,
+      scope.sources ? JSON.stringify(scope.sources) : null,
     ],
   );
   return result.rows[0].summary;

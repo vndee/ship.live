@@ -32,8 +32,19 @@ export interface PulseOverview {
       totalRepositories: number;
     };
   };
+  comparison?: {
+    previous: {
+      range: PulseRange;
+      totals: PulseCounts;
+      participants: number;
+      coverage: PulseOverview["coverage"];
+    };
+    currentParticipants: number;
+    currentIncomplete: boolean;
+  };
   generatedAt: string;
 }
+export type PulseActivityKind = "merge" | "review" | "release" | "contribution";
 export interface PulseActivityPage {
   events: ActivityEvent[];
   nextCursor: string | null;
@@ -81,6 +92,18 @@ export function resolvePulseRange(
     granularity: (last - start) / DAY + 1 <= 31 ? "day" : "week",
   };
 }
+/** Immediately preceding calendar range, with the same inclusive day count. */
+export function previousPulseRange(range: PulseRange): PulseRange {
+  const end = Date.parse(range.start);
+  const start = end - (Date.parse(range.end) - end);
+  return {
+    from: date(start),
+    to: date(end - DAY),
+    start: new Date(start).toISOString(),
+    end: range.start,
+    granularity: range.granularity,
+  };
+}
 export const emptyPulseCounts = (): PulseCounts => ({
   count: 0,
   merges: 0,
@@ -109,6 +132,11 @@ export function aggregatePulse(
   range: PulseRange,
   now: number,
 ): PulseOverview {
+  const previousRange = previousPulseRange(range);
+  const previousTotals = emptyPulseCounts();
+  const currentParticipants = new Set<string>();
+  const previousParticipants = new Set<string>();
+  const previousSeen = new Set<string>();
   const buckets = pulseBuckets(range);
   const totals = emptyPulseCounts();
   const repositories = new Map<string, PulseCounts & { repo: string }>();
@@ -130,9 +158,22 @@ export function aggregatePulse(
       continue;
     if (earliestStoredAt === null || time < Date.parse(earliestStoredAt))
       earliestStoredAt = new Date(time).toISOString();
+    if (
+      time >= Date.parse(previousRange.start) &&
+      time < Date.parse(previousRange.end) &&
+      !previousSeen.has(event.id)
+    ) {
+      previousSeen.add(event.id);
+      previousParticipants.add(login);
+      previousTotals.count++;
+      previousTotals.merges += Number(event.type === "merge");
+      previousTotals.reviews += Number(event.type === "review");
+      previousTotals.releases += Number(event.type === "release");
+    }
     if (time < Date.parse(range.start) || time >= Date.parse(range.end))
       continue;
     seen.add(event.id);
+    currentParticipants.add(login);
     const repo = repositories.get(event.repo) ?? {
       repo: event.repo,
       ...emptyPulseCounts(),
@@ -156,6 +197,16 @@ export function aggregatePulse(
       (a, b) => b.count - a.count || a.repo.localeCompare(b.repo),
     ),
     coverage: { earliestStoredAt, retentionDays: null },
+    comparison: {
+      previous: {
+        range: previousRange,
+        totals: previousTotals,
+        participants: previousParticipants.size,
+        coverage: { earliestStoredAt, retentionDays: null },
+      },
+      currentParticipants: currentParticipants.size,
+      currentIncomplete: Date.parse(range.end) > now,
+    },
     generatedAt: new Date(now).toISOString(),
   };
 }

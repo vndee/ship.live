@@ -143,7 +143,7 @@ function workspaceShareRouter(
         const token = request.get(tokenHeader);
         const initial = await authorize(token);
         const now = Date.now();
-        const { range, repo, cursor } = pulseQuery(request.query, now);
+        const { range, repo, cursor, kind } = pulseQuery(request.query, now);
         const scope = {
           installationId: Number(initial.share.installation_id),
           repositoryIds: initial.repositories.map((item) => item.id),
@@ -182,6 +182,8 @@ function workspaceShareRouter(
                   repo,
                   cursor,
                   now,
+                  undefined,
+                  kind,
                 );
         const current = await authorize(token);
         if (

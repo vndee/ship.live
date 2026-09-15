@@ -3,6 +3,7 @@ import {
   aggregatePulse,
   resolvePulseRange,
   type PulseOverview,
+  type PulseActivityKind,
   type PulseSelection,
 } from "../../shared/pulse";
 import type { ActivityEvent } from "../../shared/types";
@@ -38,6 +39,11 @@ export function usePulseLocation() {
       },
       history: params.get("view") === "activity",
       repo: params.get("repo") || "",
+      kind: (["merge", "review", "release", "contribution"].includes(
+        params.get("kind") || "",
+      )
+        ? params.get("kind")
+        : undefined) as PulseActivityKind | undefined,
     };
   }, [search]);
 }
@@ -45,9 +51,10 @@ export function setPulseLocation(
   selection: PulseSelection,
   history = false,
   repo?: string,
+  kind?: PulseActivityKind,
 ) {
   const url = new URL(window.location.href);
-  for (const key of ["period", "from", "to", "view", "repo"])
+  for (const key of ["period", "from", "to", "view", "repo", "kind"])
     url.searchParams.delete(key);
   if (selection.period && selection.period !== "7d")
     url.searchParams.set("period", selection.period);
@@ -57,6 +64,7 @@ export function setPulseLocation(
   }
   if (history) url.searchParams.set("view", "activity");
   if (repo) url.searchParams.set("repo", repo);
+  if (kind) url.searchParams.set("kind", kind);
   if (url.href === window.location.href) return;
   window.history.pushState(null, "", url.pathname + url.search + url.hash);
   window.dispatchEvent(new Event(NAVIGATED));
