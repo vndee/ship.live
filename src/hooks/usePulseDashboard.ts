@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   aggregatePulse,
   resolvePulseRange,
@@ -28,6 +28,9 @@ export function usePulseDashboard(
       };
     }
   }, [selection.period, selection.from, selection.to, today]);
+  const historical = Boolean(parsed.range && parsed.range.to < today);
+  // Access transitions remain in scopeKey/enabled; activity revisions only
+  // refresh ranges that include today. The source feed still verifies access.
   const [revision, refresh] = useState(0);
   const key = JSON.stringify([
     source.scopeKey,
@@ -41,9 +44,16 @@ export function usePulseDashboard(
     key: string;
     data: PulseDashboard | null;
     error: string;
-  }>({ key: "", data: null, error: "" });
+    refreshing: boolean;
+  }>({ key: "", data: null, error: "", refreshing: false });
+  const previousRevision = useRef(source.revision);
   useEffect(() => {
-    if (!source.enabled || source.demo) return;
+    const changed = previousRevision.current !== source.revision;
+    previousRevision.current = source.revision;
+    if (changed && !historical) refresh((n) => n + 1);
+  }, [source.revision, historical]);
+  useEffect(() => {
+    if (!source.enabled || source.demo || historical) return;
     const update = () => refresh((n) => n + 1);
     window.addEventListener("ship-live-wall", update);
     const timer = setInterval(update, 30_000);
@@ -51,11 +61,16 @@ export function usePulseDashboard(
       window.removeEventListener("ship-live-wall", update);
       clearInterval(timer);
     };
-  }, [source.enabled, source.demo]);
+  }, [source.enabled, source.demo, historical]);
   useEffect(() => {
     if (!parsed.range || !source.enabled || source.demo) return;
     const controller = new AbortController();
-    setState({ key, data: null, error: "" });
+    setState((previous) => ({
+      key,
+      data: previous.key === key ? previous.data : null,
+      error: "",
+      refreshing: true,
+    }));
     const timer = setTimeout(() => {
       const query = new URLSearchParams({
         period: "custom",
@@ -71,18 +86,24 @@ export function usePulseDashboard(
         controller.signal,
       )
         .then((data) => {
-          if (!controller.signal.aborted) setState({ key, data, error: "" });
+          if (!controller.signal.aborted)
+            setState({ key, data, error: "", refreshing: false });
         })
         .catch((error) => {
           if (!controller.signal.aborted)
-            setState({ key, data: null, error: error.message });
+            setState({
+              key,
+              data: null,
+              error: error.message,
+              refreshing: false,
+            });
         });
     }, 150);
     return () => {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [key, source.demo, source.revision, revision]);
+  }, [key, source.demo, revision]);
   const demo = useMemo<PulseDashboard | null>(() => {
     const range = parsed.range;
     if (!source.demo || !source.enabled || !range || !demoWall) return null;
@@ -157,6 +178,7 @@ export function usePulseDashboard(
     data,
     error,
     loading: !error && !data,
+    refreshing: Boolean(data && current?.refreshing),
     retry: () => refresh((n) => n + 1),
   };
 }

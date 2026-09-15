@@ -77,6 +77,9 @@ export interface PulseScope {
 export function samePulseReadScope(initial: PulseScope, current: PulseScope) {
   return scopeBinding(initial) === scopeBinding(current);
 }
+export function pulseScopeFingerprint(scope: PulseScope): string {
+  return createHash("sha256").update(scopeBinding(scope)).digest("hex");
+}
 function scopeBinding(scope: PulseScope) {
   return JSON.stringify([
     scope.sources
@@ -227,6 +230,11 @@ export class PulseStore {
     result.coverage.retentionDays =
       retentionFromEnv(process.env).eventDays || null;
     const scope = readScope(installation, repositoryIds, selectedScope);
+    result.coverage.sourceSync = {
+      lastSyncedAt: null,
+      syncedRepositories: 0,
+      totalRepositories: 0,
+    };
     if (!scope.sources.some((s) => s.repositoryIds.length)) return result;
     const params = [
       ...scopeParams(scope),
@@ -272,6 +280,27 @@ export class PulseStore {
     );
     result.coverage.earliestStoredAt =
       coverage.rows[0].earliest?.toISOString() ?? null;
+    const sync = await this.pool.query<{
+      latest: Date | null;
+      synced: number;
+      total: number;
+    }>(
+      `WITH selected AS (
+         SELECT DISTINCT (source->>'installationId')::bigint AS installation_id,
+           repository_id::bigint AS repository_id
+         FROM jsonb_array_elements($1::jsonb) source,
+           jsonb_array_elements_text(source->'repositoryIds') repository_id
+       )
+       SELECT max(s.synced_at) AS latest, count(s.synced_at)::int AS synced,
+         count(*)::int AS total FROM selected r
+       LEFT JOIN ship_live_repository_sync s USING (installation_id, repository_id)`,
+      [JSON.stringify(scope.sources)],
+    );
+    result.coverage.sourceSync = {
+      lastSyncedAt: sync.rows[0].latest?.toISOString() ?? null,
+      syncedRepositories: sync.rows[0].synced,
+      totalRepositories: sync.rows[0].total,
+    };
     return result;
   }
   async activity(

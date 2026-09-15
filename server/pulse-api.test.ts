@@ -111,6 +111,9 @@ test("Pulse routes validate ranges, reauthorize aggregates and bind dashboard sh
       ],
       { restricted: true },
     );
+    await store.pool.query(`INSERT INTO ship_live_repository_sync VALUES
+      (70,101,'2026-09-14T09:00:00Z'), (70,999,'2026-09-15T11:00:00Z'),
+      (71,101,'2026-09-15T10:00:00Z')`);
     assert.equal((await get(`${base}/overview?period=garbage`)).status, 400);
     assert.equal((await get(`${base}/activity?cursor=garbage`)).status, 400);
     const overview = await get(`${base}/overview`);
@@ -136,6 +139,11 @@ test("Pulse routes validate ranges, reauthorize aggregates and bind dashboard sh
     assert.equal(dashboardData.events.length, 1);
     assert.equal(dashboardData.overview.totals.count, 1);
     assert.deepEqual(dashboardData.range, dashboardData.overview.range);
+    assert.deepEqual(dashboardData.overview.coverage.sourceSync, {
+      lastSyncedAt: "2026-09-14T09:00:00.000Z",
+      syncedRepositories: 1,
+      totalRepositories: 1,
+    });
     assert.ok(
       dashboardData.health,
       "private dashboard includes authorized health",
@@ -144,6 +152,15 @@ test("Pulse routes validate ranges, reauthorize aggregates and bind dashboard sh
     assert.equal(publicDashboard.status, 200);
     const publicData = await publicDashboard.json();
     assert.equal(publicData.events.length, 1);
+    assert.deepEqual(
+      publicData.overview.coverage.sourceSync,
+      {
+        lastSyncedAt: "2026-09-14T09:00:00.000Z",
+        syncedRepositories: 1,
+        totalRepositories: 1,
+      },
+      "shared coverage excludes imports outside its pinned repository and installation",
+    );
     assert.equal(
       publicData.health,
       undefined,

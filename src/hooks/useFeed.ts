@@ -1,5 +1,12 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { resetRouteDetails } from "./useRoute";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
+import { resetRouteDetails, useRoute } from "./useRoute";
 import type { ActivityEvent, FeedResponse } from "../../shared/types";
 import type { SessionResponse } from "../../shared/auth";
 import type {
@@ -83,6 +90,11 @@ function message(error: unknown) {
 }
 
 export function useFeed() {
+  const { workspace: linkedWorkspace } = useRoute();
+  const linkedWorkspaceRef = useRef(linkedWorkspace);
+  useLayoutEffect(() => {
+    linkedWorkspaceRef.current = linkedWorkspace;
+  }, [linkedWorkspace]);
   const [state, dispatch] = useReducer(privateFeedReducer, {
     ...emptyPrivateFeed,
     events: createDemoEvents(),
@@ -92,6 +104,9 @@ export function useFeed() {
   const [sessionError, setSessionError] = useState("");
   const [workspaceList, setWorkspaceList] =
     useState<WorkspaceList>(noWorkspaces);
+  const [workspaceListVerified, setWorkspaceListVerified] = useState(false);
+  const [workspaceListLoading, setWorkspaceListLoading] = useState(false);
+  const [workspaceListError, setWorkspaceListError] = useState("");
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [paused, setPaused] = useState(false);
   const [accessBlocked, setAccessBlocked] = useState(false);
@@ -188,6 +203,9 @@ export function useFeed() {
       initialSelection.current = true;
       setWorkspace(null);
       setWorkspaceList(noWorkspaces);
+      setWorkspaceListVerified(false);
+      setWorkspaceListLoading(false);
+      setWorkspaceListError("");
       setSession((previous) => ({
         ...previous,
         user: null,
@@ -236,14 +254,32 @@ export function useFeed() {
     const user = currentUser.current;
     if (!user) return;
     const serial = ++workspaceRequest.current;
+    setWorkspaceListLoading(true);
     try {
       const data = await request<WorkspaceList>("/api/workspaces");
       if (currentUser.current !== user || serial !== workspaceRequest.current)
         return;
       setWorkspaceList(data);
+      setWorkspaceListVerified(true);
+      setWorkspaceListLoading(false);
+      setWorkspaceListError("");
       authorizedWorkspaces.current = data.workspaces;
       const active = currentWorkspace.current;
-      if (active) {
+      const linkedId = linkedWorkspaceRef.current;
+      if (linkedId !== undefined) {
+        const next =
+          data.workspaces.find((item) => item.id === linkedId) ?? null;
+        if (
+          active?.id !== next?.id ||
+          initialSelection.current ||
+          blocked.current
+        )
+          applyWorkspace(next);
+        else if (next) {
+          currentWorkspace.current = next;
+          setWorkspace(next);
+        }
+      } else if (active) {
         const replacement = data.workspaces.find(
           (item) => item.id === active.id,
         );
@@ -276,9 +312,39 @@ export function useFeed() {
     } catch (error) {
       if (currentUser.current !== user || serial !== workspaceRequest.current)
         return;
+      setWorkspaceListLoading(false);
+      setWorkspaceListError(message(error));
       if (!accessFailure(error)) setSessionError(message(error));
     }
   }, [accessFailure, applyWorkspace]);
+
+  const previousLinkedWorkspace = useRef(linkedWorkspace);
+  useEffect(() => {
+    const previous = previousLinkedWorkspace.current;
+    previousLinkedWorkspace.current = linkedWorkspace;
+    if (
+      linkedWorkspace === undefined &&
+      previous !== undefined &&
+      !currentWorkspace.current &&
+      currentUser.current
+    ) {
+      const preferred = readWorkspacePreference(currentUser.current, (key) =>
+        localStorage.getItem(key),
+      );
+      applyWorkspace(
+        chooseInitialWorkspace(authorizedWorkspaces.current, preferred),
+      );
+    }
+    if (linkedWorkspace === undefined || sessionLoading || !currentUser.current)
+      return;
+    const next =
+      authorizedWorkspaces.current.find(
+        (item) => item.id === linkedWorkspace,
+      ) ?? null;
+    if (currentWorkspace.current?.id !== next?.id) {
+      if (applyWorkspace(next)) selectionRevision.current += 1;
+    }
+  }, [linkedWorkspace, sessionLoading, applyWorkspace]);
 
   const loadWorkspaces = useCallback(() => {
     const pending = refreshWorkspaces();
@@ -375,6 +441,7 @@ export function useFeed() {
         type: "snapshot",
         generation: current,
         events: data.events,
+        accessScope: data.accessScope,
         updatedAt: data.updatedAt,
         notice: data.notice,
       });
@@ -846,6 +913,27 @@ export function useFeed() {
     operation: operationState.operation,
     retryOperation,
     workspace,
+    linkedWorkspaceError:
+      linkedWorkspace !== undefined && session.user ? workspaceListError : "",
+    workspaceListLoading,
+    retryWorkspaceAccess: loadSession,
+    linkedWorkspacePending:
+      linkedWorkspace !== undefined &&
+      (sessionLoading ||
+        (Boolean(session.user) &&
+          !workspaceListVerified &&
+          !workspaceListError) ||
+        (workspace?.id !== linkedWorkspace &&
+          workspaceList.workspaces.some(
+            (item) => item.id === linkedWorkspace,
+          ))),
+    linkedWorkspaceUnavailable:
+      linkedWorkspace !== undefined &&
+      !sessionLoading &&
+      workspaceListVerified &&
+      !workspaceListError &&
+      (!session.user ||
+        !workspaceList.workspaces.some((item) => item.id === linkedWorkspace)),
     organization: workspace?.name || "",
     demo,
     paused,

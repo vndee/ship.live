@@ -2777,3 +2777,49 @@ test("members rename a team workspace and a journal's owner renames the journal,
     assert.equal(reset.defaultName, undefined);
   });
 });
+
+test("feed access scope stays stable across activity and ordering but changes on repository loss even with no visible events", async (t) => {
+  await withApp(t, async ({ store, workspaces, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1, team, [
+      repoA,
+      repoB,
+    ]);
+    const feed = async () => {
+      const response = await request(`/api/workspaces/${workspace.id}/feed`);
+      assert.equal(response.status, 200);
+      return (await response.json()) as FeedResponse;
+    };
+    const initial = await feed();
+    assert.deepEqual(initial.events, []);
+    assert.match(initial.accessScope ?? "", /^[a-f0-9]{64}$/);
+    await store.merge("installation-70", [event("scope-test", 101)], {
+      restricted: true,
+    });
+    assert.equal(
+      (await feed()).accessScope,
+      initial.accessScope,
+      "new activity must not invalidate frozen historical data",
+    );
+    await connect(workspaces, users[0], 1, team, [repoB, repoA]);
+    assert.equal(
+      (await feed()).accessScope,
+      initial.accessScope,
+      "equivalent repository ordering keeps scope stable",
+    );
+    const read = workspaces.feed.bind(workspaces);
+    workspaces.feed = async (...args) => {
+      const result = await read(...args);
+      workspaces.feed = read;
+      await workspaces.restrictAccess(70, [102], true);
+      return result;
+    };
+    const narrowed = await feed();
+    assert.deepEqual(narrowed.events, []);
+    assert.notEqual(
+      narrowed.accessScope,
+      initial.accessScope,
+      "the final authorization scope invalidates hidden historical events",
+    );
+    assert.equal((await feed()).accessScope, narrowed.accessScope);
+  });
+});

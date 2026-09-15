@@ -79,6 +79,42 @@ export default function App() {
 
 function PrivateApp() {
   const feed = useFeed();
+  if (feed.linkedWorkspaceError)
+    return (
+      <main className="empty-state">
+        <h1>Could not load workspace</h1>
+        <p role="alert">{feed.linkedWorkspaceError}</p>
+        <button
+          className="button secondary"
+          disabled={feed.workspaceListLoading}
+          onClick={() => void feed.retryWorkspaceAccess()}
+        >
+          Retry workspace access
+        </button>
+      </main>
+    );
+  if (feed.linkedWorkspacePending)
+    return (
+      <main>
+        <p role="status">Loading linked workspace…</p>
+      </main>
+    );
+  if (feed.session.user && feed.linkedWorkspaceUnavailable)
+    return (
+      <main className="empty-state">
+        <h1>Workspace unavailable</h1>
+        <p>
+          This link is for a workspace your current account cannot access. Sign
+          in with an account that belongs to the workspace.
+        </p>
+        <button
+          className="button secondary"
+          onClick={() => navigate({ page: "pulse" })}
+        >
+          Open your dashboard
+        </button>
+      </main>
+    );
   return <WorkspaceView key={feed.scopeKey} feed={feed} />;
 }
 
@@ -723,11 +759,17 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
             <PulsePageFilter
               selection={pulseLocation.selection}
               range={pulseDashboard.range}
+              overview={pulseDashboard.data?.overview}
+              onRefresh={pulseDashboard.retry}
+              refreshing={pulseDashboard.refreshing}
+              demo={pulseSource.demo}
               now={now}
               onChange={setPulseLocation}
             />
             <div className="dashboard-layout">
               <EngineeringWall
+                requestedScene={route.scene}
+                onSceneChange={(scene) => navigate({ ...route, scene })}
                 overview={
                   <PulseOverview
                     source={pulseSource}
@@ -737,7 +779,7 @@ function WorkspaceView({ feed }: { feed: FeedController }) {
                     }}
                     now={now}
                     onHistory={(from, to, repo) =>
-                      navigate({ page: "feed", from, to, repo })
+                      navigate({ ...route, page: "feed", from, to, repo })
                     }
                     onMilestones={() => navigate({ page: "milestones" })}
                   />

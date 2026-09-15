@@ -167,6 +167,9 @@ export function SharedDashboard() {
             <PulsePageFilter
               selection={pulseLocation.selection}
               range={dashboard.range}
+              overview={dashboard.data?.overview}
+              onRefresh={dashboard.retry}
+              refreshing={dashboard.refreshing}
               now={now}
               onChange={setPulseLocation}
             />

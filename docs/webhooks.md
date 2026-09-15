@@ -157,7 +157,20 @@ Accepted requests also appear in the team's Live activity as alerts, as they arr
 
 ## Weekly digest
 
-After Monday 09:00 UTC, each workspace with a webhook listening to `digest.weekly` gets one digest for the previous week. Its `data` has the week's totals (merges, reviews, releases, contributors, XP by the leaderboard's rules), the top five contributors, the busiest repositories, and each service's uptime and incident count. A webhook added after Monday's send time starts the following week.
+After Monday 09:00 UTC, each workspace with a webhook listening to `digest.weekly` gets one digest for the previous Monday–Sunday in UTC. A webhook added after Monday's send time starts the following week.
+
+The original `data` fields remain: `weekStart`, `weekEnd`, `totals` (merges, reviews, releases, contributors, XP by the leaderboard's rules), `topContributors`, `repositories`, and `services` (uptime and incidents). The digest also includes:
+
+- `shipped`: up to five recent merges and releases, with titles and source links.
+- `helpfulReviewers`: up to five people whose reviews can be matched to another person's PR. Unknown authors and self-reviews earn no help recognition; this is a limited record of collaboration, not a productivity score.
+- `needsHelp`: up to five currently open, non-draft PRs waiting on review/follow-up or failing checks. `basis: "current"` and `checkedAt` distinguish these latest stored statuses from the historical digest week.
+- `nextMilestone`: progress and remaining work at the end of that week toward the next weekly team milestone, or `null` when all are reached.
+- `links`: workspace-scoped Pulse, review, reviewer, and milestone links for the selected week. The separate recent-review link opens the current dashboard; direct GitHub links open reported PRs even when they fall outside its default date range.
+- `coverage` and `body`: a stored-history caveat and concise chat summary. Lists in chat are excerpts of up to three items; the structured payload retains up to five.
+
+PostgreSQL calculates totals over all retained, authorized weekly activity without a 20,000-row cutoff. Only aggregated counts and bounded shortlists reach the webhook worker, so its event and PR buffers do not grow with the week’s activity. Canonical event IDs deduplicate installation overlap; notes, inbound alerts, and bot activity are excluded. Missing history can lower totals. Personal workspace digests preserve their source selection and mine-only author filter. Immediately before sending, the worker rechecks the repository permissions, saved webhook pins, and source/author scope used to build the digest. A changed scope prevents that payload from being sent.
+
+Built-in Slack, Discord, Teams, Google Chat, and Lark templates show the digest narrative and dashboard links. Previously saved defaults receive this improvement only when their template bytes exactly match the original built-in template, and only for JSON weekly digests. Customized templates remain unchanged and can use `{{data.body}}`, `{{url}}`, or the structured fields above. No saved template is overwritten.
 
 ## Limits
 

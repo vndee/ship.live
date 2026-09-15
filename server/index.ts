@@ -146,6 +146,7 @@ async function main(): Promise<void> {
       pool: store.pool,
       store: webhooks,
       access,
+      appUrl: auth.config.appUrl,
     });
     const server = app.listen(port, () =>
       log.info(`ship.live listening on http://localhost:${port}`, {

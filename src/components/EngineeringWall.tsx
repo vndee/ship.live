@@ -175,7 +175,11 @@ export function EngineeringWall({
   scopeError = "",
   scopeLoading = false,
   onRetry,
+  requestedScene,
+  onSceneChange,
 }: {
+  requestedScene?: WallScene;
+  onSceneChange?: (scene: WallScene) => void;
   range?: PulseRange | null;
   scopeError?: string;
   scopeLoading?: boolean;
@@ -233,17 +237,26 @@ export function EngineeringWall({
     [scoped, snapshot, events, health],
   );
   const scenes = useMemo(
-    () => visibleScenes(available, tabs),
-    [available, tabs],
+    () =>
+      visibleScenes(
+        available,
+        requestedScene
+          ? {
+              ...tabs,
+              hidden: tabs.hidden.filter((item) => item !== requestedScene),
+            }
+          : tabs,
+      ),
+    [available, tabs, requestedScene],
   );
   // Health is only a choice where health data exists.
   const options = tabs.order.filter((item) => item !== "health" || health);
   const shownOptions = options.filter(
-    (item) => !tabs.hidden.includes(item),
+    (item) => item === requestedScene || !tabs.hidden.includes(item),
   ).length;
   // Live data recreates the scene list; only a real change restarts the timer.
   const sceneKey = scenes.join(",");
-  const [scene, setScene] = useState<WallScene>(scenes[0]);
+  const [scene, setScene] = useState<WallScene>(requestedScene ?? scenes[0]);
   const [autoplay, setAutoplay] = useState(autoplayDefault);
   const [hovered, setHovered] = useState(false);
   const [cycle, setCycle] = useState(0);
@@ -282,17 +295,28 @@ export function EngineeringWall({
     }
   }
   function toggleScene(item: WallScene) {
-    saveTabs({
+    const wasShown = item === requestedScene || !tabs.hidden.includes(item);
+    const next = {
       ...tabs,
-      hidden: tabs.hidden.includes(item)
-        ? tabs.hidden.filter((value) => value !== item)
-        : [...tabs.hidden, item],
-    });
+      hidden: wasShown
+        ? [...new Set([...tabs.hidden, item])]
+        : tabs.hidden.filter((value) => value !== item),
+    };
+    saveTabs(next);
+    if (wasShown && (scene === item || requestedScene === item)) {
+      const remaining = visibleScenes(available, next);
+      const replacement = remaining.includes(scene) ? scene : remaining[0];
+      setScene(replacement);
+      onSceneChange?.(replacement);
+    }
   }
   function moveOption(item: WallScene, offset: -1 | 1) {
     saveTabs({ ...tabs, order: moveScene(tabs.order, item, offset, options) });
   }
   useEffect(() => setTabs(readWallTabs(storageKey)), [storageKey]);
+  useEffect(() => {
+    setScene(requestedScene ?? scenes[0]);
+  }, [requestedScene]);
   useEffect(() => setAutoplay(autoplayDefault), [autoplayDefault]);
   useEffect(() => {
     if (!choosing) return;
@@ -369,8 +393,13 @@ export function EngineeringWall({
     return () => clearTimeout(timer);
   }, [rotating, hovered, scene, sceneKey, cycle]);
   useEffect(() => {
-    if (!scenes.includes(scene)) setScene(scenes[0]);
-  }, [scenes, scene]);
+    if (!scenes.includes(scene))
+      setScene(
+        requestedScene && scenes.includes(requestedScene)
+          ? requestedScene
+          : scenes[0],
+      );
+  }, [scenes, scene, requestedScene]);
   useEffect(() => {
     // Keep the active tab visible in a scrolling tab strip. Only the strip
     // scrolls: scrollIntoView would also move the page on every slide.
@@ -407,7 +436,10 @@ export function EngineeringWall({
               type="button"
               className={item === scene ? "active" : ""}
               aria-current={item === scene ? "page" : undefined}
-              onClick={() => setScene(item)}
+              onClick={() => {
+                setScene(item);
+                onSceneChange?.(item);
+              }}
             >
               {labels[item]}
               {rotating && item === scene && (
@@ -465,7 +497,8 @@ export function EngineeringWall({
                 <strong>Tabs</strong>
                 <ol>
                   {options.map((item, index) => {
-                    const checked = !tabs.hidden.includes(item);
+                    const checked =
+                      item === requestedScene || !tabs.hidden.includes(item);
                     return (
                       <li className="wall-chooser-option" key={item}>
                         <label>
