@@ -1,3 +1,4 @@
+import type { MergeVerification } from "./xp.js";
 export type ActivityType =
   | "merge"
   | "review"
@@ -18,6 +19,13 @@ export interface ActivityEvent {
   url?: string;
   occurredAt: string;
   number?: number;
+  /** PR author supplied by GitHub, or resolved from retained PR context. */
+  pullRequestAuthor?: string;
+  /** Server-resolved eligibility over retained history, before date/feed limits. */
+  reviewCredit?: boolean;
+  /** Head commit at merge, used only for matching observed checks. */
+  headSha?: string;
+  verification?: MergeVerification;
   additions?: number;
   deletions?: number;
   /** The base branch a pull request merged into. */

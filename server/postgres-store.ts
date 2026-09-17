@@ -1,3 +1,4 @@
+import { scoredEventSql, captureMergeVerification } from "./xp.js";
 import { readFile } from "node:fs/promises";
 import { Pool, type PoolClient } from "pg";
 import type { ActivityEvent } from "../shared/types.js";
@@ -109,7 +110,7 @@ export class PostgresEventStore implements EventStore {
 
   async list(organization: string): Promise<ActivityEvent[]> {
     const result = await this.pool.query<{ event: ActivityEvent }>(
-      "SELECT event FROM ship_live_events WHERE organization = $1 ORDER BY occurred_at DESC, event_id LIMIT $2",
+      `SELECT ${scoredEventSql("e.event", "e.organization")} AS event FROM ship_live_events e WHERE organization = $1 ORDER BY occurred_at DESC, event_id LIMIT $2`,
       [organization.toLowerCase(), FEED_LIMIT],
     );
     return result.rows.map((row) => row.event);
@@ -120,7 +121,7 @@ export class PostgresEventStore implements EventStore {
     eventId: string,
   ): Promise<ActivityEvent | undefined> {
     const result = await this.pool.query<{ event: ActivityEvent }>(
-      "SELECT event FROM ship_live_events WHERE organization = $1 AND event_id = $2",
+      `SELECT ${scoredEventSql("e.event", "e.organization")} AS event FROM ship_live_events e WHERE organization = $1 AND event_id = $2`,
       [organization.toLowerCase(), eventId],
     );
     return result.rows[0]?.event;
@@ -208,6 +209,7 @@ export class PostgresEventStore implements EventStore {
     organization: string,
     events: ActivityEvent[],
     options: MergeOptions & {
+      captureVerification?: boolean;
       /** Runs in the write's transaction with the events that are new. */
       afterWrite?: (
         client: PoolClient,
@@ -240,6 +242,8 @@ export class PostgresEventStore implements EventStore {
         })),
         options.preferExisting,
       );
+      if (options.captureVerification)
+        await captureMergeVerification(client, org, added);
       if (options.afterWrite) await options.afterWrite(client, added);
       // PostgreSQL releases notifications only after this same transaction commits.
       if (options.deliveryId && eventIds.length) {

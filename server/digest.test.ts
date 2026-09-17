@@ -282,7 +282,7 @@ test("a digest counts only the week's activity in the webhook's repositories, wi
       reviews: 1,
       releases: 0,
       contributors: 2,
-      xp: 75,
+      xp: 70,
     });
     assert.deepEqual(
       (digest.data.topContributors as { login: string }[]).map(
@@ -663,7 +663,7 @@ test("a prepared digest is no longer authorized when its source scope changes", 
   });
 });
 
-test("bounded digest aggregation preserves canonical deduplication, human counts, and per-PR daily review credit", async (t) => {
+test("bounded digest aggregation preserves canonical deduplication, human counts, and per-PR retained review credit", async (t) => {
   await withWorkspace(t, async ({ pool, workspace, user }) => {
     const second = randomUUID();
     const journal = randomUUID();
@@ -718,6 +718,7 @@ test("bounded digest aggregation preserves canonical deduplication, human counts
         repositoryId: 7,
         title: "Work",
         occurredAt: at,
+        ...(item.type === "review" ? { pullRequestAuthor: "teammate" } : {}),
         ...item,
         actor: { login: item.login ?? "alice" },
       };
@@ -743,11 +744,11 @@ test("bounded digest aggregation preserves canonical deduplication, human counts
       reviews: 8,
       releases: 1,
       contributors: 3,
-      xp: 236,
+      xp: 165,
     });
     assert.deepEqual(digest.data.topContributors, [
-      { login: "alice", xp: 191, merges: 2, reviews: 7 },
-      { login: "bob", xp: 45, merges: 1, reviews: 1 },
+      { login: "alice", xp: 125, merges: 2, reviews: 7 },
+      { login: "bob", xp: 40, merges: 1, reviews: 1 },
       { login: "charlie", xp: 0, merges: 0, reviews: 0 },
     ]);
     assert.equal(

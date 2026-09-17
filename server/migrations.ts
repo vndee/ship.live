@@ -21,6 +21,7 @@ export const MIGRATION_FILES: readonly string[] = [
   "020_personal_sources.sql",
   "021_workspace_names.sql",
   "022_team_followthrough.sql",
+  "023_xp_review_indexes.sql",
 ];
 
 export const SCHEMA_VERSION = MIGRATION_FILES.length;

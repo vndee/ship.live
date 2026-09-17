@@ -52,3 +52,21 @@ test("reclosing an issue keeps credit on its original closure even across weeks 
   });
   assert.deepEqual(await store.list("team"), [earlier]);
 });
+
+test("sparse replay cannot erase the known PR author needed for peer credit", async () => {
+  const store = new MemoryEventStore();
+  const review: ActivityEvent = {
+    ...event,
+    id: "review",
+    type: "review",
+    number: 1,
+    pullRequestAuthor: "author",
+  };
+  await store.merge("team", [review]);
+  const { pullRequestAuthor: _author, ...sparse } = review;
+  await store.merge("team", [sparse]);
+  assert.equal(
+    (await store.get("team", "review"))?.pullRequestAuthor,
+    "author",
+  );
+});

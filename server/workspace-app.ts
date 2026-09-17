@@ -766,6 +766,7 @@ export function createWorkspaceApp({
         {
           restricted: true,
           deliveryId,
+          captureVerification: true,
           // Live activity, never imported history, reaches team webhooks.
           afterWrite: async (client, added) => {
             for (const event of added) {
@@ -1474,7 +1475,13 @@ export function createWorkspaceApp({
           visible([{ installationId: source.installationId, event }], current)
             .length
         )
-          write(`event: activity\ndata: ${JSON.stringify(event)}\n\n`);
+          // Review credit depends on all authorized installations. The fresh feed
+          // resolves that scope; never publish a single-installation XP annotation.
+          write(
+            event.type === "review"
+              ? "event: refresh\ndata: {}\n\n"
+              : `event: activity\ndata: ${JSON.stringify(event)}\n\n`,
+          );
       });
     });
     heartbeat = setInterval(

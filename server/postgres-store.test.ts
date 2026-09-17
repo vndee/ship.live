@@ -59,14 +59,14 @@ async function eventually(check: () => Promise<boolean>, message: string) {
 }
 
 test("the immediately next additive schema remains rollback-compatible", () => {
-  assert.equal(SCHEMA_VERSION, 22);
-  assert.equal(MAX_SUPPORTED_SCHEMA_VERSION, 23);
-  assert.doesNotThrow(() => assertSupportedSchema([1, 22, 23]));
+  assert.equal(SCHEMA_VERSION, 23);
+  assert.equal(MAX_SUPPORTED_SCHEMA_VERSION, 24);
+  assert.doesNotThrow(() => assertSupportedSchema([1, 23, 24]));
 });
 
 test("schemas beyond the declared rollback window are rejected", () => {
   assert.throws(
-    () => assertSupportedSchema([1, 24]),
+    () => assertSupportedSchema([1, 25]),
     /newer ship\.live schema/,
   );
 });
@@ -107,6 +107,7 @@ test("PostgreSQL migrations serialize concurrent startup and preserve connection
       { version: 20 },
       { version: 21 },
       { version: 22 },
+      { version: 23 },
     ]);
     await stores[0].merge("team", [event]);
     assert.deepEqual(await stores[1].list("team"), [event]);

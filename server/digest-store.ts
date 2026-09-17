@@ -1,3 +1,4 @@
+import { scoredEventSql } from "./xp.js";
 import type { Pool } from "pg";
 import {
   BRANCH_MERGE_POINTS,
@@ -72,7 +73,7 @@ export async function readDigestSummary(
 ): Promise<DigestSummary> {
   const result = await pool.query<{ summary: DigestSummary }>(
     `WITH canonical AS MATERIALIZED (
-      SELECT DISTINCT ON (event_id) event,event_id,occurred_at FROM ship_live_events
+      SELECT DISTINCT ON (event_id) ${scoredEventSql("ship_live_events.event", "ship_live_events.organization", (org, repo) => `${org}=ANY($1::text[]) AND (${repo})::bigint=ANY($2::bigint[]) AND ($13::jsonb IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements($13::jsonb) history WHERE ${org}='installation-' || (history->>'installationId') AND history->'repositoryIds' @> jsonb_build_array((${repo})::bigint)))`)} AS event,event_id,occurred_at FROM ship_live_events
       WHERE organization=ANY($1::text[]) AND (event->>'repositoryId')::bigint=ANY($2::bigint[])
         AND ($13::jsonb IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements($13::jsonb) source
           WHERE organization='installation-' || (source->>'installationId')
@@ -83,13 +84,11 @@ export async function readDigestSummary(
       ORDER BY event_id,occurred_at DESC,organization
     ), weekly AS MATERIALIZED (
       SELECT event,event_id,occurred_at,event->>'type' AS type,event->>'repo' AS repo,
-        event #>> '{actor,login}' AS login,lower(event #>> '{actor,login}') AS person,
-        row_number() OVER (PARTITION BY lower(event #>> '{actor,login}'),lower(event->>'repo'),event->>'number',to_char(occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD'),event->>'type'
-          ORDER BY occurred_at DESC,event_id DESC) AS review_rank
+        event #>> '{actor,login}' AS login,lower(event #>> '{actor,login}') AS person
       FROM canonical WHERE occurred_at >= $4::timestamptz AND occurred_at < $5::timestamptz AND occurred_at <= $6::timestamptz
     ), credited AS MATERIALIZED (
       SELECT *, CASE
-        WHEN type='review' AND event ? 'number' AND review_rank>1 THEN 0
+        WHEN type='review' AND (NOT (event ? 'number') OR event->'reviewCredit' IS DISTINCT FROM 'true'::jsonb OR coalesce(btrim(event->>'pullRequestAuthor'),'')='' OR lower(btrim(event->>'pullRequestAuthor'))=lower(btrim(login))) THEN 0
         WHEN type='merge' AND event->'defaultBranch'='false'::jsonb THEN $8::numeric
         WHEN type='push' THEN $9::numeric*coalesce((event->>'commits')::numeric,0)
         ELSE ($7::jsonb->>type)::numeric END AS points FROM weekly
@@ -101,7 +100,7 @@ export async function readDigestSummary(
       SELECT DISTINCT ON(person) person,login FROM weekly ORDER BY person,occurred_at DESC,event_id DESC
     ), top_people AS (
       SELECT names.login,people.xp,people.merges,people.reviews FROM people JOIN names USING(person)
-      ORDER BY xp DESC,contributions DESC,lower(login) COLLATE "C",login COLLATE "C" LIMIT 5
+      ORDER BY xp DESC,lower(login) COLLATE "C",login COLLATE "C" LIMIT 5
     ), repo_counts AS (
       SELECT repo AS name,count(*) FILTER(WHERE type='merge') AS merges,count(*) FILTER(WHERE type='review') AS reviews
       FROM weekly WHERE type IN ('merge','review') GROUP BY repo

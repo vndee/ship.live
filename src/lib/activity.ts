@@ -5,12 +5,12 @@ import type { ActivityEvent, ActivityType } from "../../shared/types";
 const DAY = 24 * 60 * 60 * 1000;
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-/** XP for each commit a push adds to the repository. */
-export const COMMIT_POINTS = 2;
+/** Commits remain visible activity without stacking delivery XP. */
+export const COMMIT_POINTS = 0;
 /** Merges into other branches count, but below merges into the default branch. */
 export const BRANCH_MERGE_POINTS = 15;
 
-/** Push points are per new commit; see basePoints. */
+/** Base recognition for each activity kind. */
 export const EVENT_META: Record<
   ActivityType,
   {
@@ -29,7 +29,7 @@ export const EVENT_META: Record<
   review: {
     label: "Review",
     verb: "reviewed a pull request",
-    points: 15,
+    points: 10,
     color: "violet",
   },
   note: {
@@ -59,7 +59,7 @@ export const EVENT_META: Record<
   pr: {
     label: "Pull request",
     verb: "opened a pull request",
-    points: 5,
+    points: 0,
     color: "sky",
   },
   alert: {
@@ -159,9 +159,22 @@ function weeklyEvents(
     : eligibleEvents(events, now, getWeekStart(now).getTime());
 }
 
-/** Base XP before weekly limits: pushes earn per new commit, merges by target branch. */
+function knownAuthor(login: string | undefined): string | undefined {
+  const value = login?.trim();
+  return value && value.toLowerCase() !== "unknown" ? value : undefined;
+}
+
+/** Base XP before review deduplication. Verification bonuses remain unranked. */
 export function basePoints(event: ActivityEvent): number {
-  if (event.type === "push") return (event.commits ?? 0) * COMMIT_POINTS;
+  const author = knownAuthor(event.pullRequestAuthor);
+  if (
+    event.type === "review" &&
+    (!event.number ||
+      !author ||
+      event.reviewCredit === false ||
+      author.toLowerCase() === event.actor.login.trim().toLowerCase())
+  )
+    return 0;
   // Unknown targets keep full credit, like events stored before branches were recorded.
   if (event.type === "merge" && event.defaultBranch === false)
     return BRANCH_MERGE_POINTS;
@@ -208,21 +221,42 @@ export const SCORING_RULES: Array<{
   },
 ];
 
-/** Keep distinct review activity visible, but only credit one review per PR/day/person. */
+/** Resolve earliest peer review before selecting a week or display period. */
 function withCredit(
   events: ActivityEvent[],
 ): Array<{ event: ActivityEvent; points: number }> {
+  const authors = new Map<string, string>();
+  const keyFor = (e: ActivityEvent) =>
+    `${e.repositoryId ?? e.repo.toLowerCase()}|${e.number}`;
+  for (const e of events) {
+    const author = knownAuthor(
+      e.type === "pr" || e.type === "merge"
+        ? e.actor.login
+        : e.type === "review"
+          ? e.pullRequestAuthor
+          : undefined,
+    );
+    if (e.number && author) authors.set(keyFor(e), author);
+  }
   const reviews = new Set<string>();
-  return events.map((event) => {
-    let points = basePoints(event);
-    if (event.type === "review" && event.number !== undefined) {
-      const day = new Date(event.occurredAt).toISOString().slice(0, 10);
-      const key = `${event.actor.login.toLowerCase()}|${event.repo.toLowerCase()}|${event.number}|${day}`;
-      if (reviews.has(key)) points = 0;
+  const credits = new Map<string, number>();
+  for (const e of [...events].sort(
+    (a, b) =>
+      Date.parse(a.occurredAt) - Date.parse(b.occurredAt) ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  )) {
+    let points = basePoints(e);
+    if (e.type === "review") {
+      const author = knownAuthor(e.pullRequestAuthor) || authors.get(keyFor(e));
+      const key = `${e.actor.login.trim().toLowerCase()}|${keyFor(e)}`;
+      points = reviews.has(key)
+        ? 0
+        : basePoints({ ...e, pullRequestAuthor: author });
       reviews.add(key);
     }
-    return { event, points };
-  });
+    credits.set(e.id, points);
+  }
+  return events.map((event) => ({ event, points: credits.get(event.id) ?? 0 }));
 }
 
 /** Human, de-duplicated events up to now, with the board's review credit limit. */
@@ -231,7 +265,21 @@ export function getCreditedEvents(
   now = Date.now(),
   since = -Infinity,
 ): Array<{ event: ActivityEvent; points: number }> {
-  return withCredit(eligibleEvents(events, now, since));
+  return withCredit(eligibleEvents(events, now)).filter(
+    ({ event }) => Date.parse(event.occurredAt) >= since,
+  );
+}
+
+function periodCredit(
+  events: ActivityEvent[],
+  now: number,
+  range?: PulseRange,
+) {
+  return getCreditedEvents(events, now).filter(({ event }) =>
+    range
+      ? inPeriod(event.occurredAt, range, now)
+      : Date.parse(event.occurredAt) >= getWeekStart(now).getTime(),
+  );
 }
 
 export function getMetrics(
@@ -247,7 +295,10 @@ export function getMetrics(
     contributors: new Set(
       weekly.map((event) => event.actor.login.toLowerCase()),
     ).size,
-    xp: withCredit(weekly).reduce((sum, item) => sum + item.points, 0),
+    xp: periodCredit(events, now, range).reduce(
+      (sum, item) => sum + item.points,
+      0,
+    ),
     total: weekly.length,
   };
 }
@@ -258,9 +309,7 @@ export function getLeaderboard(
   range?: PulseRange,
 ): LeaderboardEntry[] {
   const people = new Map<string, LeaderboardEntry>();
-  for (const { event, points } of withCredit(
-    weeklyEvents(events, now, range),
-  )) {
+  for (const { event, points } of periodCredit(events, now, range)) {
     const key = event.actor.login.toLowerCase();
     const entry = people.get(key) ?? {
       login: event.actor.login,
@@ -279,12 +328,7 @@ export function getLeaderboard(
     people.set(key, entry);
   }
   return [...people.values()]
-    .sort(
-      (a, b) =>
-        b.xp - a.xp ||
-        b.contributions - a.contributions ||
-        a.login.localeCompare(b.login),
-    )
+    .sort((a, b) => b.xp - a.xp || a.login.localeCompare(b.login))
     .map((entry, index) => ({ ...entry, rank: index + 1 }));
 }
 

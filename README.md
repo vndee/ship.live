@@ -61,7 +61,7 @@ See the [webhook guide](docs/webhooks.md).
 - **Personal journal.** Keep private notes about launches, experiments, decisions, and progress. Add your GitHub activity when you are ready: **Data sources** chooses which connected accounts and organizations feed your dashboard, and **Only my activity** keeps it to work you did yourself. It is a full workspace too, with every Pulse scene across your sources, your own Service Health, and webhooks. Group notes with #tags, filter the feed by tag, and export any view as Markdown.
 - **Google or GitHub sign-in.** Supabase Auth handles identity. A separate GitHub App connection grants repository access, including for someone who signed in with Google.
 - **Live activity and replay.** Follow merges, reviews, releases, pushes, issues, journal entries, and inbound alerts. Filter by repository, type, time, or text; replay the last 24 hours, 7 days, or 30 days.
-- **Shared recognition.** Weekly contributor spotlights and team milestones celebrate outcomes and collaboration. New commits earn a small per-commit credit; personal notes earn no XP.
+- **Shared recognition.** Weekly contributor spotlights and team milestones celebrate outcomes and collaboration. Completed work and peer review earn XP; commits, PR openings and personal notes remain visible without additional XP.
 - **Expiring share links.** Share a read-only Pulse or Service Health page without requiring sign-in. Choose from one hour through a 100-year no-expiration option; rotate or revoke your link at any time.
 - **Private by default.** Personal notes belong to their owner. GitHub events are filtered to repositories each viewer could access through the GitHub App at their last sync.
 - **A link for every view.** Pulse, Service Health, the Live feed with its filters, and contributor profiles each have a URL to bookmark or share with teammates who have access. Install ship.live from the browser for its own window.
@@ -96,18 +96,20 @@ For frontend-only demo work without a database, use `npm run dev:web`.
 
 ## Recognition
 
-| Contribution                            |           XP |
-| --------------------------------------- | -----------: |
-| Release published                       |           50 |
-| Pull request merged into default branch |           30 |
-| Pull request merged into another branch |           15 |
-| Review submitted                        |           15 |
-| Issue completed                         |           10 |
-| Pull request opened                     |            5 |
-| Commit pushed                           | 2 per commit |
-| Personal journal entry                  |            0 |
+| Contribution                            |  XP |
+| --------------------------------------- | --: |
+| Release published                       |  50 |
+| Pull request merged into default branch |  30 |
+| Pull request merged into another branch |  15 |
+| First retained peer review of a PR      |  10 |
+| Issue completed                         |  10 |
+| Pull request opened                     |   0 |
+| Commit pushed                           |   0 |
+| Personal journal entry                  |   0 |
 
-Recognition resets on Monday at 00:00 UTC. Bots and duplicate events do not earn credit. Review credit is capped at one award per reviewer, pull request, and UTC day; merge credit belongs to the pull request author. Commit credit belongs to the pusher and counts only commits new to the repository, so creating a branch or merging with a merge commit does not credit the same commits again. Merges whose target branch GitHub did not report keep default-branch credit. Team milestones celebrate 30 merges, 40 reviews, and 5 releases per week.
+Weekly recognition starts Monday at 00:00 UTC. Bots and duplicate events do not earn credit. Review XP goes to the earliest retained review per reviewer, repository and PR, regardless of the selected week. Self reviews and reviews without a known PR author earn no XP. Merge credit belongs to the PR author. Commits and PR openings do not stack points on delivered work, and LOC is descriptive only. Unknown merge targets retain default-branch credit. Existing issue/release points and team milestones are unchanged.
+
+Live merges capture available peer-review and CI observations automatically. The candidate bonuses (5 XP each) remain **outside rankings** until source coverage has been audited; imported merges show insufficient evidence. See [XP v2 rules and rollout](docs/xp-v2.md).
 
 These are shared celebrations, not performance evaluations. Metrics describe the events visible to the current viewer, so teammates with different repository permissions can see different totals. Replay changes the view, not the recognition rules. See [`src/lib/activity.ts`](src/lib/activity.ts).
 
