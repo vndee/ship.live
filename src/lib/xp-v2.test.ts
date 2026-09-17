@@ -103,3 +103,30 @@ test("zero-point activity cannot break a leaderboard tie in the spammer's favor"
     ["alice", "bob"],
   );
 });
+
+test("placeholder authors never establish peer review", () => {
+  for (const author of ["unknown", " UNKNOWN ", " "]) {
+    assert.equal(
+      getMetrics([event("r", "review", { pullRequestAuthor: author })], now).xp,
+      0,
+    );
+    assert.equal(
+      getMetrics(
+        [event("r", "review"), event("pr", "pr", { actor: { login: author } })],
+        now,
+      ).xp,
+      0,
+    );
+  }
+});
+
+test("known author evidence from another review credits the earliest retained review", () => {
+  const early = event("early", "review", {
+    occurredAt: "2026-09-13T10:00:00Z",
+  });
+  const later = event("later", "review", { pullRequestAuthor: "bob" });
+  const credits = getCreditedEvents([later, early], now);
+  assert.equal(credits.find((item) => item.event.id === "early")?.points, 10);
+  assert.equal(credits.find((item) => item.event.id === "later")?.points, 0);
+  assert.equal(getMetrics([later, early], now).xp, 0);
+});

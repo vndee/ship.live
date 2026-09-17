@@ -5,7 +5,7 @@ import { PulseStore } from "./pulse-store.js";
 import { readDigestSummary } from "./digest-store.js";
 import { createTestDatabase } from "./test-database.js";
 import { resolvePulseRange } from "../shared/pulse.js";
-import { getMetrics } from "../src/lib/activity.js";
+import { basePoints, getMetrics } from "../src/lib/activity.js";
 import type { ActivityEvent } from "../shared/types.js";
 
 const now = Date.parse("2026-09-17T12:00:00Z");
@@ -27,6 +27,70 @@ const event = (
   title: "Change",
   occurredAt: "2026-09-17T10:00:00Z",
   ...extra,
+});
+
+test("unknown author sentinels stay unscorable and richer reviews resolve earliest retained credit", async (t) => {
+  const url = await createTestDatabase(t);
+  if (!url) return;
+  const store = await PostgresEventStore.open(url);
+  try {
+    await store.merge("installation-10", [
+      event("wall-unknown", "review", { number: 1 }),
+      event("pr-unknown", "pr", { number: 2, actor: { login: "unknown" } }),
+      event("review-unknown", "review", {
+        number: 2,
+        pullRequestAuthor: " UNKNOWN ",
+      }),
+      event("early", "review", {
+        number: 3,
+        occurredAt: "2026-09-13T10:00:00Z",
+      }),
+      event("later", "review", { number: 3, pullRequestAuthor: "bob" }),
+      event("outside", "review", { number: 4 }),
+    ]);
+    await store.pool
+      .query(`INSERT INTO ship_live_wall_signals(installation_id,repository_id,repository,kind,signal_key,observed_at,value)
+      VALUES(10,101,'team/api','pull_request','1',now(),' {"author":"unknown"}'::jsonb)`);
+    await store.merge("installation-20", [
+      event("unauthorized", "review", {
+        number: 4,
+        pullRequestAuthor: "private-author",
+      }),
+    ]);
+    for (const id of ["wall-unknown", "review-unknown", "outside"]) {
+      const resolved = (await store.get("installation-10", id))!;
+      assert.ok(!resolved.pullRequestAuthor);
+      assert.equal(getMetrics([resolved], now).xp, 0);
+    }
+    const early = (await store.get("installation-10", "early"))!;
+    assert.equal(early.pullRequestAuthor, "bob");
+    assert.equal(early.reviewCredit, true);
+    assert.equal(basePoints(early), 10);
+    assert.equal(
+      (await store.get("installation-10", "later"))?.reviewCredit,
+      false,
+    );
+    const sources = [{ installationId: 10, repositoryIds: [101] }];
+    assert.equal(
+      getMetrics(
+        await new PulseStore(store.pool).events({ sources }, range, now),
+        now,
+        range,
+      ).xp,
+      0,
+    );
+    const digest = await readDigestSummary(store.pool, {
+      installations: [10],
+      sources,
+      repositoryIds: [101],
+      start: range.start,
+      end: range.end,
+      now,
+    });
+    assert.equal(digest.totals.xp, 0);
+  } finally {
+    await store.close();
+  }
 });
 
 test("review credit is stable across date, author, feed and single-event reads; digest agrees", async (t) => {

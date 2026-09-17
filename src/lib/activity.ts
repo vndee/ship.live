@@ -159,15 +159,20 @@ function weeklyEvents(
     : eligibleEvents(events, now, getWeekStart(now).getTime());
 }
 
+function knownAuthor(login: string | undefined): string | undefined {
+  const value = login?.trim();
+  return value && value.toLowerCase() !== "unknown" ? value : undefined;
+}
+
 /** Base XP before review deduplication. Verification bonuses remain unranked. */
 export function basePoints(event: ActivityEvent): number {
+  const author = knownAuthor(event.pullRequestAuthor);
   if (
     event.type === "review" &&
     (!event.number ||
-      !event.pullRequestAuthor?.trim() ||
+      !author ||
       event.reviewCredit === false ||
-      event.pullRequestAuthor.trim().toLowerCase() ===
-        event.actor.login.trim().toLowerCase())
+      author.toLowerCase() === event.actor.login.trim().toLowerCase())
   )
     return 0;
   // Unknown targets keep full credit, like events stored before branches were recorded.
@@ -224,8 +229,14 @@ function withCredit(
   const keyFor = (e: ActivityEvent) =>
     `${e.repositoryId ?? e.repo.toLowerCase()}|${e.number}`;
   for (const e of events) {
-    if ((e.type === "pr" || e.type === "merge") && e.number)
-      authors.set(keyFor(e), e.actor.login);
+    const author = knownAuthor(
+      e.type === "pr" || e.type === "merge"
+        ? e.actor.login
+        : e.type === "review"
+          ? e.pullRequestAuthor
+          : undefined,
+    );
+    if (e.number && author) authors.set(keyFor(e), author);
   }
   const reviews = new Set<string>();
   const credits = new Map<string, number>();
@@ -236,7 +247,7 @@ function withCredit(
   )) {
     let points = basePoints(e);
     if (e.type === "review") {
-      const author = e.pullRequestAuthor || authors.get(keyFor(e));
+      const author = knownAuthor(e.pullRequestAuthor) || authors.get(keyFor(e));
       const key = `${e.actor.login.trim().toLowerCase()}|${keyFor(e)}`;
       points = reviews.has(key)
         ? 0

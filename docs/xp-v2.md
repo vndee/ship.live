@@ -13,7 +13,7 @@ XP recognizes observable contribution, not individual productivity or code quali
 | Published release                                        |  50 |
 | Commit, PR opening, note, inbound alert                  |   0 |
 
-Issue and release rules remain unchanged. Bots and duplicate events are excluded. Review decisions and comment quantity do not change the award. Reviews without an identifiable PR or author, and self reviews, earn zero. Author identity comes from the normalized review, retained PR activity, or authorized PR wall state. The earliest review wins by timestamp and then event ID. Review credit is resolved across authorized installations before filtering the period or limiting the feed. Equal XP is ordered by login; extra zero-point activity cannot win a tie.
+Issue and release rules remain unchanged. Bots and duplicate events are excluded. Review decisions and comment quantity do not change the award. Reviews without an identifiable PR or author, and self reviews, earn zero. Author identity comes from normalized reviews of the same PR, retained PR activity, or authorized PR wall state; the placeholder `unknown` never establishes an author. Richer review metadata can establish the author for an earlier retained review. The earliest review wins by timestamp and then event ID. Review credit is resolved across authorized installations before filtering the period or limiting the feed. Equal XP is ordered by login; extra zero-point activity cannot win a tie.
 
 Only retained data can be scored. Importing an earlier review can move credit back to its original period. Retention or access changes can affect which review is earliest; these are not lifetime completeness guarantees. Old API clients must refresh when deploying these rules.
 

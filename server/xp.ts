@@ -29,16 +29,28 @@ export function scoredEventSql(
   ) => `CASE WHEN ${event}->>'repositoryId' IS NOT NULL
     THEN ${alias}.event->>'repositoryId'=${event}->>'repositoryId'
     ELSE lower(${alias}.event->>'repo')=lower(${event}->>'repo') END`;
+  const knownAuthor = (expression: string) =>
+    `(CASE WHEN lower(btrim(${expression})) NOT IN ('','unknown') THEN btrim(${expression}) END)`;
+  const prAuthor = knownAuthor("p.event #>> '{actor,login}'");
+  const reviewAuthor = knownAuthor("a.event->>'pullRequestAuthor'");
+  const wallAuthor = knownAuthor("w.value->>'author'");
   return `(CASE WHEN ${event}->>'type'='review' THEN ${event} || jsonb_build_object(
-    'pullRequestAuthor', coalesce(nullif(${event}->>'pullRequestAuthor',''),
-      (SELECT p.event #>> '{actor,login}' FROM ship_live_events p
+    'pullRequestAuthor', coalesce(${knownAuthor(`${event}->>'pullRequestAuthor'`)},
+      (SELECT ${prAuthor} FROM ship_live_events p
        WHERE ${permitted("p.organization", "p.event->>'repositoryId'")} AND ${sameRepo("p")}
          AND p.event->>'number'=${number} AND p.event->>'type' IN ('pr','merge')
+         AND ${prAuthor} IS NOT NULL
        ORDER BY p.occurred_at,p.event_id COLLATE "C" LIMIT 1),
-      (SELECT w.value->>'author' FROM ship_live_wall_signals w
+      (SELECT ${reviewAuthor} FROM ship_live_events a
+       WHERE ${permitted("a.organization", "a.event->>'repositoryId'")} AND ${sameRepo("a")}
+         AND a.event->>'number'=${number} AND a.event->>'type'='review'
+         AND ${reviewAuthor} IS NOT NULL
+       ORDER BY a.occurred_at,a.event_id COLLATE "C" LIMIT 1),
+      (SELECT ${wallAuthor} FROM ship_live_wall_signals w
        WHERE ${permitted("'installation-' || w.installation_id", "w.repository_id::text")}
          AND w.repository_id::text=${event}->>'repositoryId'
          AND w.kind='pull_request' AND w.signal_key=${number}
+         AND ${wallAuthor} IS NOT NULL
        ORDER BY w.observed_at DESC,w.installation_id LIMIT 1)),
     'reviewCredit', ${event} ? 'number' AND NOT EXISTS (
       SELECT 1 FROM ship_live_events r WHERE ${permitted("r.organization", "r.event->>'repositoryId'")}
