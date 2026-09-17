@@ -47,6 +47,10 @@ test("unknown author sentinels stay unscorable and richer reviews resolve earlie
       }),
       event("later", "review", { number: 3, pullRequestAuthor: "bob" }),
       event("outside", "review", { number: 4 }),
+      event("padded-unknown", "review", {
+        number: 5,
+        pullRequestAuthor: "\tUNKNOWN\n\u00a0",
+      }),
     ]);
     await store.pool
       .query(`INSERT INTO ship_live_wall_signals(installation_id,repository_id,repository,kind,signal_key,observed_at,value)
@@ -57,7 +61,12 @@ test("unknown author sentinels stay unscorable and richer reviews resolve earlie
         pullRequestAuthor: "private-author",
       }),
     ]);
-    for (const id of ["wall-unknown", "review-unknown", "outside"]) {
+    for (const id of [
+      "wall-unknown",
+      "review-unknown",
+      "outside",
+      "padded-unknown",
+    ]) {
       const resolved = (await store.get("installation-10", id))!;
       assert.ok(!resolved.pullRequestAuthor);
       assert.equal(getMetrics([resolved], now).xp, 0);

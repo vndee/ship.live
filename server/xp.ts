@@ -3,6 +3,14 @@ import type { ActivityEvent } from "../shared/types.js";
 import type { PipelineState, ReviewState } from "../shared/wall.js";
 import { mergeVerification } from "../shared/xp.js";
 
+// Match JavaScript trim() when deciding whether an author is identifiable.
+const whitespace = [
+  9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198,
+  8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279,
+]
+  .map((c) => `chr(${c})`)
+  .join(" || ");
+
 export type HistoryScope = (
   organization: string,
   repositoryId: string,
@@ -30,7 +38,7 @@ export function scoredEventSql(
     THEN ${alias}.event->>'repositoryId'=${event}->>'repositoryId'
     ELSE lower(${alias}.event->>'repo')=lower(${event}->>'repo') END`;
   const knownAuthor = (expression: string) =>
-    `(CASE WHEN lower(btrim(${expression})) NOT IN ('','unknown') THEN btrim(${expression}) END)`;
+    `(CASE WHEN lower(btrim(${expression}, ${whitespace})) NOT IN ('','unknown') THEN btrim(${expression}, ${whitespace}) END)`;
   const prAuthor = knownAuthor("p.event #>> '{actor,login}'");
   const reviewAuthor = knownAuthor("a.event->>'pullRequestAuthor'");
   const wallAuthor = knownAuthor("w.value->>'author'");

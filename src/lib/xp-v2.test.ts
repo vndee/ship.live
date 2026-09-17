@@ -105,7 +105,7 @@ test("zero-point activity cannot break a leaderboard tie in the spammer's favor"
 });
 
 test("placeholder authors never establish peer review", () => {
-  for (const author of ["unknown", " UNKNOWN ", " "]) {
+  for (const author of ["unknown", " UNKNOWN ", " ", "\tUNKNOWN\n\u00a0"]) {
     assert.equal(
       getMetrics([event("r", "review", { pullRequestAuthor: author })], now).xp,
       0,
