@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.4.0 — 2026-09-17
+
+- Recognize merged work and peer collaboration with XP v2: default-branch merges earn 30 XP, other-branch merges 15 XP, and a peer review earns 10 XP once per reviewer, repository and PR across retained history. Commits and PR openings earn no XP; existing issue and release points remain unchanged.
+- Resolve review eligibility before date filters and feed limits, excluding self-reviews and unknown PR authors. Keep dashboard, contributor and weekly digest scoring consistent across authorized installations.
+- Capture immutable review and matching-head CI evidence for new live merges. Show candidate verification bonuses separately; they remain excluded from rankings pending a source-coverage audit. Lines of code describe change size and do not award XP.
+- Upgrade note: additive migration 023 adds review-credit lookup indexes. Existing rankings are recalculated under the new rules; refresh open dashboards after deployment. Historical evidence is not backfilled, and retained history bounds review credit.
+
 ## 0.3.0 — 2026-09-15
 
 - Preserve type filters when opening comparison activity on shared dashboards, including reloads. Catch the latest due digest across local week boundaries without duplicate sends.

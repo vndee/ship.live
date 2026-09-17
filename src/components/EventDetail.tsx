@@ -1,3 +1,4 @@
+import { candidateVerificationBonus } from "../../shared/xp";
 import {
   ExternalLink,
   FolderGit2,
@@ -52,9 +53,9 @@ export function EventDetail({
       <p className="detail-date">
         {new Date(event.occurredAt).toLocaleString()}
       </p>
-      {event.additions !== undefined && (
+      {(event.additions !== undefined || event.deletions !== undefined) && (
         <p className="diff-stat">
-          +{event.additions} additions{" "}
+          +{event.additions ?? 0} additions{" "}
           <span>−{event.deletions ?? 0} deletions</span>
         </p>
       )}
@@ -67,11 +68,53 @@ export function EventDetail({
       )}
       {!personal && event.type !== "note" && event.type !== "alert" && (
         <p className="field-hint">
-          Base recognition: {basePoints(event)} XP
-          {event.type === "push" && event.commits !== undefined
-            ? ` for ${event.commits} new commit${event.commits === 1 ? "" : "s"}`
-            : ""}
-          . The weekly board applies duplicate and review limits.
+          Base recognition: {basePoints(event)} XP . Review credit belongs to
+          the earliest retained peer review; repeated reviews, commits and PR
+          openings earn no additional XP.
+        </p>
+      )}
+      {event.type === "merge" && (
+        <div className="field-hint">
+          <strong>Verification at merge</strong>
+          {event.verification ? (
+            <>
+              <p>
+                Peer review:{" "}
+                {event.verification.peerReview.status === "observed"
+                  ? "Observed before merge"
+                  : "Insufficient data"}
+                . CI:{" "}
+                {event.verification.ci.status === "passing"
+                  ? "All observed checks passed on the PR head"
+                  : event.verification.ci.status === "not_passing"
+                    ? "Observed checks were not all passing"
+                    : "Insufficient data"}
+                .
+              </p>
+              <p>
+                Candidate bonus:{" "}
+                {candidateVerificationBonus(event.verification)} XP — not
+                included in rankings. Coverage is under evaluation.
+              </p>
+              <p>
+                Captured{" "}
+                {new Date(event.verification.capturedAt).toLocaleString()}. This
+                snapshot does not assess test quality or confirm that every
+                required check was received.
+              </p>
+            </>
+          ) : (
+            <p>
+              Insufficient data. Verification was not captured for this merge;
+              its base XP is unchanged.
+            </p>
+          )}
+        </div>
+      )}
+      {event.type === "review" && !event.pullRequestAuthor && (
+        <p className="field-hint">
+          Insufficient data: the PR author is unknown, so peer-review XP cannot
+          be established.
         </p>
       )}
       {event.type === "note" && (

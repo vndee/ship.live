@@ -45,7 +45,15 @@ export function selectEvent(
       ? existing
       : incoming;
   }
-  return preferExisting ? existing : incoming;
+  if (preferExisting) return existing;
+  // Imported or replayed events cannot rewrite the live merge evidence snapshot.
+  return {
+    ...incoming,
+    ...(existing.verification ? { verification: existing.verification } : {}),
+    ...(!incoming.pullRequestAuthor && existing.pullRequestAuthor
+      ? { pullRequestAuthor: existing.pullRequestAuthor }
+      : {}),
+  };
 }
 
 export function combineEvents(...groups: ActivityEvent[][]): ActivityEvent[] {

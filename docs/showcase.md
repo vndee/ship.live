@@ -16,7 +16,7 @@ Team dashboards also offer Review Radar, GitHub deployment state, Service Health
 
 ## The people behind it
 
-The contributor view makes merges, thoughtful reviews, and weekly recognition visible. Each new commit earns a small 2 XP.
+The contributor view makes merges, thoughtful reviews, and weekly recognition visible. Commits remain visible without stacking XP on delivered work.
 
 ![Team spotlight showing six fictional contributors and weekly recognition](images/team.jpg)
 

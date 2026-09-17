@@ -2823,3 +2823,30 @@ test("feed access scope stays stable across activity and ordering but changes on
     assert.equal((await feed()).accessScope, narrowed.accessScope);
   });
 });
+
+test("review SSE refreshes the authorized snapshot rather than publishing installation-local credit", async (t) => {
+  await withApp(t, async ({ workspaces, store, users, request }) => {
+    const workspace = await connect(workspaces, users[0], 1);
+    const live = await stream(
+      await request(`/api/workspaces/${workspace.id}/events`),
+    );
+    try {
+      await live.frame("connected");
+      await store.merge(
+        "installation-70",
+        [
+          {
+            ...event("peer-review", 101),
+            type: "review",
+            number: 1,
+            pullRequestAuthor: "teammate",
+          },
+        ],
+        { restricted: true, deliveryId: randomUUID() },
+      );
+      assert.equal(await live.frame("refresh"), "event: refresh\ndata: {}");
+    } finally {
+      await live.close();
+    }
+  });
+});

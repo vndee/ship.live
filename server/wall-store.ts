@@ -179,6 +179,9 @@ export class WallStore {
              observed_at=EXCLUDED.observed_at,
              value=EXCLUDED.value
            WHERE ship_live_wall_signals.observed_at <= EXCLUDED.observed_at
+             AND NOT (ship_live_wall_signals.kind='review'
+               AND ship_live_wall_signals.value->>'decision'='dismissed'
+               AND EXCLUDED.value->>'decision'<>'dismissed')
            RETURNING 1`,
           [
             installationId,

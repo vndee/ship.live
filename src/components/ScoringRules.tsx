@@ -23,11 +23,18 @@ export function ScoringRules() {
         })}
       </div>
       <p className="field-hint">
-        Bot accounts and duplicate events are excluded. Review XP counts once
-        per reviewer, pull request, and UTC day. Commit XP counts only commits
-        new to the repository, so each commit is credited once. Weeks start
-        Monday at 00:00 UTC. Public history can be incomplete; totals reflect
-        received activity.
+        XP v2 credits peer review once per reviewer and pull request, on the
+        earliest retained review. Self reviews and reviews with an unknown PR
+        author earn no XP. Commits and PR openings earn no XP. LOC describes
+        change size, not contribution value. Bots and duplicate events are
+        excluded. Weeks start Monday at 00:00 UTC; missing or expired history
+        can affect totals.
+      </p>
+      <p className="field-hint">
+        Verification bonuses are being evaluated: 5 candidate XP for observed
+        peer review and 5 for passing observed checks at merge. These are not
+        included in rankings until repository coverage has been audited. They
+        describe verification activity, not code quality.
       </p>
     </>
   );

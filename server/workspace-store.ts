@@ -1,3 +1,4 @@
+import { scoredEventSql, mappedHistoryScope } from "./xp.js";
 import {
   createCipheriv,
   createDecipheriv,
@@ -1147,7 +1148,7 @@ export class WorkspaceStore {
       organization: string;
       event: ActivityEvent;
     }>(
-      `SELECT e.organization, e.event FROM jsonb_each($1::jsonb) AS s(scope, repositories)
+      `SELECT e.organization, ${scoredEventSql("e.event", "e.organization", mappedHistoryScope("$1"))} AS event FROM jsonb_each($1::jsonb) AS s(scope, repositories)
       CROSS JOIN LATERAL (
         SELECT organization, event, occurred_at, event_id FROM ship_live_events
         WHERE organization=s.scope

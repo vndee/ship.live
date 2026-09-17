@@ -15,6 +15,7 @@ const event = (
 ): ActivityEvent => ({
   id,
   type,
+  ...(type === "review" ? { number: 99, pullRequestAuthor: "teammate" } : {}),
   actor: { login },
   repo: "acme/api",
   title: `${type} ${id}`,
@@ -36,26 +37,26 @@ const events = [
 test("a contributor profile credits activity like the weekly board", () => {
   const profile = getContributorProfile(events, "ALEX", now);
   assert.equal(profile.login, "alex");
-  assert.deepEqual([profile.rank, profile.weeklyXp], [1, 45]);
+  assert.deepEqual([profile.rank, profile.weeklyXp], [1, 40]);
   assert.deepEqual(
     [profile.xp30, profile.contributions30, profile.activeDays30],
-    [51, 4, 2],
+    [40, 4, 2],
   );
   assert.deepEqual(
     profile.byType.map(({ type, count, xp }) => [type, count, xp]),
     [
-      ["review", 2, 15],
+      ["review", 2, 10],
       ["merge", 1, 30],
-      ["push", 1, 6],
+      ["push", 1, 0],
     ],
   );
   assert.deepEqual(
     profile.recent.map(({ event, points }) => [event.id, points]),
     [
       ["e3", 0],
-      ["e2", 15],
+      ["e2", 10],
       ["e1", 30],
-      ["e4", 6],
+      ["e4", 0],
       ["e6", 50],
     ],
   );
@@ -68,7 +69,7 @@ test("daily history and the heatmap use whole UTC days and weeks", () => {
   assert.deepEqual(profile.xpHistory.at(-1), {
     date: "2026-09-09",
     count: 3,
-    xp: 45,
+    xp: 40,
   });
   assert.equal(profile.xpHistory[0].date, "2026-08-11");
   const { heatmap } = profile;
@@ -76,7 +77,7 @@ test("daily history and the heatmap use whole UTC days and weeks", () => {
   // Monday twelve weeks back starts the grid; Thursday–Sunday are still ahead.
   assert.equal(heatmap[0]?.date, "2026-06-22");
   assert.deepEqual(heatmap.slice(-4), [null, null, null, null]);
-  assert.deepEqual(heatmap.at(-5), { date: "2026-09-09", count: 3, xp: 45 });
+  assert.deepEqual(heatmap.at(-5), { date: "2026-09-09", count: 3, xp: 40 });
   assert.deepEqual(heatmap[9], { date: "2026-07-01", count: 1, xp: 50 });
 });
 
@@ -103,8 +104,8 @@ test("historical contributor profiles use the same selected range for rank, XP, 
   ];
   const profile = getContributorProfile(historical, "alex", now, range);
   assert.equal(profile.rank, 1);
-  assert.equal(profile.weeklyXp, 65);
-  assert.equal(profile.xp30, 65);
+  assert.equal(profile.weeklyXp, 60);
+  assert.equal(profile.xp30, 60);
   assert.equal(profile.contributions30, 2);
   assert.equal(profile.activeDays30, 2);
   assert.deepEqual(
@@ -120,7 +121,7 @@ test("historical contributor profiles use the same selected range for rank, XP, 
   assert.deepEqual(profile.xpHistory.at(-1), {
     date: range.to,
     count: 1,
-    xp: 15,
+    xp: 10,
   });
   assert.equal(profile.heatmap.length, 7);
   assert.deepEqual(
@@ -139,7 +140,7 @@ test("selected contributor periods include quiet days and exclude future activit
   );
   assert.equal(profile.contributions30, 3);
   assert.equal(profile.xpHistory.length, 1);
-  assert.equal(profile.xpHistory[0].xp, 45);
+  assert.equal(profile.xpHistory[0].xp, 40);
   const empty = getContributorProfile(events, "nobody", now, range);
   assert.equal(empty.rank, null);
   assert.deepEqual(empty.xpHistory, [{ date: range.from, count: 0, xp: 0 }]);

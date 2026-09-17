@@ -24,6 +24,7 @@ function event(
   return {
     id,
     type,
+    ...(type === "review" ? { pullRequestAuthor: "teammate" } : {}),
     actor: { login: "alexchen" },
     repo: "platform",
     title: "Improve developer setup",
@@ -50,7 +51,7 @@ test("weekly metrics exclude duplicates, bots, invalid dates, previous weeks and
   const events = [
     merge,
     merge,
-    event("review-1", "review", { actor: { login: "minhnguyen" } }),
+    event("review-1", "review", { number: 1, actor: { login: "minhnguyen" } }),
     event("release-1", "release"),
     event("issue-1", "issue"),
     event("pr-1", "pr"),
@@ -66,12 +67,12 @@ test("weekly metrics exclude duplicates, bots, invalid dates, previous weeks and
     reviews: 1,
     releases: 1,
     contributors: 2,
-    xp: 110,
+    xp: 100,
     total: 6,
   });
 });
 
-test("review credit is capped per person, repository, pull request and UTC day", () => {
+test("review credit is capped per person, repository and pull request across days", () => {
   const events = [
     event("review-1", "review", { number: 42 }),
     event("review-2", "review", { number: 42, actor: { login: "AlexChen" } }),
@@ -88,15 +89,15 @@ test("review credit is capped per person, repository, pull request and UTC day",
     event("review-unidentified-1", "review"),
     event("review-unidentified-2", "review"),
   ];
-  assert.equal(getMetrics(events, NOW).xp, 105);
+  assert.equal(getMetrics(events, NOW).xp, 40);
   assert.equal(getMetrics(events, NOW).reviews, 8);
   const leaders = getLeaderboard(events, NOW);
   assert.equal(leaders.length, 2);
-  assert.equal(leaders[0].xp, 90);
+  assert.equal(leaders[0].xp, 30);
   assert.equal(leaders[0].reviews, 7);
 });
 
-test("each new commit earns 2 XP and merges outside the default branch earn less", () => {
+test("commits remain visible without XP and merges outside the default branch earn less", () => {
   const events = [
     event("push-3", "push", { commits: 3 }),
     event("push-uncounted", "push"),
@@ -107,25 +108,26 @@ test("each new commit earns 2 XP and merges outside the default branch earn less
     }),
     event("merge-unknown-target", "merge"),
   ];
-  assert.deepEqual(events.map(basePoints), [6, 0, 30, 15, 30]);
+  assert.deepEqual(events.map(basePoints), [0, 0, 30, 15, 30]);
   assert.ok(BRANCH_MERGE_POINTS < EVENT_META.merge.points);
-  assert.equal(COMMIT_POINTS, 2);
+  assert.equal(COMMIT_POINTS, 0);
   const metrics = getMetrics(events, NOW);
-  assert.equal(metrics.xp, 81);
+  assert.equal(metrics.xp, 75);
   assert.equal(metrics.merges, 3);
-  assert.equal(getLeaderboard(events, NOW)[0].xp, 81);
+  assert.equal(getLeaderboard(events, NOW)[0].xp, 75);
 });
 
 test("leaderboard gives shared work credit and stable ranks", () => {
   const events = [
     event("merge-1", "merge"),
     event("review-1", "review", {
+      number: 1,
       actor: {
         login: "sarahpark",
         avatarUrl: "https://example.test/sarah.png",
       },
     }),
-    event("review-2", "review", { actor: { login: "sarahpark" } }),
+    event("review-2", "review", { number: 2, actor: { login: "sarahpark" } }),
     event("push-1", "push", { actor: { login: "minhnguyen" } }),
     event("old-release", "release", {
       actor: { login: "minhnguyen" },
@@ -134,20 +136,20 @@ test("leaderboard gives shared work credit and stable ranks", () => {
   ];
   assert.deepEqual(getLeaderboard(events, NOW), [
     {
-      login: "sarahpark",
-      avatarUrl: "https://example.test/sarah.png",
-      xp: 30,
-      merges: 0,
-      reviews: 2,
-      contributions: 2,
-      rank: 1,
-    },
-    {
       login: "alexchen",
       xp: 30,
       merges: 1,
       reviews: 0,
       contributions: 1,
+      rank: 1,
+    },
+    {
+      login: "sarahpark",
+      avatarUrl: "https://example.test/sarah.png",
+      xp: 20,
+      merges: 0,
+      reviews: 2,
+      contributions: 2,
       rank: 2,
     },
     {

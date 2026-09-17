@@ -1,3 +1,4 @@
+import { scoredEventSql, mappedHistoryScope } from "./xp.js";
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import type { ActivityEvent } from "../shared/types.js";
@@ -28,7 +29,7 @@ const eligible = `EXISTS (SELECT 1 FROM jsonb_each($1::jsonb) AS source(organiza
  AND ${actor} !~ '(\\[bot\\]|-bot)$' AND ${actor} NOT IN ('dependabot','renovate','github-actions')`;
 // GitHub can deliver the same normalized event through multiple installations.
 // Pick one deterministic row before aggregates and keyset boundaries are formed.
-const scopedEvents = `SELECT DISTINCT ON (event_id) event,occurred_at,event_id
+const scopedEvents = `SELECT DISTINCT ON (event_id) event,occurred_at,event_id,organization
  FROM ship_live_events WHERE ${eligible} ORDER BY event_id,occurred_at DESC,organization`;
 const counts = `count(*)::int AS count, count(*) FILTER (WHERE event->>'type'='merge')::int AS merges, count(*) FILTER (WHERE event->>'type'='review')::int AS reviews, count(*) FILTER (WHERE event->>'type'='release')::int AS releases`;
 export function pulseQuery(query: Record<string, unknown>, now = Date.now()) {
@@ -146,7 +147,7 @@ export class PulseStore {
   ): Promise<ActivityEvent[]> {
     if (!scope.sources.some((s) => s.repositoryIds.length)) return [];
     const rows = await this.pool.query<{ event: ActivityEvent }>(
-      `WITH events AS (${scopedEvents}) SELECT event - 'body' AS event FROM events WHERE occurred_at >= $3::timestamptz AND occurred_at < $4::timestamptz AND occurred_at <= $5::timestamptz
+      `WITH events AS (${scopedEvents}) SELECT ${scoredEventSql("events.event", "events.organization", mappedHistoryScope("$1"))} - 'body' AS event FROM events WHERE occurred_at >= $3::timestamptz AND occurred_at < $4::timestamptz AND occurred_at <= $5::timestamptz
        ORDER BY occurred_at DESC,event_id DESC`,
       [
         ...scopeParams(scope),
@@ -393,13 +394,13 @@ export class PulseStore {
       event_id: string;
     }>(
       `WITH activity AS (
-     SELECT event,occurred_at,event_id FROM (${scopedEvents}) eligible_events
+     SELECT event,occurred_at,event_id,organization FROM (${scopedEvents}) eligible_events
      UNION ALL
-     SELECT jsonb_build_object('id','note-'||n.id,'type','note','actor',jsonb_build_object('login',coalesce($11::text,u.name)),'repo','journal/notes','title',n.title,'occurredAt',n.created_at),n.created_at,'note-'||n.id
+     SELECT jsonb_build_object('id','note-'||n.id,'type','note','actor',jsonb_build_object('login',coalesce($11::text,u.name)),'repo','journal/notes','title',n.title,'occurredAt',n.created_at),n.created_at,'note-'||n.id,NULL::text
      FROM ship_live_notes n JOIN ship_live_auth_users u ON u.id=n.user_id
      WHERE $6::text IS NULL AND n.user_id=$9::uuid AND n.workspace_id=$10::uuid
    )
-   SELECT event - 'body' AS event, to_char(occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at,event_id FROM activity
+   SELECT ${scoredEventSql("activity.event", "activity.organization", mappedHistoryScope("$1"))} - 'body' AS event, to_char(occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at,event_id FROM activity
    WHERE occurred_at >= $3::timestamptz AND occurred_at < $4::timestamptz AND occurred_at <= $5::timestamptz
    AND ($6::text IS NULL OR event->>'repo'=$6)
    AND ($12::text IS NULL OR event->>'type'=$12 OR ($12='contribution' AND event->>'type' NOT IN ('note','alert')))

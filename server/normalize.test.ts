@@ -462,3 +462,41 @@ test("organization inputs and outgoing links reject URL injection and untrusted 
   assert.equal(event?.url, "https://github.com/team/service/pull/42");
   assert.equal(event?.actor.avatarUrl, undefined);
 });
+
+test("review events retain PR authors and merges retain head SHA for automatic XP evidence", () => {
+  const pr = {
+    ...pull_request,
+    user: { login: "author" },
+    head: { sha: "a".repeat(40) },
+  };
+  const review = normalizeWebhook(
+    "pull_request_review",
+    {
+      repository,
+      sender: actor,
+      pull_request: pr,
+      action: "submitted",
+      review: {
+        id: 1,
+        user: actor,
+        state: "approved",
+        submitted_at: occurredAt,
+      },
+    },
+    "review-xp",
+    occurredAt,
+  );
+  assert.equal(review?.pullRequestAuthor, "author");
+  const merge = normalizeWebhook(
+    "pull_request",
+    {
+      repository,
+      sender: actor,
+      pull_request: pr,
+      action: "closed",
+    },
+    "merge-xp",
+    occurredAt,
+  );
+  assert.equal(merge?.headSha, "a".repeat(40));
+});

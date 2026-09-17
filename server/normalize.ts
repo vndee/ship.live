@@ -113,6 +113,9 @@ function normalize(
       title: text(pr.title, `Pull request #${prNumber}`),
       url: safeGithubUrl(pr.html_url) ?? `${repoUrl}/pull/${prNumber}`,
       occurredAt: at,
+      headSha: /^[a-f\d]{40,64}$/i.test(text(object(pr.head).sha))
+        ? text(object(pr.head).sha).toLowerCase()
+        : undefined,
       additions: number(pr.additions),
       deletions: number(pr.deletions),
       branch,
@@ -136,6 +139,7 @@ function normalize(
       id: `${repo.toLowerCase()}:review:${reviewId ?? fallbackId}`,
       actor: contributor(review.user, actor),
       type: "review",
+      pullRequestAuthor: text(object(pr.user).login) || undefined,
       number: prNumber,
       occurredAt: at,
       title: text(

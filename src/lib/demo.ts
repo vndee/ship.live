@@ -245,6 +245,9 @@ export function createDemoEvents(now = Date.now()): ActivityEvent[] {
       item.branch = release ? "release/next" : "main";
       item.defaultBranch = !release;
     }
+    if (type === "review")
+      item.pullRequestAuthor =
+        PEOPLE[(PEOPLE.indexOf(login) + 1) % PEOPLE.length];
     if (type === "push") item.commits = 1 + ((index * 5) % 4);
     events.push(item);
   }
